@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Build and verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Check formatting
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "The following files need gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Cross-compile (darwin/arm64)
+        run: GOOS=darwin GOARCH=arm64 go build ./...
+
+      - name: Cross-compile (linux/amd64)
+        run: GOOS=linux GOARCH=amd64 go build ./...
+
+      - name: Cross-compile (windows/amd64)
+        run: GOOS=windows GOARCH=amd64 go build ./...

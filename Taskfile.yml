@@ -43,6 +43,20 @@ tasks:
     cmds:
       - go vet ./...
 
+  pre-push:
+    desc: Verify formatting, build, and vet — run this before pushing
+    cmds:
+      - go mod tidy
+      - cmd: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "gofmt: these files need formatting:"
+            echo "$files"
+            exit 1
+          fi
+      - go build ./...
+      - go vet ./...
+
   clean:
     desc: Remove built binaries
     cmds:
