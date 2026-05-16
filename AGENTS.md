@@ -18,7 +18,7 @@ There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure
 - Thin, idiomatic Go wrapper around the exact C API defined in `ds4.h`
 - Same folder layout and patterns as Yzma:
   - `go.mod`
-  - `pkg/ds4/` → all the Go bindings
+  - `ds4/` → all the Go bindings (imported as `github.com/NimbleMarkets/ds4-go/ds4`)
   - `examples/` → several ready-to-run examples
   - `cmd/ds4-go/` → optional CLI (simple one-shot and chat)
   - `lib/` → placeholder for the shared libraries (document how user places them)
@@ -42,7 +42,7 @@ There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure
 - Safe memory management (no leaks, proper freeing)
 
 **Include in the generated project:**
-1. Full `pkg/ds4` package with every public function from `ds4.h` bound via purego
+1. Full `ds4` package with every public function from `ds4.h` bound via purego
 2. High-level convenience wrappers:
    - `NewEngine(opts EngineOptions) (*Engine, error)`
    - `Engine.NewSession(ctxSize int) (*Session, error)`

@@ -1,0 +1,49 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Build all packages
+    cmds:
+      - task: build
+
+  tidy:
+    desc: 'Go tidy all the things'
+    run: once
+    cmds:
+      - go mod tidy
+
+  build:
+    desc: Build all packages
+    deps:
+      - cli:build
+      - examples:build
+
+  examples:build:
+    desc: Build example programs
+    deps: [tidy]
+    cmds:
+      - go build -o bin/simple ./examples/simple
+      - go build -o bin/chat ./examples/chat
+      - go build -o bin/openai-compatible ./examples/openai-compatible
+
+  cli:build:
+    desc: Build the ds4-go CLI
+    deps: [tidy]
+    cmds:
+      - go build -o bin/ds4-go ./cmd/ds4-go
+
+  test:
+    desc: Run Go tests
+    deps: [tidy]
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run Go vet
+    cmds:
+      - go vet ./...
+
+  clean:
+    desc: Remove built binaries
+    cmds:
+      - rm -f ./bin/simple ./bin/chat ./bin/openai-compatible ./bin/ds4-go
