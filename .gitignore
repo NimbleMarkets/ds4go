@@ -1,0 +1,29 @@
+# ds4-go .gitignore
+
+# Build output
+/bin/
+
+# Stray binaries built into the repo root
+/ds4-go
+/simple
+/chat
+/openai-compatible
+
+# ds4 shared libraries dropped into lib/ (lib/README.md is kept)
+/lib/libds4.*
+*.so
+*.dylib
+*.dll
+
+# Model weights
+*.gguf
+
+# Go test/coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# Editor and OS noise
+.DS_Store
+.*.swp
+*~
