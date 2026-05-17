@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -46,6 +47,7 @@ func newRootCommand() *cobra.Command {
 	}
 	root.SilenceUsage = true
 	root.AddCommand(newPromptCommand(), newInstallCommand(), newModelCommand())
+	root.SetHelpCommand(newHelpCommand(root))
 	return root
 }
 
@@ -637,7 +639,7 @@ func run(cfg *cliopts.CLIConfig) error {
 
 func preflightPromptModel(path string) error {
 	if path == "" {
-		return fmt.Errorf("no model path configured; run: ds4go model download q2-imatrix")
+		return fmt.Errorf("no model path configured; run: ds4go model download %s", models.RecommendedModelAlias)
 	}
 	st, err := os.Stat(path)
 	if err == nil && !st.IsDir() && st.Size() > 0 {
@@ -655,11 +657,11 @@ func preflightPromptModel(path string) error {
 			return fmt.Errorf("model is not ready at %s; additionally failed to inspect model config: %w", path, listErr)
 		}
 		if cfg.DefaultModel == "" || activeDefault(list) == "" {
-			return fmt.Errorf("no default model is installed at %s\nRun: ds4go model download q2-imatrix\nOr:  ds4go model list", path)
+			return fmt.Errorf("no default model is installed at %s\nRun: ds4go model download %s\nOr:  ds4go model list", path, models.RecommendedModelAlias)
 		}
 		return fmt.Errorf("configured default model %q is not available at %s\nRun: ds4go model download %s\nOr:  ds4go model set <installed-alias>", cfg.DefaultModel, path, cfg.DefaultModel)
 	}
-	return fmt.Errorf("model file not found: %s\nUse --model PATH or run: ds4go model download q2-imatrix", path)
+	return fmt.Errorf("model file not found: %s\nUse --model PATH or run: ds4go model download %s", path, models.RecommendedModelAlias)
 }
 
 // diagnostic returns the name of the selected one-shot diagnostic, if any.
@@ -718,7 +720,11 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 	}
 	defer tokens.Free()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	opts := cfg.GenerateOptions()
+	opts.Context = ctx
 	opts.OnToken = func(token int) {
 		if text, err := engine.TokenText(token); err == nil {
 			fmt.Print(text)
@@ -726,6 +732,9 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 	}
 	_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(tokens, opts)
 	fmt.Println()
+	if err == context.Canceled {
+		return nil
+	}
 	return err
 }
 
@@ -749,7 +758,10 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 		if err != nil {
 			return err
 		}
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		opts := cfg.GenerateOptions()
+		opts.Context = ctx
 		var response strings.Builder
 		opts.OnToken = func(token int) {
 			if text, err := engine.TokenText(token); err == nil {
@@ -758,9 +770,10 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 			}
 		}
 		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
+		stop()
 		prompt.Free()
 		fmt.Println()
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			return err
 		}
 		history = append(history, cliMessage{role: "assistant", content: response.String()})

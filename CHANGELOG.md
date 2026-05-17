@@ -2,6 +2,10 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library; we also embed the `.metal` files.   See https://github.com/neomantra/ds4/tree/nm-shared
 
+## v0.2.1 (2026-05-17)
+
+ * feat: add Context for cancelation
+
 ## v0.2.0 (2026-05-17)
 
  * Developer ergonomic, module and package renaming!

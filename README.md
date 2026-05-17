@@ -128,6 +128,30 @@ go run ./cmd/ds4go prompt --model ./ds4flash.gguf
 
 The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime (empty falls back to `DS4_LIB` or `DS4_DIR/lib`).
 
+```text
+$ ds4go help cheat
+ds4go — command cheat sheet
+
+  ├── completion      Generate the autocompletion script for the specified shell
+  │   ├── bash        Generate the autocompletion script for bash
+  │   ├── fish        Generate the autocompletion script for fish
+  │   ├── powershell  Generate the autocompletion script for powershell
+  │   └── zsh         Generate the autocompletion script for zsh
+  │
+  ├── install  Download a prebuilt libds4 shared library
+  │
+  ├── model         Browse, download, and manage curated ds4 models
+  │   ├── delete    Delete a downloaded model from disk
+  │   ├── download  Download a curated model from Hugging Face
+  │   ├── info      Show details for a curated model
+  │   ├── list      List installed and available models
+  │   └── set       Set the default chat model
+  │
+  └── prompt  Run prompt or interactive chat inference
+
+Run 'ds4go help <command>' for detailed usage.
+```
+
 ## Examples
 
 ```sh

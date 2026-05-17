@@ -1,6 +1,7 @@
 package ds4
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -27,6 +28,9 @@ type GenerateOptions struct {
 	ExcludeToken int
 	// OnToken streams generated tokens. Returning normally continues generation.
 	OnToken ds4api.TokenEmitFunc
+	// Context, when non-nil, can be cancelled to stop generation gracefully
+	// before the next token is sampled.
+	Context context.Context
 }
 
 // Generator binds a ds4 engine and session for Go-native generation helpers.
@@ -73,6 +77,13 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	var rng = opts.Seed
 	out := make([]int, 0, maxTokens)
 	for i := 0; i < maxTokens; i++ {
+		if opts.Context != nil {
+			select {
+			case <-opts.Context.Done():
+				return out, opts.Context.Err()
+			default:
+			}
+		}
 		var token int
 		if opts.Temperature > 0 {
 			token = g.Session.Sample(opts.Temperature, opts.TopK, opts.TopP, opts.MinP, &rng)

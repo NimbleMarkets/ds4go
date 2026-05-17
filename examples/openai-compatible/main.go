@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -114,6 +115,7 @@ func run(cfg *cliopts.ServerConfig) error {
 		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, ds4.GenerateOptions{
 			MaxTokens: maxTokens,
 			StopOnEOS: true,
+			Context:   r.Context(),
 			OnToken: func(token int) {
 				if part, err := engine.TokenText(token); err == nil {
 					text += part
@@ -121,6 +123,9 @@ func run(cfg *cliopts.ServerConfig) error {
 			},
 		})
 		if err != nil {
+			if err == context.Canceled {
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

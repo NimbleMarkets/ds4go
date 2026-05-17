@@ -7,8 +7,10 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/NimbleMarkets/ds4go"
@@ -81,7 +83,9 @@ func run(cfg *cliopts.CLIConfig) error {
 		if err != nil {
 			return err
 		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		opts := cfg.GenerateOptions()
+		opts.Context = ctx
 		var response strings.Builder
 		opts.OnToken = func(token int) {
 			if text, err := engine.TokenText(token); err == nil {
@@ -90,9 +94,10 @@ func run(cfg *cliopts.CLIConfig) error {
 			}
 		}
 		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
+		stop()
 		prompt.Free()
 		fmt.Println()
-		if err != nil {
+		if err != nil && err != context.Canceled {
 			return err
 		}
 		history = append(history, message{"assistant", response.String()})
