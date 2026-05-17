@@ -6,10 +6,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 
 	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
@@ -73,17 +71,13 @@ func run(cfg *cliopts.CLIConfig) error {
 	}
 	defer tokens.Free()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	opts := cfg.GenerateOptions()
-	opts.Context = ctx
 	opts.OnToken = func(token int) {
 		if text, err := engine.TokenText(token); err == nil {
 			fmt.Print(text)
 		}
 	}
-	if _, err := (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(tokens, opts); err != nil && err != context.Canceled {
+	if _, err := (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(tokens, opts); err != nil {
 		return err
 	}
 	fmt.Println()

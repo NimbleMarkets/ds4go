@@ -71,6 +71,11 @@ There is a go.mod with `github.com/NimbleMarkets/ds4go`.  Our project structure 
 5. go.mod with proper module name (`github.com/NimbleMarkets/ds4go`
 6. Makefile with `make` targets for building examples and cleaning
 
+**Signal safety (critical):**
+- Never wire `signal.NotifyContext` around C FFI calls. `SIGINT` can land on C worker threads (Metal/CUDA) and crash the process.
+- Programmatic `context.Context` cancellation is safe because it only affects Go-side loop control between tokens. Pass `Context` via `GenerateOptions.Context`.
+- The `examples/openai-compatible` server wires `r.Context()` for safe client-disconnect cancellation.
+
 **Important Go style:**
 - Use `github.com/ebitengine/purego` for loading
 - Use `unsafe` only where absolutely necessary and document it

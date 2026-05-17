@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -720,11 +719,7 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 	}
 	defer tokens.Free()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	opts := cfg.GenerateOptions()
-	opts.Context = ctx
 	opts.OnToken = func(token int) {
 		if text, err := engine.TokenText(token); err == nil {
 			fmt.Print(text)
@@ -732,9 +727,6 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 	}
 	_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(tokens, opts)
 	fmt.Println()
-	if err == context.Canceled {
-		return nil
-	}
 	return err
 }
 
@@ -758,10 +750,7 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 		if err != nil {
 			return err
 		}
-
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		opts := cfg.GenerateOptions()
-		opts.Context = ctx
 		var response strings.Builder
 		opts.OnToken = func(token int) {
 			if text, err := engine.TokenText(token); err == nil {
@@ -770,10 +759,9 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 			}
 		}
 		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
-		stop()
 		prompt.Free()
 		fmt.Println()
-		if err != nil && err != context.Canceled {
+		if err != nil {
 			return err
 		}
 		history = append(history, cliMessage{role: "assistant", content: response.String()})

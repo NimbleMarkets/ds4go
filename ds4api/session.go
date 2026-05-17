@@ -13,6 +13,7 @@ type Session struct {
 	ptr        uintptr
 	once       sync.Once
 	progressID uintptr
+	mu         sync.Mutex
 }
 
 // NewSession creates a ds4 session for this engine and context size.
@@ -36,6 +37,8 @@ func (s *Session) Close() {
 		return
 	}
 	s.once.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		runtime.SetFinalizer(s, nil)
 		if s.ptr != 0 {
 			s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
@@ -46,18 +49,22 @@ func (s *Session) Close() {
 	})
 }
 
-func (s *Session) require() error {
+func (s *Session) require() (unlock func(), err error) {
+	s.mu.Lock()
 	if s == nil || s.ptr == 0 {
-		return errClosed
+		s.mu.Unlock()
+		return nil, errClosed
 	}
-	return nil
+	return s.mu.Unlock, nil
 }
 
 // SetProgress sets a persistent progress callback for ds4_session_set_progress.
 func (s *Session) SetProgress(fn ProgressFunc) error {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	if s.progressID != 0 {
 		s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
 		unregisterProgressCallback(s.progressID)
@@ -84,9 +91,11 @@ func (s *Session) Sync(prompt []int) error {
 
 // SyncTokens synchronizes the live session to a full prompt token prefix.
 func (s *Session) SyncTokens(prompt *Tokens) error {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	buf, ptr, n := errorBuffer()
 	code := s.lib.raw.ds4SessionSync(s.ptr, prompt.cptr(), ptr, n)
 	return errorFromBuffer("ds4_session_sync", code, buf)
@@ -103,9 +112,11 @@ func RewriteRequiresRebuild(liveLen, canonicalLen, common int) bool {
 
 // RewriteFromCommon rewrites a session from a known common prefix length.
 func (s *Session) RewriteFromCommon(prompt *Tokens, common int) (SessionRewriteResult, error) {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return SessionRewriteError, err
 	}
+	defer unlock()
 	buf, ptr, n := errorBuffer()
 	result := s.lib.raw.ds4SessionRewriteFromCommon(s.ptr, prompt.cptr(), int32(common), ptr, n)
 	if result == SessionRewriteError {
@@ -116,6 +127,8 @@ func (s *Session) RewriteFromCommon(prompt *Tokens, common int) (SessionRewriteR
 
 // CommonPrefix returns the common prefix length between the live session and prompt.
 func (s *Session) CommonPrefix(prompt *Tokens) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -124,6 +137,8 @@ func (s *Session) CommonPrefix(prompt *Tokens) int {
 
 // Argmax returns the argmax token id for the current logits.
 func (s *Session) Argmax() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -132,6 +147,8 @@ func (s *Session) Argmax() int {
 
 // ArgmaxExcluding returns the argmax token id excluding one token.
 func (s *Session) ArgmaxExcluding(excludedID int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -140,6 +157,8 @@ func (s *Session) ArgmaxExcluding(excludedID int) int {
 
 // Sample samples the next token from current logits.
 func (s *Session) Sample(temperature float32, topK int, topP, minP float32, rng *uint64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -152,9 +171,11 @@ func (s *Session) Sample(temperature float32, topK int, topP, minP float32, rng 
 
 // TopLogprobs returns the top k token scores for the current logits.
 func (s *Session) TopLogprobs(k int) ([]TokenScore, error) {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	if k <= 0 {
 		return nil, nil
 	}
@@ -172,9 +193,11 @@ func (s *Session) TopLogprobs(k int) ([]TokenScore, error) {
 
 // TokenLogprob returns the score for a specific token.
 func (s *Session) TokenLogprob(token int) (TokenScore, error) {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return TokenScore{}, err
 	}
+	defer unlock()
 	var raw cTokenScore
 	code := s.lib.raw.ds4SessionTokenLogprob(s.ptr, int32(token), &raw)
 	if err := ds4Error("ds4_session_token_logprob", code); err != nil {
@@ -185,9 +208,11 @@ func (s *Session) TokenLogprob(token int) (TokenScore, error) {
 
 // Eval evaluates one token and advances the session.
 func (s *Session) Eval(token int) error {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	buf, ptr, n := errorBuffer()
 	code := s.lib.raw.ds4SessionEval(s.ptr, int32(token), ptr, n)
 	return errorFromBuffer("ds4_session_eval", code, buf)
@@ -195,9 +220,11 @@ func (s *Session) Eval(token int) error {
 
 // EvalSpeculativeArgmax calls ds4_session_eval_speculative_argmax.
 func (s *Session) EvalSpeculativeArgmax(firstToken, maxTokens, eosToken int) ([]int, error) {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	if maxTokens <= 0 {
 		return nil, nil
 	}
@@ -220,20 +247,32 @@ func (s *Session) EvalSpeculativeArgmax(firstToken, maxTokens, eosToken int) ([]
 
 // Invalidate invalidates the live session state.
 func (s *Session) Invalidate() {
-	if s != nil && s.ptr != 0 {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptr != 0 {
 		s.lib.raw.ds4SessionInvalidate(s.ptr)
 	}
 }
 
 // Rewind rewinds the session to token position pos.
 func (s *Session) Rewind(pos int) {
-	if s != nil && s.ptr != 0 {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ptr != 0 {
 		s.lib.raw.ds4SessionRewind(s.ptr, int32(pos))
 	}
 }
 
 // Pos returns the current session token position.
 func (s *Session) Pos() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -242,6 +281,8 @@ func (s *Session) Pos() int {
 
 // Ctx returns the session context size.
 func (s *Session) Ctx() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -250,6 +291,8 @@ func (s *Session) Ctx() int {
 
 // Tokens returns a borrowed snapshot of ds4_session_tokens.
 func (s *Session) Tokens() *Tokens {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return nil
 	}
@@ -258,6 +301,8 @@ func (s *Session) Tokens() *Tokens {
 
 // PayloadBytes returns ds4_session_payload_bytes.
 func (s *Session) PayloadBytes() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -266,9 +311,11 @@ func (s *Session) PayloadBytes() uint64 {
 
 // SavePayload writes the DS4-specific session payload to fp.
 func (s *Session) SavePayload(fp File) error {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	buf, ptr, n := errorBuffer()
 	code := s.lib.raw.ds4SessionSavePayload(s.ptr, uintptr(fp), ptr, n)
 	return errorFromBuffer("ds4_session_save_payload", code, buf)
@@ -286,9 +333,11 @@ func (s *Session) SavePayloadFile(path string) error {
 
 // LoadPayload reads a DS4-specific session payload from fp.
 func (s *Session) LoadPayload(fp File, payloadBytes uint64) error {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	buf, ptr, n := errorBuffer()
 	code := s.lib.raw.ds4SessionLoadPayload(s.ptr, uintptr(fp), payloadBytes, ptr, n)
 	return errorFromBuffer("ds4_session_load_payload", code, buf)
@@ -306,9 +355,11 @@ func (s *Session) LoadPayloadFile(path string, payloadBytes uint64) error {
 
 // SaveSnapshot serializes a session snapshot to a Go byte slice.
 func (s *Session) SaveSnapshot() ([]byte, error) {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	buf, ptr, n := errorBuffer()
 	var snap cSessionSnapshot
 	code := s.lib.raw.ds4SessionSaveSnapshot(s.ptr, &snap, ptr, n)
@@ -324,9 +375,11 @@ func (s *Session) SaveSnapshot() ([]byte, error) {
 
 // LoadSnapshot restores a session snapshot previously returned by SaveSnapshot.
 func (s *Session) LoadSnapshot(data []byte) error {
-	if err := s.require(); err != nil {
+	unlock, err := s.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	var ptr unsafe.Pointer
 	if len(data) > 0 {
 		ptr = unsafe.Pointer(&data[0])

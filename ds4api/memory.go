@@ -61,6 +61,7 @@ type cRuntime struct {
 	handle uintptr
 	fopen  func(path string, mode string) uintptr
 	fclose func(fp uintptr) int32
+	malloc func(uintptr) unsafe.Pointer
 	free   func(ptr unsafe.Pointer)
 }
 
@@ -76,9 +77,17 @@ func loadCRuntime() error {
 		libc.handle = handle
 		purego.RegisterLibFunc(&libc.fopen, handle, "fopen")
 		purego.RegisterLibFunc(&libc.fclose, handle, "fclose")
+		purego.RegisterLibFunc(&libc.malloc, handle, "malloc")
 		purego.RegisterLibFunc(&libc.free, handle, "free")
 	})
 	return libc.err
+}
+
+func cMalloc(size uintptr) unsafe.Pointer {
+	if err := loadCRuntime(); err != nil {
+		return nil
+	}
+	return libc.malloc(size)
 }
 
 func cFree(ptr unsafe.Pointer) {
