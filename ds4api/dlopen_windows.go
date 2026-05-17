@@ -1,6 +1,6 @@
 //go:build windows
 
-package ds4
+package ds4api
 
 import "syscall"
 

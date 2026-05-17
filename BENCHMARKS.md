@@ -1,11 +1,11 @@
 # Benchmarks
 
-`ds4-go` does not benchmark a bundled model because the shared library and hardware backend are user supplied. Measure the same ds4 library you run in production.
+`ds4go` does not benchmark a bundled model because the shared library and hardware backend are user supplied. Measure the same ds4 library you run in production.
 
 Suggested command:
 
 ```sh
-time go run ./cmd/ds4-go \
+time go run ./cmd/ds4go prompt \
   --model ./ds4flash.gguf \
   --lib ./lib/libds4.dylib \
   --ctx 32768 \

@@ -21,16 +21,30 @@ tasks:
   examples:build:
     desc: Build example programs
     deps: [tidy]
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - bin/simple
+      - bin/chat
+      - bin/openai-compatible
     cmds:
       - go build -o bin/simple ./examples/simple
       - go build -o bin/chat ./examples/chat
       - go build -o bin/openai-compatible ./examples/openai-compatible
 
   cli:build:
-    desc: Build the ds4-go CLI
+    desc: Build the ds4go CLI
     deps: [tidy]
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - bin/ds4go
     cmds:
-      - go build -o bin/ds4-go ./cmd/ds4-go
+      - go build -o bin/ds4go ./cmd/ds4go
 
   test:
     desc: Run Go tests
@@ -60,4 +74,4 @@ tasks:
   clean:
     desc: Remove built binaries
     cmds:
-      - rm -f ./bin/simple ./bin/chat ./bin/openai-compatible ./bin/ds4-go
+      - rm -f ./bin/simple ./bin/chat ./bin/openai-compatible ./bin/ds4go

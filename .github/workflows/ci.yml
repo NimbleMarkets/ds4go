@@ -46,3 +46,18 @@ jobs:
 
       - name: Cross-compile (windows/amd64)
         run: GOOS=windows GOARCH=amd64 go build ./...
+
+  # Validate the release config so a broken .goreleaser.yaml is caught on PRs
+  # rather than at tag time.
+  goreleaser:
+    name: Validate release config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check

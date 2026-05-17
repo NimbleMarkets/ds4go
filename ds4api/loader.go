@@ -1,4 +1,4 @@
-package ds4
+package ds4api
 
 import (
 	"errors"
@@ -25,14 +25,14 @@ var (
 
 // Load loads libds4 from path and registers all ds4.h symbols.
 //
-// Passing an empty path uses DS4_LIB, then searches DS4_DIR/lib and common
-// local library locations.
+// Passing an empty path uses DS4_LIB, then searches common local library
+// locations. Higher-level ds4go runtime path policy lives in the module root.
 func Load(path string) (*Library, error) {
 	if path == "" {
 		path = defaultLibraryPath()
 	}
 	if path == "" {
-		return nil, fmt.Errorf("ds4: could not find %s; set DS4_LIB or DS4_DIR", libraryFileName())
+		return nil, fmt.Errorf("ds4: could not find %s; set DS4_LIB or pass an explicit path", libraryFileName())
 	}
 
 	handle, err := openDynamicLibrary(path)
@@ -75,20 +75,6 @@ func (l *Library) Path() string {
 		return ""
 	}
 	return l.path
-}
-
-// DefaultDir returns the ds4 data directory.
-//
-// DS4_DIR overrides the default. When DS4_DIR is unset, DefaultDir returns
-// "$HOME/.ds4" when the user home directory can be determined, otherwise ".ds4".
-func DefaultDir() string {
-	if dir := os.Getenv("DS4_DIR"); dir != "" {
-		return dir
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".ds4")
-	}
-	return ".ds4"
 }
 
 func (l *Library) register() (err error) {
@@ -176,10 +162,6 @@ func defaultLibraryPath() string {
 
 	name := libraryFileName()
 	var candidates []string
-	ds4Dir := DefaultDir()
-	if ds4Dir != "" {
-		candidates = append(candidates, filepath.Join(ds4Dir, "lib", name))
-	}
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))

@@ -1,8 +1,13 @@
-# ds4-go Binding Spec
+# ds4go Binding Spec
 
 ## Goals
 
-`ds4-go` exposes the public `ds4.h` API through pure Go:
+`ds4go` exposes ds4 through two Go packages:
+
+- `github.com/NimbleMarkets/ds4go`, package `ds4`, is the Go-native runtime layer.
+- `github.com/NimbleMarkets/ds4go/ds4api`, package `ds4api`, is the strict binding layer over `ds4.h`.
+
+Both packages are pure Go:
 
 - no cgo,
 - no compiler required during `go build`,
@@ -11,7 +16,7 @@
 
 ## Loader Policy
 
-The default loader checks:
+The root `ds4` loader checks:
 
 1. `DS4_LIB`
 2. `$DS4_DIR/lib` when `DS4_DIR` is set, otherwise `~/.ds4/lib`
@@ -20,6 +25,9 @@ The default loader checks:
 5. current directory
 6. current `lib/`
 7. platform loader path for `libds4.*`
+
+The low-level `ds4api.Load("")` only applies raw shared-library loading policy:
+`DS4_LIB`, local executable/current-directory paths, and the platform loader path.
 
 ## Memory Ownership
 

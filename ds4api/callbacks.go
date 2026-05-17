@@ -1,4 +1,4 @@
-package ds4
+package ds4api
 
 import (
 	"sync"

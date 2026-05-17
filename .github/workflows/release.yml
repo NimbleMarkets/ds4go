@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   # Guard: ensure the tagged commit builds and vets cleanly before releasing.
   check:
@@ -19,46 +22,29 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
 
+  # Build cross-platform archives, publish the GitHub Release, and update the
+  # Homebrew formula in NimbleMarkets/homebrew-tap.
   release:
-    name: Release (${{ matrix.goos }}/${{ matrix.goarch }})
+    name: Release
     needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
-    strategy:
-      matrix:
-        include:
-          - { goos: darwin,  goarch: arm64, ext: ""     }
-          - { goos: darwin,  goarch: amd64, ext: ""     }
-          - { goos: linux,   goarch: amd64, ext: ""     }
-          - { goos: windows, goarch: amd64, ext: .exe   }
-
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - name: Build binaries
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          mkdir dist
-          go build -o dist/ds4-go${{ matrix.ext }}              ./cmd/ds4-go
-          go build -o dist/simple${{ matrix.ext }}              ./examples/simple
-          go build -o dist/chat${{ matrix.ext }}                ./examples/chat
-          go build -o dist/openai-compatible${{ matrix.ext }}   ./examples/openai-compatible
-
-      - name: Archive
-        run: |
-          archive="ds4-go_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
-          cd dist && zip "../$archive" ./*
-          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
-
-      - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v3
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
         with:
-          files: ${{ env.ARCHIVE }}
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with write access to NimbleMarkets/homebrew-tap.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

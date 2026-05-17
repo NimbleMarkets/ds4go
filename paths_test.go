@@ -26,8 +26,7 @@ func TestDefaultLibraryPathSearchesDS4DirLib(t *testing.T) {
 	if err := os.WriteFile(want, []byte("placeholder"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	if got := defaultLibraryPath(); got != want {
-		t.Fatalf("defaultLibraryPath() = %q, want %q", got, want)
+	if got := DefaultLibraryPath(); got != want {
+		t.Fatalf("DefaultLibraryPath() = %q, want %q", got, want)
 	}
 }

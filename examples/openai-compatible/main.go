@@ -12,8 +12,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/NimbleMarkets/ds4-go/ds4"
-	"github.com/NimbleMarkets/ds4-go/internal/cliopts"
+	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/spf13/pflag"
 )
 
@@ -53,17 +53,23 @@ func main() {
 }
 
 func run(cfg *cliopts.ServerConfig) error {
+	var engine *ds4.Engine
 	if cfg.Lib != "" {
 		lib, err := ds4.Load(cfg.Lib)
 		if err != nil {
 			return err
 		}
 		ds4.SetDefaultLibrary(lib)
-	}
-
-	engine, err := ds4.NewEngine(cfg.EngineOptions())
-	if err != nil {
-		return err
+		engine, err = lib.NewEngine(cfg.EngineOptions())
+		if err != nil {
+			return ds4.EnrichEngineOpenError(err)
+		}
+	} else {
+		var err error
+		engine, err = ds4.NewEngine(cfg.EngineOptions())
+		if err != nil {
+			return err
+		}
 	}
 	defer engine.Close()
 
@@ -105,7 +111,7 @@ func run(cfg *cliopts.ServerConfig) error {
 			maxTokens = cfg.Tokens
 		}
 		var text string
-		_, err = session.GenerateTokens(prompt, ds4.GenerateOptions{
+		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, ds4.GenerateOptions{
 			MaxTokens: maxTokens,
 			StopOnEOS: true,
 			OnToken: func(token int) {
@@ -120,7 +126,7 @@ func run(cfg *cliopts.ServerConfig) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chatResponse{
-			ID:     "chatcmpl-ds4-go",
+			ID:     "chatcmpl-ds4go",
 			Object: "chat.completion",
 			Choices: []chatChoice{{
 				Index:   0,

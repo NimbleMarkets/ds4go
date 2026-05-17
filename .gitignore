@@ -24,6 +24,7 @@
 coverage.txt
 
 # Editor and OS noise
+.task
 .DS_Store
 .*.swp
 *~

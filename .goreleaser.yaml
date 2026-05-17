@@ -1,0 +1,69 @@
+# ds4go .goreleaser.yaml
+#
+# ds4go is a pure-Go (purego) CLI: no CGO, so it cross-compiles cleanly to
+# every platform with the stock toolchain — no goreleaser-cross needed.
+#
+# Tagged releases publish archives + checksums to GitHub Releases and update
+# the Homebrew formula in NimbleMarkets/homebrew-tap.
+version: 2
+
+project_name: ds4go
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ds4go
+    main: ./cmd/ds4go
+    binary: ds4go
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  github:
+    owner: NimbleMarkets
+    name: ds4-go
+
+brews:
+  - ids:
+      - default
+    homepage: https://github.com/NimbleMarkets/ds4-go
+    description: "Pure-Go ds4 inference tooling for the DeepSeek-V4 engine"
+    license: MIT
+    directory: Formula
+    repository:
+      owner: NimbleMarkets
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: goreleaserbot@nimble.markets
+    install: |
+      bin.install "ds4go"
+    test: |
+      system "#{bin}/ds4go", "--help"
