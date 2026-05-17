@@ -19,7 +19,21 @@ type Model struct {
 	Default        bool    `json:"default"`
 }
 
-const hfRepo = "antirez/deepseek-v4-gguf"
+const (
+	hfRepo = "antirez/deepseek-v4-gguf"
+
+	// DefaultModelSymlink is the name of the active-model symlink in ModelsDir.
+	DefaultModelSymlink = "ds4flash.gguf"
+
+	// ConfigFileName is the ds4go configuration file name.
+	ConfigFileName = "ds4go.json"
+
+	// MTPAlias is the curated alias for the MTP companion model.
+	MTPAlias = "mtp"
+
+	// RecommendedModelAlias is the suggested default model for first-time users.
+	RecommendedModelAlias = "q2-imatrix"
+)
 
 var hfRepoBase = "https://huggingface.co/" + hfRepo + "/resolve/main"
 

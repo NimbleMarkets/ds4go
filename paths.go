@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 // DefaultDir returns the ds4go data directory.
@@ -28,10 +30,24 @@ func DefaultLibraryDir() string {
 
 // DefaultModelPath returns the path to the default model symlink.
 //
-// The default model is a symlink at $DS4_DIR/models/ds4flash.gguf that
+// The default model is a symlink at $DS4_DIR/models/<DefaultModelSymlink> that
 // points to the active downloaded model. Use ds4go model set to switch it.
 func DefaultModelPath() string {
-	return filepath.Join(DefaultDir(), "models", "ds4flash.gguf")
+	return filepath.Join(DefaultDir(), "models", models.DefaultModelSymlink)
+}
+
+// DefaultMTPPath returns the path to the installed MTP companion model,
+// or empty string if it is not present.
+func DefaultMTPPath() string {
+	model, ok := models.Lookup(models.MTPAlias)
+	if !ok {
+		return ""
+	}
+	p := filepath.Join(DefaultDir(), "models", model.FileName)
+	if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Size() > 0 {
+		return p
+	}
+	return ""
 }
 
 // DefaultLibraryPath returns the preferred libds4 shared-library path.

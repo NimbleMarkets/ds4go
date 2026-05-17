@@ -85,7 +85,7 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 
 	// Model and runtime.
 	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
-	fs.StringVar(&c.MTP, "mtp", "", "optional MTP support GGUF used for draft-token probes")
+	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated for the session")
@@ -250,7 +250,7 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 
 	// Model and runtime.
 	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
-	fs.StringVar(&c.MTP, "mtp", "", "optional MTP support GGUF used for draft-token probes")
+	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated at startup")

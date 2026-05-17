@@ -417,7 +417,7 @@ func TestDeleteClearsDefault(t *testing.T) {
 	if cfg.DefaultModel != "" {
 		t.Fatalf("DefaultModel = %q, want cleared", cfg.DefaultModel)
 	}
-	if _, err := os.Lstat(filepath.Join(m.ModelsDir, "ds4flash.gguf")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(m.ModelsDir, DefaultModelSymlink)); !os.IsNotExist(err) {
 		t.Fatalf("default link still present: %v", err)
 	}
 }
@@ -436,7 +436,7 @@ func testManager(dir string) *Manager {
 	return &Manager{
 		DS4Dir:      dir,
 		ModelsDir:   filepath.Join(dir, "models"),
-		ConfigPath:  filepath.Join(dir, "ds4go.json"),
+		ConfigPath:  filepath.Join(dir, ConfigFileName),
 		HTTPClient:  http.DefaultClient,
 		Out:         io.Discard,
 		ProgressOut: io.Discard,

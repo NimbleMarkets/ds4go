@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/NimbleMarkets/ds4go"
 )
 
 // Config is stored at $DS4_DIR/ds4go.json.
@@ -37,11 +36,11 @@ type Manager struct {
 
 // NewManager returns a manager rooted at DS4_DIR or ~/.ds4.
 func NewManager() *Manager {
-	dir := ds4.DefaultDir()
+	dir := defaultDir()
 	return &Manager{
 		DS4Dir:      dir,
 		ModelsDir:   filepath.Join(dir, "models"),
-		ConfigPath:  filepath.Join(dir, "ds4go.json"),
+		ConfigPath:  filepath.Join(dir, ConfigFileName),
 		HTTPClient:  &http.Client{Timeout: 0},
 		Out:         io.Discard,
 		ProgressOut: io.Discard,
@@ -51,7 +50,22 @@ func NewManager() *Manager {
 // DefaultModelPath returns the configured default model path.
 func DefaultModelPath() string {
 	m := NewManager()
-	return filepath.Join(m.ModelsDir, "ds4flash.gguf")
+	return filepath.Join(m.ModelsDir, DefaultModelSymlink)
+}
+
+// DefaultMTPPath returns the path to the installed MTP companion model,
+// or empty string if it is not present.
+func DefaultMTPPath() string {
+	m := NewManager()
+	model, ok := Lookup(MTPAlias)
+	if !ok {
+		return ""
+	}
+	p := filepath.Join(m.ModelsDir, model.FileName)
+	if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Size() > 0 {
+		return p
+	}
+	return ""
 }
 
 // List returns curated models annotated with installed/default state.
@@ -129,7 +143,7 @@ func (m *Manager) Set(alias string) error {
 	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
 		return err
 	}
-	link := filepath.Join(m.ModelsDir, "ds4flash.gguf")
+	link := filepath.Join(m.ModelsDir, DefaultModelSymlink)
 	target := filepath.Join(m.ModelsDir, model.FileName)
 	_ = os.Remove(link)
 	if err := os.Symlink(target, link); err != nil {
@@ -301,7 +315,7 @@ func (m *Manager) Delete(alias string) error {
 		return err
 	}
 	if cfg.DefaultModel == alias || m.detectDefaultAlias() == alias {
-		_ = os.Remove(filepath.Join(m.ModelsDir, "ds4flash.gguf"))
+		_ = os.Remove(filepath.Join(m.ModelsDir, DefaultModelSymlink))
 		models, freshCfg, err := m.List()
 		if err != nil {
 			return err
@@ -345,7 +359,7 @@ func (m *Manager) partial(model Model) (bool, int64) {
 }
 
 func (m *Manager) detectDefaultAlias() string {
-	link := filepath.Join(m.ModelsDir, "ds4flash.gguf")
+	link := filepath.Join(m.ModelsDir, DefaultModelSymlink)
 	target, err := os.Readlink(link)
 	if err != nil {
 		return ""
@@ -635,13 +649,28 @@ func quarantineBadPartial(path string, err error) error {
 	return nil
 }
 
-func lookup(alias string) (Model, bool) {
+// Lookup returns the curated model for alias, or false if unknown.
+func Lookup(alias string) (Model, bool) {
 	for _, model := range Curated() {
 		if model.Alias == alias {
 			return model, true
 		}
 	}
 	return Model{}, false
+}
+
+func lookup(alias string) (Model, bool) {
+	return Lookup(alias)
+}
+
+func defaultDir() string {
+	if dir := os.Getenv("DS4_DIR"); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".ds4")
+	}
+	return ".ds4"
 }
 
 func modelMap(models []Model) map[string]Model {

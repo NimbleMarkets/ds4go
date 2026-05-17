@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/NimbleMarkets/ds4go"
 )
 
 const (
@@ -178,13 +180,7 @@ func normalize(opts Options) Options {
 }
 
 func defaultDir() string {
-	if dir := os.Getenv("DS4_DIR"); dir != "" {
-		return dir
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".ds4")
-	}
-	return ".ds4"
+	return ds4.DefaultDir()
 }
 
 func resolveAsset(ctx context.Context, opts Options) (asset, string, error) {

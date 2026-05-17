@@ -42,15 +42,16 @@ Typical local layout:
 ```text
 ~/.ds4/models/
   ds4flash.gguf
-  ds4flash-mtp.gguf
+  DeepSeek-V4-Flash-MTP-Q4K-Q8_0-F32.gguf
 ```
 
-Then:
+When the MTP model is installed it is discovered automatically; you can also
+refer to it explicitly:
 
 ```go
 engine, err := ds4.NewEngine(ds4.EngineOptions{
-    ModelPath:      "models/ds4flash.gguf",
-    MTPPath:        "models/ds4flash-mtp.gguf",
+    ModelPath:      ds4.DefaultModelPath(),
+    MTPPath:        ds4.DefaultMTPPath(),
     Backend:        ds4.BackendMetal,
     MTPDraftTokens: 2,
 })

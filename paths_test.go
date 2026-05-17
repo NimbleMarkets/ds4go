@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 func TestDefaultDirUsesDS4Dir(t *testing.T) {
@@ -34,9 +36,34 @@ func TestDefaultLibraryPathSearchesDS4DirLib(t *testing.T) {
 func TestDefaultModelPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DS4_DIR", dir)
-	want := filepath.Join(dir, "models", "ds4flash.gguf")
+	want := filepath.Join(dir, "models", models.DefaultModelSymlink)
 	if got := DefaultModelPath(); got != want {
 		t.Fatalf("DefaultModelPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultMTPPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without the file present, DefaultMTPPath returns empty.
+	if got := DefaultMTPPath(); got != "" {
+		t.Fatalf("DefaultMTPPath() = %q, want empty", got)
+	}
+
+	// With the file present, DefaultMTPPath returns the path.
+	model, _ := models.Lookup(models.MTPAlias)
+	want := filepath.Join(modelsDir, model.FileName)
+	if err := os.WriteFile(want, []byte("fake-mtp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := DefaultMTPPath(); got != want {
+		t.Fatalf("DefaultMTPPath() = %q, want %q", got, want)
 	}
 }
 
