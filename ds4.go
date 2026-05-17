@@ -51,6 +51,14 @@ const (
 	ThinkHigh = ds4api.ThinkHigh
 	// ThinkMax enables the maximum-effort thinking prefix when the context is large enough.
 	ThinkMax = ds4api.ThinkMax
+
+	// DefaultMTPDraftTokens is the default number of draft tokens speculative
+	// decoding generates per step when MTP is enabled. A value of 0 disables
+	// speculative decoding; set it explicitly to enable MTP.
+	DefaultMTPDraftTokens = 0
+	// DefaultMTPMargin is the default minimum margin (in tokens) between the
+	// draft model's accepted sequence and the full target model output.
+	DefaultMTPMargin = 3
 )
 
 // Load loads libds4 using ds4go's runtime path policy.
@@ -85,4 +93,22 @@ func NewEngine(opts ds4api.EngineOptions) (*ds4api.Engine, error) {
 		return nil, EnrichEngineOpenError(err)
 	}
 	return engine, nil
+}
+
+// ApplyMTPDefaults populates MTPPath, MTPDraftTokens, and MTPMargin with
+// sensible defaults when an MTP model is installed. It only fills fields
+// that are currently empty or zero, so explicit caller settings are respected.
+func ApplyMTPDefaults(opts *EngineOptions) {
+	if opts == nil {
+		return
+	}
+	if opts.MTPPath == "" {
+		opts.MTPPath = DefaultMTPPath()
+	}
+	if opts.MTPPath != "" && opts.MTPDraftTokens <= 0 {
+		opts.MTPDraftTokens = DefaultMTPDraftTokens
+	}
+	if opts.MTPPath != "" && opts.MTPMargin <= 0 {
+		opts.MTPMargin = DefaultMTPMargin
+	}
 }

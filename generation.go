@@ -76,7 +76,12 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	}
 	var rng = opts.Seed
 	out := make([]int, 0, maxTokens)
-	for i := 0; i < maxTokens; i++ {
+
+	// Speculative decoding via MTP is only available in plain argmax mode.
+	useSpec := g.Engine != nil && g.Engine.HasMTP() && g.Engine.MTPDraftTokens() > 1 &&
+		opts.Temperature <= 0 && opts.ExcludeToken == 0
+
+	for i := 0; i < maxTokens; {
 		if opts.Context != nil {
 			select {
 			case <-opts.Context.Done():
@@ -95,12 +100,47 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 		if opts.StopOnEOS && token == eos {
 			break
 		}
-		out = append(out, token)
-		if opts.OnToken != nil {
-			opts.OnToken(token)
-		}
-		if err := g.Session.Eval(token); err != nil {
-			return out, err
+		if useSpec {
+			draft := maxTokens - i
+			if draft > g.Engine.MTPDraftTokens() {
+				draft = g.Engine.MTPDraftTokens()
+			}
+			accepted, err := g.Session.EvalSpeculativeArgmax(token, draft, eos)
+			if err != nil {
+				return out, err
+			}
+			if len(accepted) == 0 {
+				// Speculative decoding rejected everything; fall back to
+				// evaluating the argmax token normally.
+				out = append(out, token)
+				if opts.OnToken != nil {
+					opts.OnToken(token)
+				}
+				if err := g.Session.Eval(token); err != nil {
+					return out, err
+				}
+				i++
+			} else {
+				for _, t := range accepted {
+					if opts.StopOnEOS && t == eos {
+						return out, nil
+					}
+					out = append(out, t)
+					if opts.OnToken != nil {
+						opts.OnToken(t)
+					}
+					i++
+				}
+			}
+		} else {
+			out = append(out, token)
+			if opts.OnToken != nil {
+				opts.OnToken(token)
+			}
+			if err := g.Session.Eval(token); err != nil {
+				return out, err
+			}
+			i++
 		}
 	}
 	return out, nil
