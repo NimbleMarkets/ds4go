@@ -21,12 +21,31 @@
 go get github.com/NimbleMarkets/ds4-go
 ```
 
-Place the shared library in `./lib/`, next to your executable, or point at it explicitly:
+To install a prebuilt native `libds4` from GitHub Releases:
+
+```sh
+go install github.com/NimbleMarkets/ds4-go/cmd/ds4-go@latest
+ds4-go install --backend auto
+```
+
+The installer downloads from `github.com/NimbleMarkets/ds4` by default. Use
+`--repo`, `--version`, `--backend`, or `--url` to select a fork, release, build,
+or direct archive. It installs into `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`.
+
+`DS4_DIR` is the ds4 home directory used by ds4-go tooling:
+
+```text
+$DS4_DIR/lib/      native shared libraries
+$DS4_DIR/models/   GGUF model files
+```
+
+Place the shared library in `~/.ds4/lib/`, `./lib/`, next to your executable, or
+point at it explicitly:
 
 ```sh
 export DS4_LIB=/absolute/path/to/libds4.dylib
 # or
-export DS4GO_LIB=/absolute/path/to/libds4.so
+export DS4_DIR=/opt/ds4
 ```
 
 Platform defaults are:
@@ -82,7 +101,7 @@ go run ./cmd/ds4-go --model ./ds4flash.gguf
 
 `cmd/ds4-go` and the examples accept the **same arguments as the upstream `ds4` C programs**, parsed with [`pflag`](https://github.com/spf13/pflag) so options take the `--option` form. `cmd/ds4-go`, `examples/simple`, and `examples/chat` mirror the `ds4` CLI (`ds4_cli.c`); `examples/openai-compatible` mirrors `ds4-server` (`ds4_server.c`). Run any of them with `--help` for the full list.
 
-The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime (empty falls back to `DS4_LIB`/`DS4GO_LIB`).
+The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime (empty falls back to `DS4_LIB` or `DS4_DIR/lib`).
 
 ## Examples
 

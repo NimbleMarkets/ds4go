@@ -14,7 +14,7 @@
 The default loader checks:
 
 1. `DS4_LIB`
-2. `DS4GO_LIB`
+2. `$DS4_DIR/lib` when `DS4_DIR` is set, otherwise `~/.ds4/lib`
 3. executable directory
 4. executable `lib/`
 5. current directory
