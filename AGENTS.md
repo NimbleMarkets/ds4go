@@ -23,7 +23,8 @@ There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure
   - `cmd/ds4-go/` → optional CLI (simple one-shot and chat)
   - `lib/` → placeholder for the shared libraries (document how user places them)
   - `README.md`, `INSTALL.md`, `MODELS.md`, `BENCHMARKS.md`
-- Support environment variable `DS4_LIB` (or `DS4GO_LIB`) to point to a custom library path
+- Support environment variable `DS4_LIB` to point to a custom library path and
+  `DS4_DIR` for the ds4 home directory
 - Auto-detect platform at runtime and pick the correct extension (.so / .dylib / .dll)
 
 **The user will handle building the shared library from ds4** — you do **not** need to generate any C/Metal/CUDA code or Makefiles. Just assume the following files exist after the user runs their build:

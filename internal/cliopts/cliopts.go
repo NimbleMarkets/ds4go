@@ -26,7 +26,7 @@ import (
 // CLIConfig holds the `ds4` CLI option surface (ds4_cli.c).
 type CLIConfig struct {
 	// Lib is the libds4 shared library path. This flag has no ds4 equivalent;
-	// it is required by the pure-Go wrapper. Empty uses DS4_LIB/DS4GO_LIB.
+	// it is required by the pure-Go wrapper. Empty uses DS4_LIB or DS4_DIR/lib.
 	Lib string
 
 	// Model and runtime.
@@ -80,7 +80,7 @@ type CLIConfig struct {
 func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	c := &CLIConfig{}
 
-	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4-go addition; empty uses DS4_LIB/DS4GO_LIB)")
+	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4-go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
 	fs.StringVarP(&c.Model, "model", "m", "ds4flash.gguf", "GGUF model path")
@@ -245,7 +245,7 @@ type ServerConfig struct {
 func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	c := &ServerConfig{}
 
-	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4-go addition; empty uses DS4_LIB/DS4GO_LIB)")
+	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4-go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
 	fs.StringVarP(&c.Model, "model", "m", "ds4flash.gguf", "GGUF model path")

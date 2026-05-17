@@ -1,6 +1,7 @@
 # lib
 
-Place your ds4 shared library here if you do not want to use `DS4_LIB`, `DS4GO_LIB`, or `-lib`.
+Place your ds4 shared library here if you do not want to use `DS4_LIB`,
+`DS4_DIR/lib`, or `-lib`.
 
 Expected filenames:
 

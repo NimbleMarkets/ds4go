@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/NimbleMarkets/ds4-go/ds4"
 	"github.com/NimbleMarkets/ds4-go/internal/cliopts"
+	"github.com/NimbleMarkets/ds4-go/internal/install"
 	"github.com/spf13/pflag"
 )
 
@@ -23,11 +25,20 @@ type cliMessage struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "install" {
+		if err := runInstall(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "ds4-go install:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	fs := pflag.NewFlagSet("ds4-go", pflag.ContinueOnError)
 	cfg := cliopts.RegisterCLI(fs)
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr,
-			"Usage: ds4-go [(-p PROMPT | --prompt-file FILE)] [options]\n\n"+
+			"Usage: ds4-go [(-p PROMPT | --prompt-file FILE)] [options]\n"+
+				"       ds4-go install [options]\n\n"+
 				"Run ds4 inference. With no prompt, starts an interactive chat (ds4>).\n\n"+
 				"Options:\n")
 		fmt.Fprint(os.Stderr, fs.FlagUsagesWrapped(100))
@@ -38,6 +49,43 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ds4-go:", err)
 		os.Exit(1)
 	}
+}
+
+func runInstall(args []string) error {
+	var opts install.Options
+	fs := pflag.NewFlagSet("install", pflag.ContinueOnError)
+	fs.StringVar(&opts.DestDir, "lib", "", "directory where libds4 will be installed (default $DS4_DIR/lib or ~/.ds4/lib)")
+	fs.StringVar(&opts.Repo, "repo", install.DefaultRepo, "GitHub repo that publishes libds4 releases")
+	fs.StringVar(&opts.Version, "version", "latest", "release tag to install, or latest")
+	fs.StringVar(&opts.Backend, "backend", "auto", "backend build to install: auto, metal, cuda, or cpu")
+	fs.StringVar(&opts.GOOS, "os", "", "target operating system (default current)")
+	fs.StringVar(&opts.GOARCH, "arch", "", "target architecture (default current)")
+	fs.StringVar(&opts.Asset, "asset", "", "exact release asset name to download")
+	fs.StringVar(&opts.URL, "url", "", "direct archive URL instead of GitHub release lookup")
+	fs.StringVar(&opts.Token, "token", "", "GitHub token for private repos or higher rate limits (defaults to GITHUB_TOKEN)")
+	fs.BoolVar(&opts.Force, "force", false, "replace an existing libds4 file")
+	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the selected asset without downloading it")
+	fs.BoolVar(&opts.SkipChecksum, "skip-checksum", false, "skip checksums.txt verification when available")
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr,
+			"Usage: ds4-go install [options]\n\n"+
+				"Download a prebuilt libds4 shared library from GitHub Releases.\n\n"+
+				"Options:\n")
+		fmt.Fprint(os.Stderr, fs.FlagUsagesWrapped(100))
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			os.Exit(0)
+		}
+		return err
+	}
+	if opts.Token == "" {
+		opts.Token = os.Getenv("GITHUB_TOKEN")
+	}
+	opts.Out = os.Stdout
+	opts.ProgressOut = os.Stderr
+	_, err := install.Run(context.Background(), opts)
+	return err
 }
 
 func run(cfg *cliopts.CLIConfig) error {
