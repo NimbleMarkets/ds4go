@@ -442,7 +442,9 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 	} else {
 		flags |= os.O_TRUNC
 	}
-	f, err := os.OpenFile(part, flags, 0o644)
+	// 0600: model data is written owner-only; the final model keeps this
+	// mode after the .part file is renamed into place.
+	f, err := os.OpenFile(part, flags, 0o600)
 	if err != nil {
 		return "", err
 	}

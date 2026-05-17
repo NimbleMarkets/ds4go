@@ -91,7 +91,7 @@ func newInstallCommand() *cobra.Command {
 	fs.StringVar(&opts.Token, "token", "", "GitHub token for private repos or higher rate limits (defaults to GITHUB_TOKEN)")
 	fs.BoolVar(&opts.Force, "force", false, "replace an existing libds4 file")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the selected asset without downloading it")
-	fs.BoolVar(&opts.SkipChecksum, "skip-checksum", false, "skip checksums.txt verification when available")
+	fs.BoolVar(&opts.SkipChecksum, "skip-checksum", false, "skip GitHub API digest verification of the download")
 	return cmd
 }
 

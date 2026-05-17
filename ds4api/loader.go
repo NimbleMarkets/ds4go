@@ -1,11 +1,15 @@
 package ds4api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/ebitengine/purego"
@@ -33,6 +37,13 @@ func Load(path string) (*Library, error) {
 	}
 	if path == "" {
 		return nil, fmt.Errorf("ds4: could not find %s; set DS4_LIB or pass an explicit path", libraryFileName())
+	}
+
+	// Loading a shared library executes its code in this process, so verify
+	// the file is not third-party-writable and matches its recorded checksum
+	// before handing it to the dynamic loader.
+	if err := verifyLibrary(path); err != nil {
+		return nil, err
 	}
 
 	handle, err := openDynamicLibrary(path)
@@ -155,6 +166,9 @@ func (l *Library) register() (err error) {
 	return nil
 }
 
+// defaultLibraryPath resolves libds4 from DS4_LIB and executable-local
+// paths. The current working directory is deliberately not searched, to
+// avoid loading an attacker-planted library (binary planting).
 func defaultLibraryPath() string {
 	if path := os.Getenv("DS4_LIB"); path != "" {
 		return path
@@ -165,9 +179,6 @@ func defaultLibraryPath() string {
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, name), filepath.Join(cwd, "lib", name))
 	}
 	candidates = append(candidates, name)
 
@@ -191,6 +202,78 @@ func libraryFileName() string {
 	default:
 		return "libds4.so"
 	}
+}
+
+// verifyLibrary performs integrity checks on a resolved libds4 path before it
+// is loaded into the process. A bare library name (no directory component) is
+// left to the OS loader's trusted search and skipped here.
+func verifyLibrary(path string) error {
+	if filepath.Base(path) == path {
+		return nil // bare name: OS loader policy applies
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("ds4: refusing to load %q: not a regular file", path)
+	}
+
+	// A library file or directory writable by group/other lets another
+	// unprivileged account replace it and run arbitrary code in this
+	// process. The Go file mode is not meaningful on Windows (NTFS uses
+	// ACLs), so this check is POSIX-only there.
+	if runtime.GOOS != "windows" {
+		if perm := fi.Mode().Perm(); perm&0o022 != 0 {
+			return fmt.Errorf("ds4: refusing to load %q: writable by group/other (%#o); run: chmod go-w %q", path, perm, path)
+		}
+		dir := filepath.Dir(path)
+		if di, err := os.Stat(dir); err == nil {
+			if perm := di.Mode().Perm(); perm&0o022 != 0 {
+				return fmt.Errorf("ds4: refusing to load %q: directory %q is writable by group/other (%#o); run: chmod go-w %q", path, dir, perm, dir)
+			}
+		}
+	}
+
+	return verifyChecksumSidecar(path)
+}
+
+// verifyChecksumSidecar checks path against a "<path>.sha256" file when one
+// exists (written by `ds4go install`). A missing sidecar is not an error: a
+// manually placed or DS4_LIB library simply has no recorded checksum.
+func verifyChecksumSidecar(path string) error {
+	recorded, err := os.ReadFile(path + ".sha256")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	expected := strings.TrimSpace(string(recorded))
+	if expected == "" {
+		return nil
+	}
+	got, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(got, expected) {
+		return fmt.Errorf("ds4: %q failed its integrity check: sha256 %s does not match recorded %s; reinstall with: ds4go install --force", path, got, expected)
+	}
+	return nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func ensureLibrary(lib *Library) (*Library, error) {

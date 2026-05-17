@@ -94,9 +94,21 @@ libds4-VERSION-windows-amd64-cuda.zip
 The installer also accepts Go-style platform aliases such as `darwin` for
 `macos` and `amd64` for `x86_64`.
 
-If a release contains `checksums.txt` or `SHA256SUMS`, the installer verifies
-the downloaded archive before extraction. Use `--skip-checksum` only for local
-testing or trusted private artifacts.
+Before extracting a download, the installer verifies it against the SHA256
+digest GitHub computes for the release asset and serves over its API — a
+channel separate from the CDN-fronted download, so it catches transport
+tampering and corruption. A mismatch aborts the install. Pass `--skip-checksum`
+to bypass (local testing only); direct `--url` installs have no API digest and
+skip this check.
+
+Each libds4 release also carries a Sigstore build provenance attestation.
+`ds4go` does not verify it in-process — doing so would pull in a very large
+dependency tree — but you can verify it out of band with the
+[GitHub CLI](https://cli.github.com):
+
+```sh
+gh attestation verify libds4-VERSION-macos-arm64-metal.tar.gz --repo NimbleMarkets/ds4
+```
 
 ## Manual Install from `ds4` repository
 
@@ -140,5 +152,9 @@ cp /path/to/libds4.so "$DS4_DIR/lib/"
 ```
 
 The package searches `DS4_LIB`, `$DS4_DIR/lib` when `DS4_DIR` is set, otherwise
-`~/.ds4/lib`, then the executable directory, `./lib`, and the platform library
-name.
+`~/.ds4/lib`, then the executable directory, and the platform library name.
+
+The current working directory is intentionally not searched: loading a shared
+library from the CWD would let an attacker plant a malicious `libds4` in a
+directory you run `ds4go` from. Use `DS4_LIB` or `DS4_DIR` for non-default
+locations.

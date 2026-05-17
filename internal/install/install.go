@@ -70,15 +70,19 @@ type release struct {
 type asset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
+	// Digest is the SHA256 GitHub computes server-side for the asset, in
+	// "sha256:<hex>" form. Served over the API channel (not the CDN).
+	Digest string `json:"digest"`
 }
 
 // Run downloads, verifies when possible, and extracts a prebuilt libds4 asset.
 func Run(ctx context.Context, opts Options) (*Result, error) {
 	opts = normalize(opts)
-	assetName, assetURL, version, err := resolveAsset(ctx, opts)
+	a, version, err := resolveAsset(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
+	assetName, assetURL := a.Name, a.BrowserDownloadURL
 
 	res := &Result{
 		Repo:      opts.Repo,
@@ -111,17 +115,38 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, err
 	}
 	if !opts.SkipChecksum && opts.URL == "" {
-		ok, err := verifyChecksum(ctx, opts, assetName, data)
+		ok, err := verifyAssetDigest(opts, assetName, a.Digest, data)
 		if err != nil {
-			fmt.Fprintf(opts.Out, "checksum: %v\n", err)
+			return nil, err
 		}
 		res.ChecksumOK = ok
 	}
 	if err := extractLibrary(assetName, data, opts.DestDir, opts.GOOS, opts.Force); err != nil {
 		return nil, err
 	}
+	// Record the installed library's checksum so the loader can detect later
+	// tampering or corruption.
+	if err := writeLibraryChecksum(res.Library); err != nil {
+		fmt.Fprintf(opts.Out, "warning: could not record library checksum: %v\n", err)
+	}
 	fmt.Fprintf(opts.Out, "installed %s\n", res.Library)
 	return res, nil
+}
+
+// writeLibraryChecksum writes a "<libPath>.sha256" sidecar with the SHA256 of
+// the installed library, which ds4api verifies before loading it.
+func writeLibraryChecksum(libPath string) error {
+	f, err := os.Open(libPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	return os.WriteFile(libPath+".sha256", []byte(sum+"\n"), 0o600)
 }
 
 func normalize(opts Options) Options {
@@ -162,34 +187,34 @@ func defaultDir() string {
 	return ".ds4"
 }
 
-func resolveAsset(ctx context.Context, opts Options) (name, url, version string, err error) {
+func resolveAsset(ctx context.Context, opts Options) (asset, string, error) {
 	if opts.URL != "" {
 		name := filepath.Base(strings.Split(opts.URL, "?")[0])
 		if name == "" || name == "." || name == "/" {
 			name = opts.Asset
 		}
-		return name, opts.URL, opts.Version, nil
+		return asset{Name: name, BrowserDownloadURL: opts.URL}, opts.Version, nil
 	}
 
 	rel, err := fetchRelease(ctx, opts)
 	if err != nil {
-		return "", "", "", err
+		return asset{}, "", err
 	}
-	version = rel.TagName
+	version := rel.TagName
 	if opts.Asset != "" {
 		for _, a := range rel.Assets {
 			if a.Name == opts.Asset {
-				return a.Name, a.BrowserDownloadURL, version, nil
+				return a, version, nil
 			}
 		}
-		return "", "", "", fmt.Errorf("asset %q not found in %s release %s", opts.Asset, opts.Repo, version)
+		return asset{}, "", fmt.Errorf("asset %q not found in %s release %s", opts.Asset, opts.Repo, version)
 	}
 
 	expected := candidateAssetNames(version, opts)
 	for _, want := range expected {
 		for _, a := range rel.Assets {
 			if a.Name == want {
-				return a.Name, a.BrowserDownloadURL, version, nil
+				return a, version, nil
 			}
 		}
 	}
@@ -199,7 +224,7 @@ func resolveAsset(ctx context.Context, opts Options) (name, url, version string,
 		names = append(names, a.Name)
 	}
 	slices.Sort(names)
-	return "", "", "", fmt.Errorf("no libds4 asset for %s/%s/%s in %s release %s; tried %s; available assets: %s",
+	return asset{}, "", fmt.Errorf("no libds4 asset for %s/%s/%s in %s release %s; tried %s; available assets: %s",
 		opts.GOOS, opts.GOARCH, opts.Backend, opts.Repo, version, strings.Join(expected, ", "), strings.Join(names, ", "))
 }
 
@@ -335,50 +360,23 @@ func newRequest(ctx context.Context, opts Options, url string) (*http.Request, e
 	return req, nil
 }
 
-func verifyChecksum(ctx context.Context, opts Options, assetName string, data []byte) (bool, error) {
-	rel, err := fetchRelease(ctx, opts)
-	if err != nil {
-		return false, err
+// verifyAssetDigest compares the downloaded asset to the SHA256 digest GitHub
+// computes for the release asset and serves over its API — a channel separate
+// from the CDN-fronted download. A mismatch is fatal; a release too old to
+// carry a digest produces a warning.
+func verifyAssetDigest(opts Options, assetName, apiDigest string, data []byte) (bool, error) {
+	if apiDigest == "" {
+		fmt.Fprintf(opts.Out, "warning: GitHub reported no digest for %s; skipping digest check\n", assetName)
+		return false, nil
 	}
-	var checksumURL string
-	for _, a := range rel.Assets {
-		if a.Name == "checksums.txt" || a.Name == "SHA256SUMS" {
-			checksumURL = a.BrowserDownloadURL
-			break
-		}
-	}
-	if checksumURL == "" {
-		return false, errors.New("checksums.txt not found; skipping checksum verification")
-	}
-	sumData, err := download(ctx, opts, checksumURL)
-	if err != nil {
-		return false, err
-	}
-	want, ok := parseChecksum(string(sumData), assetName)
-	if !ok {
-		return false, fmt.Errorf("no checksum entry for %s", assetName)
-	}
-	actual := sha256.Sum256(data)
-	got := hex.EncodeToString(actual[:])
+	want := strings.TrimPrefix(apiDigest, "sha256:")
+	sum := sha256.Sum256(data)
+	got := hex.EncodeToString(sum[:])
 	if !strings.EqualFold(got, want) {
-		return false, fmt.Errorf("checksum mismatch for %s", assetName)
+		return false, fmt.Errorf("sha256 mismatch for %s: downloaded %s, GitHub API reports %s", assetName, got, want)
 	}
-	fmt.Fprintf(opts.Out, "verified sha256 for %s\n", assetName)
+	fmt.Fprintf(opts.Out, "verified sha256 against the GitHub API digest for %s\n", assetName)
 	return true, nil
-}
-
-func parseChecksum(text, assetName string) (string, bool) {
-	for _, line := range strings.Split(text, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		name := strings.TrimPrefix(fields[1], "*")
-		if filepath.Base(name) == assetName {
-			return fields[0], true
-		}
-	}
-	return "", false
 }
 
 func extractLibrary(assetName string, data []byte, destDir, goos string, force bool) error {
@@ -412,6 +410,9 @@ func extractTarGzLibrary(data []byte, destDir, libName string, force bool) error
 		if err != nil {
 			return fmt.Errorf("read tar.gz: %w", err)
 		}
+		if !archivePathIsSafe(h.Name) {
+			return fmt.Errorf("refusing archive with unsafe member path %q", h.Name)
+		}
 		if filepath.Base(h.Name) != libName || h.FileInfo().IsDir() {
 			continue
 		}
@@ -426,6 +427,9 @@ func extractZipLibrary(data []byte, destDir, libName string, force bool) error {
 		return fmt.Errorf("open zip: %w", err)
 	}
 	for _, f := range zr.File {
+		if !archivePathIsSafe(f.Name) {
+			return fmt.Errorf("refusing archive with unsafe member path %q", f.Name)
+		}
 		if filepath.Base(f.Name) != libName || f.FileInfo().IsDir() {
 			continue
 		}
@@ -446,7 +450,9 @@ func writeFile(path string, src io.Reader, force bool) error {
 	} else {
 		flags |= os.O_EXCL
 	}
-	f, err := os.OpenFile(path, flags, 0o755)
+	// 0600: the library is loaded by the installing user only; keeping it
+	// owner-writable also prevents third-party tampering before it is loaded.
+	f, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
@@ -455,6 +461,23 @@ func writeFile(path string, src io.Reader, force bool) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// archivePathIsSafe reports whether an archive member name is free of path
+// traversal — not absolute and with no ".." component. libds4 archives are
+// always extracted to a fixed filename, but a member that escapes the archive
+// root signals a tampered or hostile archive, so extraction is refused.
+func archivePathIsSafe(name string) bool {
+	if name == "" || filepath.IsAbs(name) ||
+		strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) {
+		return false
+	}
+	for _, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func libraryFileName(goos string) string {

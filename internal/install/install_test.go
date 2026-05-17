@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,13 +53,25 @@ func TestNormalizeDefaultsToHomeDS4Lib(t *testing.T) {
 	}
 }
 
-func TestParseChecksum(t *testing.T) {
-	sum, ok := parseChecksum("abc123  libds4-v0.1.0-darwin-arm64-metal.tar.gz\n", "libds4-v0.1.0-darwin-arm64-metal.tar.gz")
-	if !ok {
-		t.Fatal("parseChecksum did not find asset")
+func TestVerifyAssetDigest(t *testing.T) {
+	data := []byte("libds4 archive bytes")
+	sum := sha256.Sum256(data)
+	opts := Options{Out: io.Discard}
+
+	// Matching digest passes.
+	ok, err := verifyAssetDigest(opts, "lib.tar.gz", "sha256:"+hex.EncodeToString(sum[:]), data)
+	if err != nil || !ok {
+		t.Fatalf("matching digest: ok=%v err=%v", ok, err)
 	}
-	if sum != "abc123" {
-		t.Fatalf("checksum = %q, want abc123", sum)
+
+	// Mismatched digest is fatal.
+	if _, err := verifyAssetDigest(opts, "lib.tar.gz", "sha256:"+strings.Repeat("0", 64), data); err == nil {
+		t.Fatal("mismatched digest: want error")
+	}
+
+	// A release with no digest warns and continues (not verified).
+	if ok, err := verifyAssetDigest(opts, "lib.tar.gz", "", data); err != nil || ok {
+		t.Fatalf("missing digest: want ok=false err=nil, got ok=%v err=%v", ok, err)
 	}
 }
 
@@ -73,6 +87,46 @@ func TestExtractTarGzLibrary(t *testing.T) {
 	}
 	if string(got) != "native-lib" {
 		t.Fatalf("installed contents = %q", got)
+	}
+}
+
+func TestWriteLibraryChecksum(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "libds4.so")
+	payload := []byte("native-lib")
+	if err := os.WriteFile(lib, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLibraryChecksum(lib); err != nil {
+		t.Fatalf("writeLibraryChecksum: %v", err)
+	}
+	sum := sha256.Sum256(payload)
+	got, err := os.ReadFile(lib + ".sha256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := hex.EncodeToString(sum[:]) + "\n"; string(got) != want {
+		t.Fatalf("sidecar = %q, want %q", got, want)
+	}
+}
+
+func TestArchivePathIsSafe(t *testing.T) {
+	for _, p := range []string{"libds4.so", "dist/libds4.so", "a/b/c.txt"} {
+		if !archivePathIsSafe(p) {
+			t.Errorf("archivePathIsSafe(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{"", "../libds4.so", "a/../../etc/x", "/abs/libds4.so", `\win\x`, "dir/.."} {
+		if archivePathIsSafe(p) {
+			t.Errorf("archivePathIsSafe(%q) = true, want false", p)
+		}
+	}
+}
+
+func TestExtractTarGzRejectsTraversal(t *testing.T) {
+	data := makeTarGz(t, "../../../tmp/libds4.so", []byte("evil"))
+	if err := extractLibrary("x.tar.gz", data, t.TempDir(), "linux", false); err == nil {
+		t.Fatal("extractLibrary accepted an archive with a path-traversal member")
 	}
 }
 

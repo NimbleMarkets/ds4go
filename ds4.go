@@ -55,8 +55,9 @@ const (
 
 // Load loads libds4 using ds4go's runtime path policy.
 //
-// Passing an empty path searches DS4_LIB, DS4_DIR/lib, local executable and
-// working-directory library locations, and finally the platform loader path.
+// Passing an empty path searches DS4_LIB, DS4_DIR/lib, executable-local
+// library locations, and finally the platform loader path. The current
+// working directory is not searched; see DefaultLibraryPath.
 func Load(path string) (*ds4api.Library, error) {
 	if path == "" {
 		path = DefaultLibraryPath()

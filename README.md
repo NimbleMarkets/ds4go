@@ -63,8 +63,9 @@ ds4go model set q2-imatrix
 The default model path for commands and examples is
 `$DS4_DIR/models/ds4flash.gguf`.
 
-Place the shared library in `~/.ds4/lib/`, `./lib/`, next to your executable, or
-point at it explicitly:
+Place the shared library in `~/.ds4/lib/`, next to your executable, or point at
+it explicitly (the working directory is not searched, to avoid loading a
+planted library):
 
 ```sh
 export DS4_LIB=/absolute/path/to/libds4.dylib

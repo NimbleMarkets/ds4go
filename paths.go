@@ -26,11 +26,24 @@ func DefaultLibraryDir() string {
 	return filepath.Join(DefaultDir(), "lib")
 }
 
+// DefaultModelPath returns the path to the default model symlink.
+//
+// The default model is a symlink at $DS4_DIR/models/ds4flash.gguf that
+// points to the active downloaded model. Use ds4go model set to switch it.
+func DefaultModelPath() string {
+	return filepath.Join(DefaultDir(), "models", "ds4flash.gguf")
+}
+
 // DefaultLibraryPath returns the preferred libds4 shared-library path.
 //
-// Search order is DS4_LIB, DS4_DIR/lib, executable-local paths, working
-// directory paths, and finally the platform library name for system loader
-// lookup.
+// Search order is DS4_LIB, DS4_DIR/lib, executable-local paths, and finally
+// the platform library name for system loader lookup.
+//
+// The current working directory is deliberately NOT searched: loading a
+// shared library from the CWD would let an attacker who can write a file
+// into a directory the user happens to run ds4go from plant a malicious
+// libds4 and gain code execution (binary planting). Use DS4_LIB or DS4_DIR
+// to load a library from a non-default location.
 func DefaultLibraryPath() string {
 	if path := os.Getenv("DS4_LIB"); path != "" {
 		return path
@@ -44,9 +57,6 @@ func DefaultLibraryPath() string {
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, name), filepath.Join(cwd, "lib", name))
 	}
 	candidates = append(candidates, name)
 
