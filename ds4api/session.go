@@ -1,4 +1,4 @@
-package ds4
+package ds4api
 
 import (
 	"runtime"
@@ -254,85 +254,6 @@ func (s *Session) Tokens() *Tokens {
 		return nil
 	}
 	return borrowedTokens(s.lib, s.lib.raw.ds4SessionTokens(s.ptr))
-}
-
-// Generate synchronizes to prompt and generates tokens from the session.
-func (s *Session) Generate(prompt []int, opts GenerateOptions) ([]int, error) {
-	if err := s.Sync(prompt); err != nil {
-		return nil, err
-	}
-	return s.ContinueGenerate(opts)
-}
-
-// GenerateTokens synchronizes to prompt and generates tokens from the session.
-func (s *Session) GenerateTokens(prompt *Tokens, opts GenerateOptions) ([]int, error) {
-	if err := s.SyncTokens(prompt); err != nil {
-		return nil, err
-	}
-	return s.ContinueGenerate(opts)
-}
-
-// ContinueGenerate generates tokens from the current session logits.
-func (s *Session) ContinueGenerate(opts GenerateOptions) ([]int, error) {
-	if err := s.require(); err != nil {
-		return nil, err
-	}
-	maxTokens := opts.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 128
-	}
-	eos := -1
-	if opts.StopOnEOS && s.engine != nil {
-		eos = s.engine.TokenEOS()
-	}
-	var rng = opts.Seed
-	out := make([]int, 0, maxTokens)
-	for i := 0; i < maxTokens; i++ {
-		var token int
-		if opts.Temperature > 0 {
-			token = s.Sample(opts.Temperature, opts.TopK, opts.TopP, opts.MinP, &rng)
-		} else if opts.ExcludeToken != 0 {
-			token = s.ArgmaxExcluding(opts.ExcludeToken)
-		} else {
-			token = s.Argmax()
-		}
-		if opts.StopOnEOS && token == eos {
-			break
-		}
-		out = append(out, token)
-		if opts.OnToken != nil {
-			opts.OnToken(token)
-		}
-		if err := s.Eval(token); err != nil {
-			return out, err
-		}
-	}
-	return out, nil
-}
-
-// GenerateString tokenizes prompt, generates, and decodes the generated text.
-func (s *Session) GenerateString(prompt string, opts GenerateOptions) (string, error) {
-	if s == nil || s.engine == nil {
-		return "", errClosed
-	}
-	tokens, err := s.engine.TokenizeText(prompt)
-	if err != nil {
-		return "", err
-	}
-	defer tokens.Free()
-	generated, err := s.GenerateTokens(tokens, opts)
-	if err != nil {
-		return "", err
-	}
-	text := ""
-	for _, token := range generated {
-		part, err := s.engine.TokenText(token)
-		if err != nil {
-			return text, err
-		}
-		text += part
-	}
-	return text, nil
 }
 
 // PayloadBytes returns ds4_session_payload_bytes.

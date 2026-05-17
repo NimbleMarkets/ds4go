@@ -1,4 +1,4 @@
-// Package install downloads prebuilt libds4 release assets for the ds4-go CLI.
+// Package install downloads prebuilt libds4 release assets for the ds4go CLI.
 package install
 
 import (
@@ -26,7 +26,7 @@ const (
 	// DefaultRepo is the GitHub repository used for prebuilt libds4 binaries.
 	DefaultRepo = "NimbleMarkets/ds4"
 
-	defaultUserAgent = "ds4-go installer"
+	defaultUserAgent = "ds4go installer"
 )
 
 // Options configures a libds4 installation.

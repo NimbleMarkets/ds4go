@@ -1,8 +1,8 @@
-// Package cliopts defines the command-line flag surface shared by the ds4-go
+// Package cliopts defines the command-line flag surface shared by the ds4go
 // CLI and examples.
 //
 // The flag names, shorthands, and defaults mirror the upstream ds4 C programs
-// so that ds4-go binaries accept the same arguments:
+// so that ds4go binaries accept the same arguments:
 //
 //   - RegisterCLI    mirrors the `ds4` CLI       (ds4_cli.c)
 //   - RegisterServer mirrors the `ds4-server`    (ds4_server.c)
@@ -19,7 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NimbleMarkets/ds4-go/ds4"
+	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 	"github.com/spf13/pflag"
 )
 
@@ -80,10 +81,10 @@ type CLIConfig struct {
 func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	c := &CLIConfig{}
 
-	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4-go addition; empty uses DS4_LIB or DS4_DIR/lib)")
+	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
-	fs.StringVarP(&c.Model, "model", "m", "ds4flash.gguf", "GGUF model path")
+	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
 	fs.StringVar(&c.MTP, "mtp", "", "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
@@ -200,7 +201,7 @@ func (c *CLIConfig) PromptText() (string, error) {
 
 // ServerConfig holds the `ds4-server` option surface (ds4_server.c).
 type ServerConfig struct {
-	// Lib is the libds4 shared library path (ds4-go addition).
+	// Lib is the libds4 shared library path (ds4go addition).
 	Lib string
 
 	// Model and runtime.
@@ -245,10 +246,10 @@ type ServerConfig struct {
 func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	c := &ServerConfig{}
 
-	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4-go addition; empty uses DS4_LIB or DS4_DIR/lib)")
+	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
-	fs.StringVarP(&c.Model, "model", "m", "ds4flash.gguf", "GGUF model path")
+	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
 	fs.StringVar(&c.MTP, "mtp", "", "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")

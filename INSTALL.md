@@ -14,14 +14,31 @@ go build ./...
 
 No C compiler is needed for Go builds.  Runtime requires `ds4`, read on...
 
+## Install the `ds4go` CLI
+
+Install the prebuilt `ds4go` CLI with Homebrew, or build it with the Go
+toolchain:
+
+```sh
+# Homebrew (macOS/Linux)
+brew install nimblemarkets/tap/ds4go
+
+# or with the Go toolchain
+go install github.com/NimbleMarkets/ds4go/cmd/ds4go@latest
+```
+
+Homebrew releases are published from the [NimbleMarkets tap][tap] by
+[GoReleaser](https://goreleaser.com) on each tagged release.
+
+[tap]: https://github.com/NimbleMarkets/homebrew-tap
+
 ## Quick Install of `ds4` from GitHub Releases
 
-`ds4-go` can install prebuilt `libds4` shared libraries published by the
+`ds4go` can install prebuilt `libds4` shared libraries published by the
 NimbleMarkets ds4 fork:
 
 ```sh
-go install github.com/NimbleMarkets/ds4-go/cmd/ds4-go@latest
-ds4-go install --backend auto
+ds4go install --backend auto
 ```
 
 By default this installs the shared library into:
@@ -36,7 +53,7 @@ Set `DS4_DIR` to use a different ds4 home:
 
 ```sh
 export DS4_DIR=/opt/ds4
-ds4-go install --backend auto
+ds4go install --backend auto
 ```
 
 The tooling treats this directory as:
@@ -50,18 +67,18 @@ $DS4_DIR/models/   GGUF model files
 specific build when needed:
 
 ```sh
-ds4-go install --backend metal
-ds4-go install --backend cuda
-ds4-go install --backend cpu
+ds4go install --backend metal
+ds4go install --backend cuda
+ds4go install --backend cpu
 ```
 
 The installer downloads from `github.com/NimbleMarkets/ds4` by default. You can
 point it at another fork or a specific release:
 
 ```sh
-ds4-go install --repo neomantra/ds4 --version v0.1.0 --backend metal
-ds4-go install --url https://github.com/NimbleMarkets/ds4/releases/download/v0.1.0/libds4-v0.1.0-darwin-arm64-metal.tar.gz
-ds4-go install --lib ./lib --backend metal
+ds4go install --repo neomantra/ds4 --version v0.1.0 --backend metal
+ds4go install --url https://github.com/NimbleMarkets/ds4/releases/download/v0.1.0/libds4-v0.1.0-darwin-arm64-metal.tar.gz
+ds4go install --lib ./lib --backend metal
 ```
 
 Expected release asset names are:
@@ -93,7 +110,7 @@ cd ds4
 # Follow ds4's current build instructions for Metal, CUDA, or CPU.
 ```
 
-`ds4-go` expects one of these runtime artifacts:
+`ds4go` expects one of these runtime artifacts:
 
 ```text
 libds4.dylib  macOS

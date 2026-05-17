@@ -1,8 +1,8 @@
-// Package ds4 provides pure-Go bindings for the ds4 inference engine.
+// Package ds4api provides pure-Go bindings for the ds4 inference engine.
 //
 // The package does not use cgo. It loads a user-provided libds4 shared
 // library at runtime through purego and wraps the public API from ds4.h.
-package ds4
+package ds4api
 
 import "fmt"
 
@@ -139,28 +139,6 @@ type GenerationDoneFunc func()
 
 // ProgressFunc receives ds4 progress events.
 type ProgressFunc func(event string, current, total int)
-
-// GenerateOptions controls session-level generation helpers.
-type GenerateOptions struct {
-	// MaxTokens is the maximum number of tokens to generate.
-	MaxTokens int
-	// Temperature controls sampling. Values <= 0 use argmax.
-	Temperature float32
-	// TopK limits sampling to the best k tokens when Temperature > 0.
-	TopK int
-	// TopP applies nucleus sampling when Temperature > 0.
-	TopP float32
-	// MinP applies minimum probability sampling when Temperature > 0.
-	MinP float32
-	// Seed seeds ds4's sampler. A zero seed is valid and deterministic.
-	Seed uint64
-	// StopOnEOS stops generation when ds4 emits the engine EOS token.
-	StopOnEOS bool
-	// ExcludeToken asks argmax generation to skip a specific token id.
-	ExcludeToken int
-	// OnToken streams generated tokens. Returning normally continues generation.
-	OnToken TokenEmitFunc
-}
 
 // ArgmaxGenerateOptions controls ds4_engine_generate_argmax.
 type ArgmaxGenerateOptions struct {

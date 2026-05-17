@@ -1,12 +1,12 @@
-# `ds4-go` AGENTS.md
+# `ds4go` AGENTS.md
 
 This is the first prompt.  However this is the AGENTS.md file and for the initial phases you may edit it however you wish and do not need to keep the initial prompt as is.
 
 We will be using superpowers to build this.  We will include our plans and specs in the repo.  Please ensure that the PII is limited to the developers github identifiers.
 
-You are an expert Go systems engineer. Create a **complete, production-ready pure-Go library** called `ds4-go` that lets Go applications run the **ds4** inference engine (https://github.com/antirez/ds4) using **purego + FFI**, exactly like the Yzma project does for llama.cpp (https://github.com/hybridgroup/yzma).
+You are an expert Go systems engineer. Create a **complete, production-ready pure-Go library** called `ds4go` that lets Go applications run the **ds4** inference engine (https://github.com/antirez/ds4) using **purego + FFI**, exactly like the Yzma project does for llama.cpp (https://github.com/hybridgroup/yzma).
 
-There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure will resemble other NimbleMarkets Golang tools, such as:
+There is a go.mod with `github.com/NimbleMarkets/ds4go`.  Our project structure will resemble other NimbleMarkets Golang tools, such as:
  * https://github.com/NimbleMarkets/ntcharts
  * https://github.com/NimbleMarkets/go-booba
 
@@ -16,11 +16,20 @@ There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure
 - Dynamically load a pre-built shared library (`libds4.so`, `libds4.dylib`, or `libds4.dll`) at runtime via `purego`
 - Hardware acceleration is handled entirely by the shared library the user provides (Metal, CUDA, CPU — user chooses the right build)
 - Thin, idiomatic Go wrapper around the exact C API defined in `ds4.h`
+- Keep `ds4api/` purely focused on the ds4 wrapper: FFI loading, 1:1 bindings,
+  thin safe wrappers, and direct helpers that map to `ds4.h`. Do not put
+  CLI UX, diagnostics enrichment, model management, download/install flows, or
+  product-facing convenience behavior in `ds4api/`.
+- Put higher-level runtime helpers in the module root package, named `ds4`.
+  This package is where reusable behavior built on top of `ds4api/` belongs, such as
+  default path policy, friendlier error diagnostics, process/lock context,
+  profile/session helpers, generation loops, and other non-binding extensions.
 - Same folder layout and patterns as Yzma:
   - `go.mod`
-  - `ds4/` → all the Go bindings (imported as `github.com/NimbleMarkets/ds4-go/ds4`)
+  - `ds4api/` → all the Go bindings (imported as `github.com/NimbleMarkets/ds4go/ds4api`)
+  - root package `ds4` → Go-native runtime conveniences built on top of `ds4api/`
   - `examples/` → several ready-to-run examples
-  - `cmd/ds4-go/` → optional CLI (simple one-shot and chat)
+  - `cmd/ds4go/` → optional CLI (simple one-shot and chat)
   - `lib/` → placeholder for the shared libraries (document how user places them)
   - `README.md`, `INSTALL.md`, `MODELS.md`, `BENCHMARKS.md`
 - Support environment variable `DS4_LIB` to point to a custom library path and
@@ -43,12 +52,11 @@ There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure
 - Safe memory management (no leaks, proper freeing)
 
 **Include in the generated project:**
-1. Full `ds4` package with every public function from `ds4.h` bound via purego
-2. High-level convenience wrappers:
+1. Full `ds4api` package with every public function from `ds4.h` bound via purego
+2. High-level convenience wrappers in the root `ds4` package:
    - `NewEngine(opts EngineOptions) (*Engine, error)`
-   - `Engine.NewSession(ctxSize int) (*Session, error)`
-   - `Session.Sync(prompt []int, ...)`
-   - `Session.Generate(...)` helpers (streaming + non-streaming)
+   - `Load(path string) (*Library, error)`
+   - `Generator.Generate(...)` helpers (streaming + non-streaming)
    - Chat helpers that mirror `ds4_encode_chat_prompt`, `ds4_chat_append_*`, etc.
 3. Full examples:
    - `examples/simple` – load model and generate one response
@@ -60,7 +68,7 @@ There is a go.mod with `github.com/NimbleMarkets/ds4-go`.  Our project structure
    - How to place `libds4.*` files
    - Usage examples
    - Performance notes (in-process = zero overhead)
-5. go.mod with proper module name (`github.com/NimbleMarkets/ds4-go`
+5. go.mod with proper module name (`github.com/NimbleMarkets/ds4go`
 6. Makefile with `make` targets for building examples and cleaning
 
 **Important Go style:**

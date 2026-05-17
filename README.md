@@ -1,15 +1,17 @@
-# ds4-go
+# ds4go
 
 <p>
-    <a href="https://github.com/NimbleMarkets/ds4-go/tags"><img src="https://img.shields.io/github/tag/NimbleMarkets/ds4-go.svg" alt="Latest Release"></a>
-    <a href="https://pkg.go.dev/github.com/NimbleMarkets/ds4-go?tab=doc"><img src="https://pkg.go.dev/badge/github.com/NimbleMarkets/ds4-go?utm_source=godoc" alt="GoDoc"></a>
-    <a href="https://github.com/NimbleMarkets/ds4-go/blob/main/CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg"  alt="Code Of Conduct"></a>
+    <a href="https://github.com/NimbleMarkets/ds4go/tags"><img src="https://img.shields.io/github/tag/NimbleMarkets/ds4go.svg" alt="Latest Release"></a>
+    <a href="https://pkg.go.dev/github.com/NimbleMarkets/ds4go?tab=doc"><img src="https://pkg.go.dev/badge/github.com/NimbleMarkets/ds4go?utm_source=godoc" alt="GoDoc"></a>
+    <a href="https://github.com/NimbleMarkets/ds4go/blob/main/CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg"  alt="Code Of Conduct"></a>
 </p>
 
 
-`ds4-go` is a zero-CGO Go wrapper for the [`ds4` inference engine](https://github.com/antirez/ds4). Applications using `ds4-go` loads a pre-built `libds4` shared library at runtime with [`github.com/ebitengine/purego`](https://github.com/ebitengine/purego).  The shared library owns hardware acceleration. Use a Metal, CUDA, or CPU build of ds4 that matches your machine and model.
+`ds4go` is a zero-CGO Go wrapper for the [`ds4` inference engine](https://github.com/antirez/ds4). Applications using `ds4go` loads a pre-built `libds4` shared library at runtime with [`github.com/ebitengine/purego`](https://github.com/ebitengine/purego).  The shared library owns hardware acceleration. Use a Metal, CUDA, or CPU build of ds4 that matches your machine and model.
 
-`ds4` iteself is an inference engine focused on the [*DeepSeek v4 Flash* model](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) targeting machines with 96G or more of GPU-accessible RAM.  We try to maintain parity with the upstream library, wrapping its C API and porting its sample programs to Golang.
+[`ds4`](https://github.com/antirez/ds4) itself is an inference engine focused on the [*DeepSeek v4 Flash* model](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) targeting machines with 96G or more of GPU-accessible RAM.  
+
+We try to maintain parity with the upstream `ds4` library, wrapping its C API.  We build slightly-opinionated tools to facilitate using `ds4`.
 
 ## Motivation
 
@@ -17,27 +19,49 @@
 
 ## Install
 
+Install the `ds4go` CLI with Homebrew or the Go toolchain:
+
 ```sh
-go get github.com/NimbleMarkets/ds4-go
+# Homebrew (macOS/Linux)
+brew install nimblemarkets/tap/ds4go
+
+# or with the Go toolchain
+go install github.com/NimbleMarkets/ds4go/cmd/ds4go@latest
 ```
 
-To install a prebuilt native `libds4` from GitHub Releases:
+To use ds4go as a library:
 
 ```sh
-go install github.com/NimbleMarkets/ds4-go/cmd/ds4-go@latest
-ds4-go install --backend auto
+go get github.com/NimbleMarkets/ds4go
+```
+
+Once the CLI is installed, fetch a prebuilt native `libds4` from GitHub Releases:
+
+```sh
+ds4go install --backend auto
 ```
 
 The installer downloads from `github.com/NimbleMarkets/ds4` by default. Use
 `--repo`, `--version`, `--backend`, or `--url` to select a fork, release, build,
 or direct archive. It installs into `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`.
 
-`DS4_DIR` is the ds4 home directory used by ds4-go tooling:
+`DS4_DIR` is the ds4 home directory used by ds4go tooling:
 
 ```text
 $DS4_DIR/lib/      native shared libraries
 $DS4_DIR/models/   GGUF model files
 ```
+
+Manage curated DeepSeek V4 Flash models with:
+
+```sh
+ds4go model list
+ds4go model download q2-imatrix
+ds4go model set q2-imatrix
+```
+
+The default model path for commands and examples is
+`$DS4_DIR/models/ds4flash.gguf`.
 
 Place the shared library in `~/.ds4/lib/`, `./lib/`, next to your executable, or
 point at it explicitly:
@@ -59,7 +83,7 @@ Platform defaults are:
 ## Usage
 
 ```go
-import "github.com/NimbleMarkets/ds4-go/ds4"
+import ds4 "github.com/NimbleMarkets/ds4go"
 
 engine, err := ds4.NewEngine(ds4.EngineOptions{
     ModelPath: "/models/ds4flash.gguf",
@@ -82,7 +106,7 @@ if err != nil {
 }
 defer prompt.Free()
 
-_, err = session.GenerateTokens(prompt, ds4.GenerateOptions{
+_, err = ds4.Generator{Engine: engine, Session: session}.GenerateTokens(prompt, ds4.GenerateOptions{
     MaxTokens: 128,
     StopOnEOS: true,
     OnToken: func(token int) {
@@ -95,11 +119,11 @@ _, err = session.GenerateTokens(prompt, ds4.GenerateOptions{
 ## CLI
 
 ```sh
-go run ./cmd/ds4-go --model ./ds4flash.gguf -p "Explain Redis streams in one paragraph."
-go run ./cmd/ds4-go --model ./ds4flash.gguf
+go run ./cmd/ds4go prompt --model ./ds4flash.gguf -p "Explain Redis streams in one paragraph."
+go run ./cmd/ds4go prompt --model ./ds4flash.gguf
 ```
 
-`cmd/ds4-go` and the examples accept the **same arguments as the upstream `ds4` C programs**, parsed with [`pflag`](https://github.com/spf13/pflag) so options take the `--option` form. `cmd/ds4-go`, `examples/simple`, and `examples/chat` mirror the `ds4` CLI (`ds4_cli.c`); `examples/openai-compatible` mirrors `ds4-server` (`ds4_server.c`). Run any of them with `--help` for the full list.
+`cmd/ds4go prompt` and the examples accept the **same arguments as the upstream `ds4` C programs**, parsed with [`pflag`](https://github.com/spf13/pflag) so options take the `--option` form. `cmd/ds4go prompt`, `examples/simple`, and `examples/chat` mirror the `ds4` CLI (`ds4_cli.c`); `examples/openai-compatible` mirrors `ds4-server` (`ds4_server.c`). Run any of them with `--help` for the full list.
 
 The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime (empty falls back to `DS4_LIB` or `DS4_DIR/lib`).
 
@@ -115,7 +139,9 @@ The OpenAI-compatible example exposes `POST /v1/chat/completions` for a minimal 
 
 ## API Coverage
 
-The library lives in package `ds4`, imported as `github.com/NimbleMarkets/ds4-go/ds4`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4.File` wrapper around a C `FILE*`.
+Most users should import the root package `ds4` from `github.com/NimbleMarkets/ds4go`. It provides Go-native runtime policy and convenience helpers on top of the raw API.
+
+The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 
 `ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API.
 
@@ -129,8 +155,8 @@ Inference runs in-process. The Golang wrapper adds FFI calls but does not proxy 
 
 We welcome contributions and feedback.  Please adhere to our [Code of Conduct](./CODE_OF_CONDUCT.md) when engaging our community.
 
- * [GitHub Issues](https://github.com/NimbleMarkets/ds4-go/issues)
- * [GitHub Pull Requests](https://github.com/NimbleMarkets/ds4-go/pulls)
+ * [GitHub Issues](https://github.com/NimbleMarkets/ds4go/issues)
+ * [GitHub Pull Requests](https://github.com/NimbleMarkets/ds4go/pulls)
 
 ## Acknowledgements
 

@@ -11,8 +11,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/NimbleMarkets/ds4-go/ds4"
-	"github.com/NimbleMarkets/ds4-go/internal/cliopts"
+	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/spf13/pflag"
 )
 
@@ -36,17 +36,23 @@ func main() {
 }
 
 func run(cfg *cliopts.CLIConfig) error {
+	var engine *ds4.Engine
 	if cfg.Lib != "" {
 		lib, err := ds4.Load(cfg.Lib)
 		if err != nil {
 			return err
 		}
 		ds4.SetDefaultLibrary(lib)
-	}
-
-	engine, err := ds4.NewEngine(cfg.EngineOptions())
-	if err != nil {
-		return err
+		engine, err = lib.NewEngine(cfg.EngineOptions())
+		if err != nil {
+			return ds4.EnrichEngineOpenError(err)
+		}
+	} else {
+		var err error
+		engine, err = ds4.NewEngine(cfg.EngineOptions())
+		if err != nil {
+			return err
+		}
 	}
 	defer engine.Close()
 
@@ -83,7 +89,7 @@ func run(cfg *cliopts.CLIConfig) error {
 				fmt.Print(text)
 			}
 		}
-		_, err = session.GenerateTokens(prompt, opts)
+		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
 		prompt.Free()
 		fmt.Println()
 		if err != nil {

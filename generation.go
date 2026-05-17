@@ -1,0 +1,121 @@
+package ds4
+
+import (
+	"errors"
+	"strings"
+
+	"github.com/NimbleMarkets/ds4go/ds4api"
+)
+
+// GenerateOptions controls Go-native session generation helpers.
+type GenerateOptions struct {
+	// MaxTokens is the maximum number of tokens to generate.
+	MaxTokens int
+	// Temperature controls sampling. Values <= 0 use argmax.
+	Temperature float32
+	// TopK limits sampling to the best k tokens when Temperature > 0.
+	TopK int
+	// TopP applies nucleus sampling when Temperature > 0.
+	TopP float32
+	// MinP applies minimum probability sampling when Temperature > 0.
+	MinP float32
+	// Seed seeds ds4's sampler. A zero seed is valid and deterministic.
+	Seed uint64
+	// StopOnEOS stops generation when ds4 emits the engine EOS token.
+	StopOnEOS bool
+	// ExcludeToken asks argmax generation to skip a specific token id.
+	ExcludeToken int
+	// OnToken streams generated tokens. Returning normally continues generation.
+	OnToken ds4api.TokenEmitFunc
+}
+
+// Generator binds a ds4 engine and session for Go-native generation helpers.
+type Generator struct {
+	Engine  *ds4api.Engine
+	Session *ds4api.Session
+}
+
+// Generate synchronizes to prompt and generates tokens from the session.
+func (g Generator) Generate(prompt []int, opts GenerateOptions) ([]int, error) {
+	if g.Session == nil {
+		return nil, errors.New("ds4go: nil session")
+	}
+	if err := g.Session.Sync(prompt); err != nil {
+		return nil, err
+	}
+	return g.Continue(opts)
+}
+
+// GenerateTokens synchronizes to prompt and generates tokens from the session.
+func (g Generator) GenerateTokens(prompt *ds4api.Tokens, opts GenerateOptions) ([]int, error) {
+	if g.Session == nil {
+		return nil, errors.New("ds4go: nil session")
+	}
+	if err := g.Session.SyncTokens(prompt); err != nil {
+		return nil, err
+	}
+	return g.Continue(opts)
+}
+
+// Continue generates tokens from the current session logits.
+func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
+	if g.Session == nil {
+		return nil, errors.New("ds4go: nil session")
+	}
+	maxTokens := opts.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 128
+	}
+	eos := -1
+	if opts.StopOnEOS && g.Engine != nil {
+		eos = g.Engine.TokenEOS()
+	}
+	var rng = opts.Seed
+	out := make([]int, 0, maxTokens)
+	for i := 0; i < maxTokens; i++ {
+		var token int
+		if opts.Temperature > 0 {
+			token = g.Session.Sample(opts.Temperature, opts.TopK, opts.TopP, opts.MinP, &rng)
+		} else if opts.ExcludeToken != 0 {
+			token = g.Session.ArgmaxExcluding(opts.ExcludeToken)
+		} else {
+			token = g.Session.Argmax()
+		}
+		if opts.StopOnEOS && token == eos {
+			break
+		}
+		out = append(out, token)
+		if opts.OnToken != nil {
+			opts.OnToken(token)
+		}
+		if err := g.Session.Eval(token); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+// GenerateString tokenizes prompt, generates, and decodes the generated text.
+func (g Generator) GenerateString(prompt string, opts GenerateOptions) (string, error) {
+	if g.Engine == nil {
+		return "", errors.New("ds4go: nil engine")
+	}
+	tokens, err := g.Engine.TokenizeText(prompt)
+	if err != nil {
+		return "", err
+	}
+	defer tokens.Free()
+	generated, err := g.GenerateTokens(tokens, opts)
+	if err != nil {
+		return "", err
+	}
+	var text strings.Builder
+	for _, token := range generated {
+		part, err := g.Engine.TokenText(token)
+		if err != nil {
+			return text.String(), err
+		}
+		text.WriteString(part)
+	}
+	return text.String(), nil
+}
