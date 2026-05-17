@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
 )
 
 // Config is stored at $DS4_DIR/ds4go.json.

@@ -71,6 +71,11 @@ tasks:
       - go build ./...
       - go vet ./...
 
+  hooks:install:
+    desc: Install git pre-push hook that runs 'task pre-push'
+    cmds:
+      - git config core.hooksPath .githooks
+
   clean:
     desc: Remove built binaries
     cmds:

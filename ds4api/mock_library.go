@@ -40,7 +40,9 @@ func NewMockLibrary() *Library {
 	r.ds4EngineGenerateArgmax = func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32 {
 		return 0
 	}
-	r.ds4EngineCollectIMatrix = func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32) int32 { return 0 }
+	r.ds4EngineCollectIMatrix = func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32) int32 {
+		return 0
+	}
 	r.ds4EngineDumpTokens = func(e uintptr, tokens *cTokens) {}
 	r.ds4DumpTextTokenization = func(modelPath string, text string, fp uintptr) int32 { return 0 }
 	r.ds4EngineHeadTest = func(e uintptr, prompt *cTokens) int32 { return 0 }
@@ -213,10 +215,10 @@ type mockSession struct {
 
 var (
 	mockStateMu   sync.Mutex
-	mockEngines   = map[uintptr]*mockEngine{}
-	mockSessions  = map[uintptr]*mockSession{}
+	mockEngines           = map[uintptr]*mockEngine{}
+	mockSessions          = map[uintptr]*mockSession{}
 	mockNextPtr   uintptr = 1
-	mockTokenMap  = map[string]int32{}
+	mockTokenMap          = map[string]int32{}
 	mockTokenNext int32   = 100
 )
 

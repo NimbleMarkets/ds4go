@@ -45,11 +45,11 @@ func newHelpCommand(root *cobra.Command) *cobra.Command {
 
 func newHelpCheatCommand(root *cobra.Command) *cobra.Command {
 	var (
-		asJSON  bool
-		asMD    bool
-		depth1  bool
-		depth2  bool
-		depth3  bool
+		asJSON bool
+		asMD   bool
+		depth1 bool
+		depth2 bool
+		depth3 bool
 	)
 
 	cmd := &cobra.Command{

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run task pre-push before every git push
+exec task pre-push
