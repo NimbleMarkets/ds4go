@@ -35,6 +35,25 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Sign and notarize the macOS binaries with Apple. GoReleaser does this
+# in-process (no macOS runner needed); it is skipped unless MACOS_SIGN_P12
+# is set, so snapshot builds and forks without the secrets still work.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids:
+        - ds4go
+      sign:
+        certificate: "{{.Env.MACOS_SIGN_P12}}"
+        password: "{{.Env.MACOS_SIGN_PASSWORD}}"
+        entitlements: ./etc/entitlements.plist
+      notarize:
+        issuer_id: "{{.Env.MACOS_NOTARY_ISSUER_ID}}"
+        key_id: "{{.Env.MACOS_NOTARY_KEY_ID}}"
+        key: "{{.Env.MACOS_NOTARY_KEY}}"
+        wait: true
+        timeout: 20m
+
 changelog:
   sort: asc
   filters:
@@ -65,5 +84,6 @@ brews:
       email: goreleaserbot@nimble.markets
     install: |
       bin.install "ds4go"
+      generate_completions_from_executable(bin/"ds4go", "completion")
     test: |
       system "#{bin}/ds4go", "--help"
