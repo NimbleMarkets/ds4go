@@ -2,7 +2,7 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library; we also embed the `.metal` files.   See https://github.com/neomantra/ds4/tree/nm-shared
 
-## v0.2.1 (2026-05-17)
+## v0.2.3 (2026-05-17)
 
  * feat: add Context for cancelation
  * feat: Access to Engine calls are syncronized by mutex, making access thread-safe
@@ -13,8 +13,6 @@ NOTE: This currently needs a patched `ds4` to make a shared library; we also emb
  * Securty hardening
  * TUI love
  * GoReleaser-based releases with Homebrew tap (`brew install nimblemarkets/tap/ds4go`)
-
-
 
 ## v0.1.0 (2026-05-16)
 

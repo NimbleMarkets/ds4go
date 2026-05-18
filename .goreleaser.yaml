@@ -65,12 +65,12 @@ changelog:
 release:
   github:
     owner: NimbleMarkets
-    name: ds4-go
+    name: ds4go
 
 brews:
   - ids:
       - default
-    homepage: https://github.com/NimbleMarkets/ds4-go
+    homepage: https://github.com/NimbleMarkets/ds4go
     description: "Pure-Go ds4 inference tooling for the DeepSeek-V4 engine"
     license: MIT
     directory: Formula
