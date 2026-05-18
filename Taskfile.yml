@@ -28,10 +28,12 @@ tasks:
     generates:
       - bin/simple
       - bin/chat
+      - bin/toolloop
       - bin/openai-compatible
     cmds:
       - go build -o bin/simple ./examples/simple
       - go build -o bin/chat ./examples/chat
+      - go build -o bin/toolloop ./examples/toolloop
       - go build -o bin/openai-compatible ./examples/openai-compatible
 
   cli:build:
@@ -79,4 +81,4 @@ tasks:
   clean:
     desc: Remove built binaries
     cmds:
-      - rm -f ./bin/simple ./bin/chat ./bin/openai-compatible ./bin/ds4go
+      - rm -f ./bin/simple ./bin/chat ./bin/toolloop ./bin/openai-compatible ./bin/ds4go

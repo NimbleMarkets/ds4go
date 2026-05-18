@@ -2,10 +2,13 @@ package ds4
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -192,28 +195,19 @@ func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []Chat
 		return nil, err
 	}
 	if system != "" || toolsSection != "" {
-		content := system
-		if toolsSection != "" {
-			if content != "" {
-				content += "\n\n"
-			}
-			content += toolsSection
-		}
+		content := toolAwareSystemContent(system, toolsSection)
 		if err := engine.ChatAppendMessage(tokens, "system", content); err != nil {
 			tokens.Free()
 			return nil, err
 		}
 	}
-	for _, msg := range history {
-		role, content, err := r.renderMessage(msg)
-		if err != nil {
-			tokens.Free()
-			return nil, err
-		}
-		if role == "" {
-			continue
-		}
-		if err := engine.ChatAppendMessage(tokens, role, content); err != nil {
+	rendered, err := r.renderPromptMessages(history)
+	if err != nil {
+		tokens.Free()
+		return nil, err
+	}
+	for _, msg := range rendered {
+		if err := engine.ChatAppendMessage(tokens, msg.role, msg.content); err != nil {
 			tokens.Free()
 			return nil, err
 		}
@@ -304,19 +298,70 @@ func (r *ToolRegistry) renderMessage(msg ChatMessage) (string, string, error) {
 	}
 }
 
+type renderedChatMessage struct {
+	role    string
+	content string
+}
+
+func toolAwareSystemContent(system string, toolsSection string) string {
+	if toolsSection == "" {
+		return system
+	}
+	if system == "" {
+		return toolsSection
+	}
+	return toolsSection + "\n\n" + system
+}
+
+func (r *ToolRegistry) renderPromptMessages(history []ChatMessage) ([]renderedChatMessage, error) {
+	out := make([]renderedChatMessage, 0, len(history))
+	for i := 0; i < len(history); {
+		if history[i].Role == "tool" {
+			var content strings.Builder
+			for i < len(history) && history[i].Role == "tool" {
+				role, part, err := r.renderMessage(history[i])
+				if err != nil {
+					return nil, err
+				}
+				if role != "user" {
+					return nil, fmt.Errorf("ds4go: tool message rendered as %q", role)
+				}
+				content.WriteString(part)
+				i++
+			}
+			out = append(out, renderedChatMessage{role: "user", content: content.String()})
+			continue
+		}
+
+		role, content, err := r.renderMessage(history[i])
+		if err != nil {
+			return nil, err
+		}
+		i++
+		if role == "" {
+			continue
+		}
+		out = append(out, renderedChatMessage{role: role, content: content})
+	}
+	return out, nil
+}
+
 func (r *ToolRegistry) renderAssistantToolCalls(calls []ToolCall) (string, error) {
 	if len(calls) == 0 {
 		return "", nil
 	}
 	replay := r.ReplayStore()
+	if replay != nil {
+		ids := make([]string, len(calls))
+		for i, call := range calls {
+			ids[i] = call.ID
+		}
+		if exact, ok := replay.LookupBlock(ids); ok {
+			return exact, nil
+		}
+	}
 	invokes := make([]string, len(calls))
 	for i, call := range calls {
-		if replay != nil && call.ID != "" {
-			if exact, ok := replay.Lookup(call.ID); ok {
-				invokes[i] = exact
-				continue
-			}
-		}
 		invoke, err := dsml.RenderToolCall(dsml.ToolCall{
 			Name:      call.Name,
 			Arguments: call.Arguments,
@@ -345,6 +390,10 @@ func (r *ToolRegistry) lookup(name string) (ToolHandler, error) {
 func (r *ToolRegistry) nextToolCallID() string {
 	if r == nil {
 		return ""
+	}
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		return "call_" + hex.EncodeToString(raw[:])
 	}
 	n := r.nextID.Add(1)
 	return "call_" + strconv.FormatUint(n, 10)

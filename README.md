@@ -157,10 +157,12 @@ Run 'ds4go help <command>' for detailed usage.
 ```sh
 go run ./examples/simple --model ./ds4flash.gguf
 go run ./examples/chat --model ./ds4flash.gguf
+go run ./examples/toolloop --mock
+go run ./examples/toolloop --model ./ds4flash.gguf --nothink --tokens 512
 go run ./examples/openai-compatible --model ./ds4flash.gguf --host 127.0.0.1 --port 8000
 ```
 
-The OpenAI-compatible example exposes `POST /v1/chat/completions` for a minimal local test server.
+The `toolloop` example registers a Go `add` tool and exercises DSML tool-call parsing, tool dispatch, tool-result rendering, and exact replay. Use `--mock` for a no-model smoke test. The OpenAI-compatible example exposes `POST /v1/chat/completions` for a minimal local test server.
 
 ## API Coverage
 

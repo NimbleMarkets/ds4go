@@ -219,7 +219,8 @@ func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
 		appendedTools = true
 	}
 	seenCallIDs := map[string]bool{}
-	for _, msg := range req.Messages {
+	for i := 0; i < len(req.Messages); {
+		msg := req.Messages[i]
 		switch msg.Role {
 		case "assistant":
 			for _, tc := range msg.ToolCalls {
@@ -228,16 +229,33 @@ func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
 				}
 			}
 		case "tool":
-			if msg.ToolCallID == "" || !seenCallIDs[msg.ToolCallID] {
-				tokens.Free()
-				return nil, fmt.Errorf("tool message references unknown tool_call_id %q", msg.ToolCallID)
+			var content strings.Builder
+			for i < len(req.Messages) && req.Messages[i].Role == "tool" {
+				toolMsg := req.Messages[i]
+				if toolMsg.ToolCallID == "" || !seenCallIDs[toolMsg.ToolCallID] {
+					tokens.Free()
+					return nil, fmt.Errorf("tool message references unknown tool_call_id %q", toolMsg.ToolCallID)
+				}
+				_, part, err := renderMessage(toolMsg, toolsSection, false)
+				if err != nil {
+					tokens.Free()
+					return nil, err
+				}
+				content.WriteString(part)
+				i++
 			}
+			if err := engine.ChatAppendMessage(tokens, "user", content.String()); err != nil {
+				tokens.Free()
+				return nil, err
+			}
+			continue
 		}
 		role, content, err := renderMessage(msg, toolsSection, !appendedTools)
 		if err != nil {
 			tokens.Free()
 			return nil, err
 		}
+		i++
 		if role == "" {
 			continue
 		}
@@ -288,10 +306,11 @@ func renderMessage(msg chatMessage, toolsSection string, appendTools bool) (stri
 	case "system":
 		content := msg.Content
 		if appendTools && toolsSection != "" {
-			if content != "" {
-				content += "\n\n"
+			if content == "" {
+				content = toolsSection
+			} else {
+				content = toolsSection + "\n\n" + content
 			}
-			content += toolsSection
 		}
 		return "system", content, nil
 	case "user":

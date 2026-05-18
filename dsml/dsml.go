@@ -9,7 +9,7 @@
 // own that, and re-implementing it here would duplicate and drift from it.
 //
 // The package is pure text processing: no FFI, no engine, standard library
-// only. Callers compose its output with libds4's chat helpers — append a
+// only. Callers compose its output with libds4's chat helpers — prepend a
 // rendered tools section to the system message content, append a rendered
 // tool-call block to assistant-history content.
 package dsml
@@ -23,6 +23,7 @@ import (
 // DSML markers, ported verbatim from DeepSeek's encoding_dsv4.py.
 const (
 	dsmlMarker         = "｜DSML｜"
+	dsmlMarkerShort    = "DSML｜"
 	eosToken           = "<｜end▁of▁sentence｜>"
 	thinkingEndToken   = "</think>"
 	toolCallsBlockName = "tool_calls"
@@ -33,9 +34,9 @@ const (
 	toolCallsStartToken = "\n\n<" + dsmlMarker + toolCallsBlockName
 	toolCallsEndToken   = "</" + dsmlMarker + toolCallsBlockName + ">"
 	invokeStartToken    = "<" + dsmlMarker + "invoke"
-	invokeEndToken      = "</" + dsmlMarker + "invoke"
+	invokeEndToken      = "</" + dsmlMarker + "invoke>"
 	parameterStartToken = "<" + dsmlMarker + "parameter"
-	parameterEndToken   = "/" + dsmlMarker + "parameter>"
+	parameterEndToken   = "</" + dsmlMarker + "parameter>"
 	toolResultStart     = "<tool_result>"
 	toolResultEnd       = "</tool_result>"
 )
@@ -59,7 +60,7 @@ type ToolCall struct {
 	Name string
 	// Arguments holds the call arguments as a JSON object string.
 	Arguments string
-	// Exact is the exact sampled DSML "<｜DSML｜invoke ...</｜DSML｜invoke>"
+	// Exact is the exact sampled DSML "<｜DSML｜tool_calls>...</｜DSML｜tool_calls>"
 	// block when this call came from ParseCompletion.
 	Exact string
 }
@@ -119,6 +120,48 @@ func toJSONString(s string) string {
 	return string(b)
 }
 
+func dsmlEscapeAttr(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '"':
+			b.WriteString("&quot;")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func dsmlUnescapeText(s string) string {
+	replacer := strings.NewReplacer(
+		"&amp;", "&",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&quot;", `"`,
+		"&apos;", "'",
+	)
+	return replacer.Replace(s)
+}
+
+func escapeParameterText(s string) string {
+	return strings.ReplaceAll(s, parameterEndToken, "&lt;/"+dsmlMarker+"parameter>")
+}
+
+func escapeJSONLiteral(s string) string {
+	return strings.ReplaceAll(s, parameterEndToken, "\\u003c/"+dsmlMarker+"parameter>")
+}
+
+func escapeToolResultText(s string) string {
+	return strings.ReplaceAll(s, toolResultEnd, "&lt;/tool_result>")
+}
+
 // boolStr renders a Go bool as the lowercase word DSML expects.
 func boolStr(b bool) string {
 	if b {
@@ -131,25 +174,8 @@ func validateTagAttribute(kind, value string) error {
 	if value == "" {
 		return fmt.Errorf("dsml: %s must not be empty", kind)
 	}
-	if strings.ContainsAny(value, "\"\r\n\t") {
-		return fmt.Errorf("dsml: %s contains unsupported control characters or quotes", kind)
+	if strings.ContainsAny(value, "\r\n\t") {
+		return fmt.Errorf("dsml: %s contains unsupported control characters", kind)
 	}
 	return nil
-}
-
-func validateParameterValue(value string) error {
-	switch {
-	case strings.Contains(value, parameterStartToken):
-		return fmt.Errorf("dsml: parameter value contains nested parameter start token")
-	case strings.Contains(value, invokeStartToken):
-		return fmt.Errorf("dsml: parameter value contains invoke start token")
-	case strings.Contains(value, invokeEndToken+">"):
-		return fmt.Errorf("dsml: parameter value contains invoke end token")
-	case strings.Contains(value, toolCallsEndToken):
-		return fmt.Errorf("dsml: parameter value contains tool_calls end token")
-	case strings.Contains(value, "<"+parameterEndToken):
-		return fmt.Errorf("dsml: parameter value contains parameter end token")
-	default:
-		return nil
-	}
 }

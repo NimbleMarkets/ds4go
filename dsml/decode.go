@@ -3,129 +3,226 @@ package dsml
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 )
 
-// toolNameRe matches the header between "<｜DSML｜invoke" and the next
-// element, capturing the tool name.
-var toolNameRe = regexp.MustCompile(`^\s*name="([^"]+)">\r?\n$`)
+type dsmlSyntax struct {
+	toolStart   string
+	toolEnd     string
+	invokeStart string
+	invokeEnd   string
+	paramStart  string
+	paramEnd    string
+}
 
-// A parameter value that contains the literal parameterEndToken cannot be
-// represented in DSML; such a value fails the paramRe match below.
-
-// paramRe matches a "<｜DSML｜parameter" body up to the closing "<" of its
-// end tag, capturing name, the string flag, and the raw value. The (?s) flag
-// lets a value span newlines.
-var paramRe = regexp.MustCompile(`(?s)^ name="(.*?)" string="(true|false)">(.*?)<$`)
+var dsmlSyntaxes = []dsmlSyntax{
+	{
+		toolStart:   "<" + dsmlMarker + toolCallsBlockName + ">",
+		toolEnd:     toolCallsEndToken,
+		invokeStart: invokeStartToken,
+		invokeEnd:   invokeEndToken,
+		paramStart:  parameterStartToken,
+		paramEnd:    parameterEndToken,
+	},
+	{
+		toolStart:   "<" + dsmlMarkerShort + toolCallsBlockName + ">",
+		toolEnd:     "</" + dsmlMarkerShort + toolCallsBlockName + ">",
+		invokeStart: "<" + dsmlMarkerShort + "invoke",
+		invokeEnd:   "</" + dsmlMarkerShort + "invoke>",
+		paramStart:  "<" + dsmlMarkerShort + "parameter",
+		paramEnd:    "</" + dsmlMarkerShort + "parameter>",
+	},
+	{
+		toolStart:   "<tool_calls>",
+		toolEnd:     "</tool_calls>",
+		invokeStart: "<invoke",
+		invokeEnd:   "</invoke>",
+		paramStart:  "<parameter",
+		paramEnd:    "</parameter>",
+	},
+}
 
 // ParseCompletion parses one assistant completion (raw model output) into a
-// ParsedMessage. When thinking is true, a leading reasoning block terminated
-// by </think> is required.
+// ParsedMessage.
 //
-// The completion may end either with the explicit <｜end▁of▁sentence｜>
-// marker or simply at end-of-input: ds4go generation stops on the EOS token
-// id before that marker is ever decoded to text, so a missing marker is not
-// an error.
+// When thinking is true, DSML is executable only after the final </think>.
+// If the model has not closed thinking yet, the text is returned as reasoning
+// and no tool calls are parsed. The completion may end either with the explicit
+// <｜end▁of▁sentence｜> marker or simply at end-of-input.
 func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 	msg := ParsedMessage{Role: "assistant"}
-	idx := 0
+	searchFrom := 0
+	contentBase := 0
 
 	if thinking {
-		var stop string
-		idx, msg.ReasoningContent, stop = readUntilStop(idx, text, []string{thinkingEndToken, toolCallsStartToken})
-		msg.ReasoningContent = strings.TrimSpace(msg.ReasoningContent)
-		if stop != thinkingEndToken {
-			return ParsedMessage{}, fmt.Errorf("dsml: invalid thinking format: missing %q", thinkingEndToken)
+		if end := strings.LastIndex(text, thinkingEndToken); end >= 0 {
+			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text[:end], "<think>"))
+			searchFrom = end + len(thinkingEndToken)
+			contentBase = searchFrom
+		} else {
+			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text, "<think>"))
+			return msg, nil
 		}
 	}
 
-	var stop, content string
-	idx, content, stop = readUntilStop(idx, text, []string{eosToken, toolCallsStartToken})
-	msg.Content = strings.TrimSpace(content)
-
-	if stop != toolCallsStartToken {
-		// stop is either eosToken or "" (end of input); both are valid ends.
+	start, rawStart, syn, ok := findToolBlockStart(text, searchFrom)
+	if !ok {
+		_, content, _ := readUntilStop(contentBase, text, []string{eosToken})
+		msg.Content = strings.TrimSpace(content)
+		return msg, nil
+	}
+	if eos := indexFrom(text, contentBase, eosToken); eos >= 0 && eos < start {
+		msg.Content = strings.TrimSpace(text[contentBase:eos])
 		return msg, nil
 	}
 
-	calls, newIdx, err := parseToolCalls(idx, text)
+	msg.Content = strings.TrimSpace(text[contentBase:rawStart])
+	calls, end, rawBlock, err := parseToolCalls(start, rawStart, text, syn)
 	if err != nil {
-		return ParsedMessage{}, err
+		return rawCompletionMessage(text), nil
+	}
+	for i := range calls {
+		calls[i].Exact = rawBlock
 	}
 	msg.ToolCalls = calls
 
-	_, trailing, _ := readUntilStop(newIdx, text, []string{eosToken})
+	_, trailing, _ := readUntilStop(end, text, []string{eosToken})
 	if strings.TrimSpace(trailing) != "" {
-		return ParsedMessage{}, fmt.Errorf("dsml: unexpected content after tool calls: %q", trailing)
+		return rawCompletionMessage(text), nil
 	}
 	return msg, nil
 }
 
-// parseToolCalls parses the body of a tool-calls block beginning at index
-// (just past the toolCallsStartToken prefix). It returns the parsed calls and
-// the index just past the closing tool-calls tag.
-func parseToolCalls(index int, text string) (calls []ToolCall, newIndex int, err error) {
-	first := true
+func rawCompletionMessage(text string) ParsedMessage {
+	_, content, _ := readUntilStop(0, text, []string{eosToken})
+	return ParsedMessage{
+		Role:    "assistant",
+		Content: strings.TrimSpace(content),
+	}
+}
+
+func findToolBlockStart(text string, from int) (start int, rawStart int, syn dsmlSyntax, ok bool) {
+	best := -1
+	var bestSyn dsmlSyntax
+	for _, candidate := range dsmlSyntaxes {
+		pos := indexFrom(text, from, candidate.toolStart)
+		if pos >= 0 && (best < 0 || pos < best) {
+			best = pos
+			bestSyn = candidate
+		}
+	}
+	if best < 0 {
+		return 0, 0, dsmlSyntax{}, false
+	}
+	raw := best
+	if raw >= 2 && text[raw-2:raw] == "\n\n" {
+		raw -= 2
+	}
+	return best, raw, bestSyn, true
+}
+
+// parseToolCalls parses a complete tool-calls block beginning at the opening
+// "<...tool_calls>" tag. rawStart is the byte offset to preserve for exact
+// replay, including any leading "\n\n" separator.
+func parseToolCalls(start int, rawStart int, text string, syn dsmlSyntax) (calls []ToolCall, newIndex int, rawBlock string, err error) {
+	index := start
+	if !strings.HasPrefix(text[index:], syn.toolStart) {
+		return nil, index, "", fmt.Errorf("dsml: malformed tool_calls start")
+	}
+	index += len(syn.toolStart)
+
 	for {
-		var stop string
-		var gap string
-		index, gap, stop = readUntilStop(index, text, []string{invokeStartToken, toolCallsEndToken})
-		if first {
-			if gap != ">\n" {
-				return nil, index, fmt.Errorf("dsml: malformed tool_calls start: %q", gap)
-			}
-			first = false
-		} else if gap != "\n" {
-			return nil, index, fmt.Errorf("dsml: malformed tool call separator: %q", gap)
+		index = skipASCIIWhitespace(text, index)
+		if strings.HasPrefix(text[index:], syn.toolEnd) {
+			index += len(syn.toolEnd)
+			return calls, index, text[rawStart:index], nil
 		}
-		if stop == toolCallsEndToken {
-			return calls, index, nil
-		}
-		if stop == "" {
-			return nil, index, fmt.Errorf("dsml: unterminated tool_calls block")
+		if !strings.HasPrefix(text[index:], syn.invokeStart) {
+			return nil, index, "", fmt.Errorf("dsml: malformed tool call separator or invoke start")
 		}
 
-		invokeStart := index - len(invokeStartToken)
-		var nameContent string
-		index, nameContent, stop = readUntilStop(index, text, []string{parameterStartToken, invokeEndToken})
-		nameMatch := toolNameRe.FindStringSubmatch(nameContent)
-		if len(nameMatch) != 2 {
-			return nil, index, fmt.Errorf("dsml: malformed invoke header: %q", nameContent)
+		tagEnd := strings.IndexByte(text[index:], '>')
+		if tagEnd < 0 {
+			return nil, index, "", fmt.Errorf("dsml: unterminated invoke header")
 		}
+		tag := text[index : index+tagEnd+1]
+		name, ok := dsmlAttr(tag, "name")
+		if !ok || name == "" {
+			return nil, index, "", fmt.Errorf("dsml: malformed invoke header: %q", tag)
+		}
+		index += tagEnd + 1
 
 		args := newOrderedArgs()
-		for stop == parameterStartToken {
-			var paramContent string
-			index, paramContent, stop = readUntilStop(index, text, []string{parameterEndToken})
-			if stop == "" {
-				return nil, index, fmt.Errorf("dsml: unterminated parameter")
+		for {
+			index = skipASCIIWhitespace(text, index)
+			if strings.HasPrefix(text[index:], syn.invokeEnd) {
+				index += len(syn.invokeEnd)
+				break
 			}
-			pm := paramRe.FindStringSubmatch(paramContent)
-			if len(pm) != 4 {
-				return nil, index, fmt.Errorf("dsml: malformed parameter: %q", paramContent)
+			if !strings.HasPrefix(text[index:], syn.paramStart) {
+				return nil, index, "", fmt.Errorf("dsml: malformed parameter start")
 			}
-			if _, seen := args.values[pm[1]]; seen {
-				return nil, index, fmt.Errorf("dsml: duplicate parameter name %q", pm[1])
+			tagEnd = strings.IndexByte(text[index:], '>')
+			if tagEnd < 0 {
+				return nil, index, "", fmt.Errorf("dsml: unterminated parameter header")
 			}
-			args.set(pm[1], pm[3], pm[2] == "true")
-			index, _, stop = readUntilStop(index, text, []string{parameterStartToken, invokeEndToken})
+			tag = text[index : index+tagEnd+1]
+			paramName, ok := dsmlAttr(tag, "name")
+			if !ok || paramName == "" {
+				return nil, index, "", fmt.Errorf("dsml: malformed parameter: %q", tag)
+			}
+			isStringText, ok := dsmlAttr(tag, "string")
+			if !ok {
+				isStringText = "true"
+			}
+			isString := isStringText != "false"
+
+			valueStart := index + tagEnd + 1
+			valueEnd := strings.Index(text[valueStart:], syn.paramEnd)
+			if valueEnd < 0 {
+				return nil, index, "", fmt.Errorf("dsml: unterminated parameter")
+			}
+			raw := text[valueStart : valueStart+valueEnd]
+			if isString {
+				args.set(paramName, dsmlUnescapeText(raw), true)
+			} else {
+				args.set(paramName, raw, false)
+			}
+			index = valueStart + valueEnd + len(syn.paramEnd)
 		}
-		if stop != invokeEndToken {
-			return nil, index, fmt.Errorf("dsml: unterminated invoke block")
-		}
-		if index >= len(text) || text[index] != '>' {
-			return nil, index, fmt.Errorf("dsml: malformed invoke terminator")
-		}
-		exact := text[invokeStart : index+1]
-		index++
 
 		argsJSON := args.buildJSON()
 		if !json.Valid([]byte(argsJSON)) {
-			return nil, index, fmt.Errorf("dsml: tool %q produced invalid arguments JSON: %s", nameMatch[1], argsJSON)
+			return nil, index, "", fmt.Errorf("dsml: tool %q produced invalid arguments JSON: %s", name, argsJSON)
 		}
-		calls = append(calls, ToolCall{Name: nameMatch[1], Arguments: argsJSON, Exact: exact})
+		calls = append(calls, ToolCall{Name: name, Arguments: argsJSON})
 	}
+}
+
+func skipASCIIWhitespace(text string, index int) int {
+	for index < len(text) {
+		switch text[index] {
+		case ' ', '\t', '\n', '\r':
+			index++
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+func dsmlAttr(tag string, name string) (string, bool) {
+	pat := name + `="`
+	pos := strings.Index(tag, pat)
+	if pos < 0 {
+		return "", false
+	}
+	start := pos + len(pat)
+	end := strings.IndexByte(tag[start:], '"')
+	if end < 0 {
+		return "", false
+	}
+	return dsmlUnescapeText(tag[start : start+end]), true
 }
 
 // orderedArgs accumulates tool-call arguments in emission order and renders
@@ -140,9 +237,7 @@ func newOrderedArgs() *orderedArgs {
 }
 
 // set records one argument. When isString is true the raw value is encoded as
-// a JSON string; otherwise it is taken to be a JSON literal already (number,
-// bool, array, object). If a name is recorded twice, the first occurrence
-// keeps its position and the value is overwritten.
+// a JSON string; otherwise it is taken to be a JSON literal already.
 func (a *orderedArgs) set(name, raw string, isString bool) {
 	if _, seen := a.values[name]; !seen {
 		a.keys = append(a.keys, name)

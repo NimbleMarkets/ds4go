@@ -47,9 +47,15 @@ func TestParseCompletionThinking(t *testing.T) {
 }
 
 func TestParseCompletionThinkingMissingEnd(t *testing.T) {
-	_, err := ParseCompletion("reasoning with no end", true)
-	if err == nil {
-		t.Fatal("expected an error for missing </think>")
+	msg, err := ParseCompletion("reasoning with no end", true)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.ReasoningContent != "reasoning with no end" {
+		t.Fatalf("ReasoningContent = %q", msg.ReasoningContent)
+	}
+	if msg.Content != "" || len(msg.ToolCalls) != 0 {
+		t.Fatalf("unfinished thinking should not be executable: %#v", msg)
 	}
 }
 
@@ -109,9 +115,15 @@ func TestParseCompletionMalformedInvoke(t *testing.T) {
 		"<" + dsmlMarker + "invoke garbage>\n" +
 		"</" + dsmlMarker + "invoke>\n" +
 		"</" + dsmlMarker + "tool_calls>"
-	_, err := ParseCompletion(completion, false)
-	if err == nil {
-		t.Fatal("expected an error for a malformed invoke header")
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.Content != completion {
+		t.Fatalf("Content = %q, want raw completion %q", msg.Content, completion)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("malformed DSML should not produce tool calls: %#v", msg.ToolCalls)
 	}
 }
 
@@ -137,6 +149,24 @@ func TestParseCompletionMultipleToolCalls(t *testing.T) {
 	}
 	if got := argsMap(t, msg.ToolCalls[1].Arguments); !reflect.DeepEqual(got, map[string]any{"who": "world"}) {
 		t.Errorf("call 1 args = %v", got)
+	}
+}
+
+func TestParseCompletionUnexpectedTextAfterToolCallsReturnsRawContent(t *testing.T) {
+	completion := "x\n\n<" + dsmlMarker + "tool_calls>\n" +
+		"<" + dsmlMarker + "invoke name=\"calc\">\n" +
+		"<" + dsmlMarker + "parameter name=\"n\" string=\"false\">1</" + dsmlMarker + "parameter>\n" +
+		"</" + dsmlMarker + "invoke>\n" +
+		"</" + dsmlMarker + "tool_calls>\nextra"
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.Content != completion {
+		t.Fatalf("Content = %q, want raw completion %q", msg.Content, completion)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("malformed completion should not produce tool calls: %#v", msg.ToolCalls)
 	}
 }
 
@@ -168,9 +198,15 @@ func TestParseCompletionInvalidJSONArgument(t *testing.T) {
 		"<" + dsmlMarker + "parameter name=\"n\" string=\"false\">not json</" + dsmlMarker + "parameter>\n" +
 		"</" + dsmlMarker + "invoke>\n" +
 		"</" + dsmlMarker + "tool_calls>"
-	_, err := ParseCompletion(completion, false)
-	if err == nil {
-		t.Fatal("expected an error for invalid JSON in a string=\"false\" parameter")
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.Content != completion {
+		t.Fatalf("Content = %q, want raw completion %q", msg.Content, completion)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("invalid JSON DSML should not produce tool calls: %#v", msg.ToolCalls)
 	}
 }
 
@@ -181,8 +217,43 @@ func TestParseCompletionDuplicateParameterName(t *testing.T) {
 		"<" + dsmlMarker + "parameter name=\"n\" string=\"false\">2</" + dsmlMarker + "parameter>\n" +
 		"</" + dsmlMarker + "invoke>\n" +
 		"</" + dsmlMarker + "tool_calls>"
-	_, err := ParseCompletion(completion, false)
-	if err == nil {
-		t.Fatal("expected duplicate parameter names to fail")
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if got := argsMap(t, msg.ToolCalls[0].Arguments); !reflect.DeepEqual(got, map[string]any{"n": float64(2)}) {
+		t.Fatalf("duplicate parameters should use the latest value, got %v", got)
+	}
+}
+
+func TestParseCompletionIgnoresToolCallsInsideUnfinishedThinking(t *testing.T) {
+	completion := "reasoning\n\n<" + dsmlMarker + "tool_calls>\n" +
+		"<" + dsmlMarker + "invoke name=\"danger\">\n" +
+		"</" + dsmlMarker + "invoke>\n" +
+		"</" + dsmlMarker + "tool_calls>"
+	msg, err := ParseCompletion(completion, true)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("tool calls inside unfinished thinking were executable: %#v", msg.ToolCalls)
+	}
+}
+
+func TestParseCompletionPlainXMLToolCalls(t *testing.T) {
+	completion := "ok\n\n<tool_calls>\n" +
+		"<invoke name=\"add\">\n" +
+		"<parameter name=\"a\" string=\"false\">1</parameter>\n" +
+		"</invoke>\n" +
+		"</tool_calls>"
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Name != "add" {
+		t.Fatalf("ToolCalls = %#v", msg.ToolCalls)
+	}
+	if msg.ToolCalls[0].Exact != "\n\n<tool_calls>\n<invoke name=\"add\">\n<parameter name=\"a\" string=\"false\">1</parameter>\n</invoke>\n</tool_calls>" {
+		t.Fatalf("Exact = %q", msg.ToolCalls[0].Exact)
 	}
 }

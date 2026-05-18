@@ -4,29 +4,42 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
 // toolsSectionTemplate is the "## Tools" instruction block. The single %s is
 // filled with the newline-joined tool schemas.
 var toolsSectionTemplate = "## Tools\n\n" +
-	"You have access to a set of tools to help answer the user's question. " +
+	"You have access to a set of tools to help answer the user question. " +
 	"You can invoke tools by writing a \"<" + dsmlMarker + "tool_calls>\" block " +
-	"like the following as part of your reply:\n\n" +
+	"like the following:\n\n" +
 	"<" + dsmlMarker + "tool_calls>\n" +
 	"<" + dsmlMarker + "invoke name=\"$TOOL_NAME\">\n" +
 	"<" + dsmlMarker + "parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</" + dsmlMarker + "parameter>\n" +
 	"...\n" +
 	"</" + dsmlMarker + "invoke>\n" +
+	"<" + dsmlMarker + "invoke name=\"$TOOL_NAME2\">\n" +
+	"...\n" +
+	"</" + dsmlMarker + "invoke>\n" +
 	"</" + dsmlMarker + "tool_calls>\n\n" +
-	"String parameters should be specified as is with string=\"true\". For all " +
-	"other types (numbers, booleans, arrays, objects), pass the value in JSON " +
-	"format and set string=\"false\".\n\n" +
+	"String parameters should be specified as raw text and set `string=\"true\"`. " +
+	"Preserve characters such as `>`, `&`, and `&&` exactly; never replace normal " +
+	"string characters with XML or HTML entity escapes. Only if a string value " +
+	"itself contains the exact closing parameter tag `</" + dsmlMarker + "parameter>`, " +
+	"write that tag as `&lt;/" + dsmlMarker + "parameter>` inside the value. For all " +
+	"other types (numbers, booleans, arrays, objects), pass the value in JSON format " +
+	"and set `string=\"false\"`.\n\n" +
+	"If thinking_mode is enabled (triggered by <think>), you MUST output your " +
+	"complete reasoning inside <think>...</think> BEFORE any tool calls or final " +
+	"response.\n\n" +
+	"Otherwise, output directly after </think> with tool calls or final response.\n\n" +
 	"### Available Tool Schemas\n\n%s\n\n" +
-	"You MUST strictly follow the tool names and parameter schemas defined above."
+	"You MUST strictly follow the above defined tool name and parameter schemas " +
+	"to invoke tool calls. Use the exact parameter names from the schemas."
 
 // RenderToolsSection renders the "## Tools" instruction block for the given
-// tools. The caller appends the result to the system message content before
+// tools. The caller prepends the result to the system message content before
 // passing the system message to libds4's chat helpers. An empty tool list
 // renders nothing (an empty string), so callers need not special-case it.
 func RenderToolsSection(tools []Tool) (string, error) {
@@ -66,8 +79,8 @@ func RenderToolCall(call ToolCall) (string, error) {
 	if body != "" {
 		body = "\n" + body
 	}
-	return invokeStartToken + " name=\"" + call.Name + "\">" + body + "\n" +
-		invokeEndToken + ">", nil
+	return invokeStartToken + " name=\"" + dsmlEscapeAttr(call.Name) + "\">" + body + "\n" +
+		invokeEndToken, nil
 }
 
 // WrapToolCalls wraps rendered invoke blocks in a "<｜DSML｜tool_calls>" block.
@@ -75,7 +88,7 @@ func WrapToolCalls(invokes []string) string {
 	if len(invokes) == 0 {
 		return ""
 	}
-	return toolCallsStartToken + ">\n" +
+	return "\n\n<" + dsmlMarker + toolCallsBlockName + ">\n" +
 		strings.Join(invokes, "\n") +
 		"\n" + toolCallsEndToken
 }
@@ -102,10 +115,8 @@ func RenderToolCalls(calls []ToolCall) (string, error) {
 // newline-joined "<｜DSML｜parameter>" elements, preserving key order. A value
 // that is a JSON string is emitted with string="true" and its unquoted text;
 // any other JSON value is emitted with string="false" and its compact JSON.
-// Invalid or non-object arguments render as no parameters.
-// A value containing the literal parameterEndToken cannot be represented in
-// DSML and would corrupt decoding; see the matching note in decode.go. Such a
-// value is vanishingly unlikely in real tool arguments.
+// Invalid or non-object arguments render as one string parameter named
+// "arguments", matching ds4-server's fallback path.
 func encodeArguments(argsJSON string) (string, error) {
 	pairs, err := orderedJSONPairs(argsJSON)
 	if err != nil {
@@ -143,11 +154,13 @@ func parameterElement(name, value string, isString bool) (string, error) {
 	if err := validateTagAttribute("parameter name", name); err != nil {
 		return "", err
 	}
-	if err := validateParameterValue(value); err != nil {
-		return "", err
+	if isString {
+		value = escapeParameterText(value)
+	} else {
+		value = escapeJSONLiteral(value)
 	}
-	return parameterStartToken + " name=\"" + name + "\" string=\"" +
-		boolStr(isString) + "\">" + value + "<" + parameterEndToken, nil
+	return parameterStartToken + " name=\"" + dsmlEscapeAttr(name) + "\" string=\"" +
+		boolStr(isString) + "\">" + value + parameterEndToken, nil
 }
 
 // jsonPair is one key/value entry of a JSON object, in document order.
@@ -186,6 +199,23 @@ func orderedJSONPairs(s string) ([]jsonPair, error) {
 		}
 		pairs = append(pairs, jsonPair{key: key, value: raw})
 	}
+	tok, err = dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '}' {
+		return nil, fmt.Errorf("dsml: arguments object is not closed")
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("dsml: unexpected trailing JSON content")
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("dsml: unexpected trailing JSON content")
+		}
+		return nil, err
+	}
 	return pairs, nil
 }
 
@@ -199,24 +229,10 @@ func jsonIsObject(b []byte) bool {
 }
 
 // RenderToolResult wraps one tool result payload the way DeepSeek/ds4 expect
-// tool outputs to appear in the next user turn. It returns an error when
-// content embeds a reserved token — the tool_result delimiters, the DSML
-// marker, or the EOS/thinking control tokens — that would let the result
-// break out of its wrapper and inject markup into the surrounding prompt.
+// tool outputs to appear in the next user turn. Tool output is treated as data:
+// normal '<', '>', '&', DSML text, and control-token-looking text are preserved.
+// Only the exact </tool_result> sentinel is escaped so the payload cannot break
+// out of the wrapper.
 func RenderToolResult(content string) (string, error) {
-	if err := validateToolResultContent(content); err != nil {
-		return "", err
-	}
-	return toolResultStart + content + toolResultEnd, nil
-}
-
-// validateToolResultContent rejects tool-result text containing a token that
-// could escape the <tool_result> wrapper or inject DSML/control markup.
-func validateToolResultContent(content string) error {
-	for _, tok := range []string{toolResultStart, toolResultEnd, dsmlMarker, eosToken, thinkingEndToken} {
-		if strings.Contains(content, tok) {
-			return fmt.Errorf("dsml: tool result content contains reserved token %q", tok)
-		}
-	}
-	return nil
+	return toolResultStart + escapeToolResultText(content) + toolResultEnd, nil
 }
