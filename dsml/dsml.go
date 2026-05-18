@@ -16,6 +16,7 @@ package dsml
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -35,6 +36,8 @@ const (
 	invokeEndToken      = "</" + dsmlMarker + "invoke"
 	parameterStartToken = "<" + dsmlMarker + "parameter"
 	parameterEndToken   = "/" + dsmlMarker + "parameter>"
+	toolResultStart     = "<tool_result>"
+	toolResultEnd       = "</tool_result>"
 )
 
 // Tool is an OpenAI-style function/tool schema.
@@ -56,6 +59,9 @@ type ToolCall struct {
 	Name string
 	// Arguments holds the call arguments as a JSON object string.
 	Arguments string
+	// Exact is the exact sampled DSML "<｜DSML｜invoke ...</｜DSML｜invoke>"
+	// block when this call came from ParseCompletion.
+	Exact string
 }
 
 // ParsedMessage is the decoded result of one assistant completion.
@@ -119,4 +125,31 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func validateTagAttribute(kind, value string) error {
+	if value == "" {
+		return fmt.Errorf("dsml: %s must not be empty", kind)
+	}
+	if strings.ContainsAny(value, "\"\r\n\t") {
+		return fmt.Errorf("dsml: %s contains unsupported control characters or quotes", kind)
+	}
+	return nil
+}
+
+func validateParameterValue(value string) error {
+	switch {
+	case strings.Contains(value, parameterStartToken):
+		return fmt.Errorf("dsml: parameter value contains nested parameter start token")
+	case strings.Contains(value, invokeStartToken):
+		return fmt.Errorf("dsml: parameter value contains invoke start token")
+	case strings.Contains(value, invokeEndToken+">"):
+		return fmt.Errorf("dsml: parameter value contains invoke end token")
+	case strings.Contains(value, toolCallsEndToken):
+		return fmt.Errorf("dsml: parameter value contains tool_calls end token")
+	case strings.Contains(value, "<"+parameterEndToken):
+		return fmt.Errorf("dsml: parameter value contains parameter end token")
+	default:
+		return nil
+	}
 }

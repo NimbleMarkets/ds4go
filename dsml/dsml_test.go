@@ -58,7 +58,11 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 
 	// Render the calls, then wrap them in a minimal completion the way a
 	// model would emit one, and parse it back.
-	completion := "here are the calls" + RenderToolCalls(calls) + eosToken
+	rendered, err := RenderToolCalls(calls)
+	if err != nil {
+		t.Fatalf("RenderToolCalls: %v", err)
+	}
+	completion := "here are the calls" + rendered + eosToken
 
 	msg, err := ParseCompletion(completion, false)
 	if err != nil {
@@ -75,6 +79,9 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 		if got.Name != want.Name {
 			t.Errorf("call %d Name = %q, want %q", i, got.Name, want.Name)
 		}
+		if got.Exact == "" {
+			t.Errorf("call %d Exact was not captured", i)
+		}
 		var gotArgs, wantArgs map[string]any
 		if err := json.Unmarshal([]byte(got.Arguments), &gotArgs); err != nil {
 			t.Fatalf("call %d arguments not valid JSON: %v", i, err)
@@ -90,7 +97,11 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 
 func TestEncodeDecodeRoundTripNoArguments(t *testing.T) {
 	calls := []ToolCall{{Name: "ping", Arguments: ""}}
-	completion := "calling" + RenderToolCalls(calls) + eosToken
+	rendered, err := RenderToolCalls(calls)
+	if err != nil {
+		t.Fatalf("RenderToolCalls: %v", err)
+	}
+	completion := "calling" + rendered + eosToken
 
 	msg, err := ParseCompletion(completion, false)
 	if err != nil {

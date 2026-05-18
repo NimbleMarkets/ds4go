@@ -75,6 +75,9 @@ func TestParseCompletionToolCalls(t *testing.T) {
 	if tc.Name != "add" {
 		t.Errorf("Name = %q, want add", tc.Name)
 	}
+	if tc.Exact == "" {
+		t.Fatal("Exact DSML invoke block was not captured")
+	}
 	want := map[string]any{"a": float64(2), "b": float64(3)}
 	if got := argsMap(t, tc.Arguments); !reflect.DeepEqual(got, want) {
 		t.Errorf("Arguments = %v, want %v", got, want)
@@ -168,5 +171,18 @@ func TestParseCompletionInvalidJSONArgument(t *testing.T) {
 	_, err := ParseCompletion(completion, false)
 	if err == nil {
 		t.Fatal("expected an error for invalid JSON in a string=\"false\" parameter")
+	}
+}
+
+func TestParseCompletionDuplicateParameterName(t *testing.T) {
+	completion := "x\n\n<" + dsmlMarker + "tool_calls>\n" +
+		"<" + dsmlMarker + "invoke name=\"calc\">\n" +
+		"<" + dsmlMarker + "parameter name=\"n\" string=\"false\">1</" + dsmlMarker + "parameter>\n" +
+		"<" + dsmlMarker + "parameter name=\"n\" string=\"false\">2</" + dsmlMarker + "parameter>\n" +
+		"</" + dsmlMarker + "invoke>\n" +
+		"</" + dsmlMarker + "tool_calls>"
+	_, err := ParseCompletion(completion, false)
+	if err == nil {
+		t.Fatal("expected duplicate parameter names to fail")
 	}
 }

@@ -1,31 +1,39 @@
-// Command openai-compatible serves a minimal OpenAI-style chat endpoint backed
-// by the ds4 engine.
+// Command openai-compatible serves a small OpenAI-style chat endpoint backed by
+// the ds4 engine.
 //
-// It accepts the same arguments as the upstream `ds4-server` (ds4_server.c);
-// see --help. This example exercises the model, HTTP, and default-token flags;
-// the disk-KV-cache flags are parsed for argument parity but not used.
+// It reuses the shared model/runtime flag set from the upstream-style server
+// config, but the HTTP surface here stays intentionally narrow: one
+// /v1/chat/completions endpoint with basic DSML tool-call round-tripping.
 package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/dsml"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/spf13/pflag"
 )
 
 type chatRequest struct {
-	Messages  []chatMessage `json:"messages"`
-	MaxTokens int           `json:"max_tokens"`
+	Messages            []chatMessage `json:"messages"`
+	Tools               []chatTool    `json:"tools,omitempty"`
+	MaxTokens           int           `json:"max_tokens"`
+	MaxCompletionTokens int           `json:"max_completion_tokens"`
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
 type chatResponse struct {
@@ -37,6 +45,24 @@ type chatResponse struct {
 type chatChoice struct {
 	Index   int         `json:"index"`
 	Message chatMessage `json:"message"`
+}
+
+type chatTool struct {
+	Type     string           `json:"type"`
+	Function chatToolFunction `json:"function"`
+}
+
+type chatToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Arguments   string          `json:"arguments,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type chatToolCall struct {
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function chatToolFunction `json:"function"`
 }
 
 func main() {
@@ -100,7 +126,7 @@ func run(cfg *cliopts.ServerConfig) error {
 			return
 		}
 		defer session.Close()
-		prompt, err := buildPrompt(engine, req.Messages)
+		prompt, err := buildPrompt(engine, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -108,6 +134,9 @@ func run(cfg *cliopts.ServerConfig) error {
 		defer prompt.Free()
 
 		maxTokens := req.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = req.MaxCompletionTokens
+		}
 		if maxTokens <= 0 {
 			maxTokens = cfg.Tokens
 		}
@@ -129,13 +158,35 @@ func run(cfg *cliopts.ServerConfig) error {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		msg := chatMessage{Role: "assistant", Content: text}
+		if parsed, err := dsml.ParseCompletion(text, true); err == nil {
+			msg.Content = parsed.Content
+			if len(parsed.ToolCalls) > 0 {
+				msg.ToolCalls = make([]chatToolCall, len(parsed.ToolCalls))
+				for i, call := range parsed.ToolCalls {
+					id, err := newToolCallID()
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					msg.ToolCalls[i] = chatToolCall{
+						ID:   id,
+						Type: "function",
+						Function: chatToolFunction{
+							Name:      call.Name,
+							Arguments: call.Arguments,
+						},
+					}
+				}
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chatResponse{
 			ID:     "chatcmpl-ds4go",
 			Object: "chat.completion",
 			Choices: []chatChoice{{
 				Index:   0,
-				Message: chatMessage{Role: "assistant", Content: text},
+				Message: msg,
 			}},
 		})
 	})
@@ -145,7 +196,7 @@ func run(cfg *cliopts.ServerConfig) error {
 	return http.ListenAndServe(addr, mux)
 }
 
-func buildPrompt(engine *ds4.Engine, messages []chatMessage) (*ds4.Tokens, error) {
+func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
 	tokens, err := engine.NewTokens(nil)
 	if err != nil {
 		return nil, err
@@ -154,12 +205,48 @@ func buildPrompt(engine *ds4.Engine, messages []chatMessage) (*ds4.Tokens, error
 		tokens.Free()
 		return nil, err
 	}
-	for _, msg := range messages {
-		if msg.Role == "assistant" || msg.Role == "user" || msg.Role == "system" {
-			if err := engine.ChatAppendMessage(tokens, msg.Role, msg.Content); err != nil {
-				tokens.Free()
-				return nil, err
+	toolsSection, err := renderToolsSection(req.Tools)
+	if err != nil {
+		tokens.Free()
+		return nil, err
+	}
+	appendedTools := false
+	if toolsSection != "" && !hasSystemMessage(req.Messages) {
+		if err := engine.ChatAppendMessage(tokens, "system", toolsSection); err != nil {
+			tokens.Free()
+			return nil, err
+		}
+		appendedTools = true
+	}
+	seenCallIDs := map[string]bool{}
+	for _, msg := range req.Messages {
+		switch msg.Role {
+		case "assistant":
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					seenCallIDs[tc.ID] = true
+				}
 			}
+		case "tool":
+			if msg.ToolCallID == "" || !seenCallIDs[msg.ToolCallID] {
+				tokens.Free()
+				return nil, fmt.Errorf("tool message references unknown tool_call_id %q", msg.ToolCallID)
+			}
+		}
+		role, content, err := renderMessage(msg, toolsSection, !appendedTools)
+		if err != nil {
+			tokens.Free()
+			return nil, err
+		}
+		if role == "" {
+			continue
+		}
+		if err := engine.ChatAppendMessage(tokens, role, content); err != nil {
+			tokens.Free()
+			return nil, err
+		}
+		if msg.Role == "system" && toolsSection != "" && !appendedTools {
+			appendedTools = true
 		}
 	}
 	if err := engine.ChatAppendAssistantPrefix(tokens, ds4.ThinkHigh); err != nil {
@@ -167,6 +254,93 @@ func buildPrompt(engine *ds4.Engine, messages []chatMessage) (*ds4.Tokens, error
 		return nil, err
 	}
 	return tokens, nil
+}
+
+func renderToolsSection(tools []chatTool) (string, error) {
+	if len(tools) == 0 {
+		return "", nil
+	}
+	out := make([]dsml.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Type != "" && tool.Type != "function" {
+			return "", fmt.Errorf("unsupported tool type %q", tool.Type)
+		}
+		out = append(out, dsml.Tool{
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+			Parameters:  tool.Function.Parameters,
+		})
+	}
+	return dsml.RenderToolsSection(out)
+}
+
+func hasSystemMessage(messages []chatMessage) bool {
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			return true
+		}
+	}
+	return false
+}
+
+func renderMessage(msg chatMessage, toolsSection string, appendTools bool) (string, string, error) {
+	switch msg.Role {
+	case "system":
+		content := msg.Content
+		if appendTools && toolsSection != "" {
+			if content != "" {
+				content += "\n\n"
+			}
+			content += toolsSection
+		}
+		return "system", content, nil
+	case "user":
+		return "user", msg.Content, nil
+	case "assistant":
+		renderedCalls, err := renderAssistantToolCalls(msg.ToolCalls)
+		if err != nil {
+			return "", "", err
+		}
+		return "assistant", msg.Content + renderedCalls, nil
+	case "tool":
+		result, err := dsml.RenderToolResult(msg.Content)
+		if err != nil {
+			return "", "", err
+		}
+		return "user", result, nil
+	default:
+		return "", "", nil
+	}
+}
+
+// renderAssistantToolCalls re-renders prior assistant tool calls from their
+// JSON arguments. This stateless endpoint does not use dsml.ReplayStore:
+// exact sampled-DSML replay needs conversation-scoped state carried across
+// requests, which a stateful server (not this example) would have to own.
+func renderAssistantToolCalls(calls []chatToolCall) (string, error) {
+	if len(calls) == 0 {
+		return "", nil
+	}
+	invokes := make([]string, len(calls))
+	for i, call := range calls {
+		invoke, err := dsml.RenderToolCall(dsml.ToolCall{
+			Name:      call.Function.Name,
+			Arguments: call.Function.Arguments,
+		})
+		if err != nil {
+			return "", err
+		}
+		invokes[i] = invoke
+	}
+	return dsml.WrapToolCalls(invokes), nil
+}
+
+func newToolCallID() (string, error) {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return "call_" + strings.ToLower(hex.EncodeToString(raw[:])), nil
 }
 
 func fatal(err error) {

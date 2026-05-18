@@ -66,9 +66,19 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 // (just past the toolCallsStartToken prefix). It returns the parsed calls and
 // the index just past the closing tool-calls tag.
 func parseToolCalls(index int, text string) (calls []ToolCall, newIndex int, err error) {
+	first := true
 	for {
 		var stop string
-		index, _, stop = readUntilStop(index, text, []string{invokeStartToken, toolCallsEndToken})
+		var gap string
+		index, gap, stop = readUntilStop(index, text, []string{invokeStartToken, toolCallsEndToken})
+		if first {
+			if gap != ">\n" {
+				return nil, index, fmt.Errorf("dsml: malformed tool_calls start: %q", gap)
+			}
+			first = false
+		} else if gap != "\n" {
+			return nil, index, fmt.Errorf("dsml: malformed tool call separator: %q", gap)
+		}
 		if stop == toolCallsEndToken {
 			return calls, index, nil
 		}
@@ -76,6 +86,7 @@ func parseToolCalls(index int, text string) (calls []ToolCall, newIndex int, err
 			return nil, index, fmt.Errorf("dsml: unterminated tool_calls block")
 		}
 
+		invokeStart := index - len(invokeStartToken)
 		var nameContent string
 		index, nameContent, stop = readUntilStop(index, text, []string{parameterStartToken, invokeEndToken})
 		nameMatch := toolNameRe.FindStringSubmatch(nameContent)
@@ -94,15 +105,26 @@ func parseToolCalls(index int, text string) (calls []ToolCall, newIndex int, err
 			if len(pm) != 4 {
 				return nil, index, fmt.Errorf("dsml: malformed parameter: %q", paramContent)
 			}
+			if _, seen := args.values[pm[1]]; seen {
+				return nil, index, fmt.Errorf("dsml: duplicate parameter name %q", pm[1])
+			}
 			args.set(pm[1], pm[3], pm[2] == "true")
 			index, _, stop = readUntilStop(index, text, []string{parameterStartToken, invokeEndToken})
 		}
+		if stop != invokeEndToken {
+			return nil, index, fmt.Errorf("dsml: unterminated invoke block")
+		}
+		if index >= len(text) || text[index] != '>' {
+			return nil, index, fmt.Errorf("dsml: malformed invoke terminator")
+		}
+		exact := text[invokeStart : index+1]
+		index++
 
 		argsJSON := args.buildJSON()
 		if !json.Valid([]byte(argsJSON)) {
 			return nil, index, fmt.Errorf("dsml: tool %q produced invalid arguments JSON: %s", nameMatch[1], argsJSON)
 		}
-		calls = append(calls, ToolCall{Name: nameMatch[1], Arguments: argsJSON})
+		calls = append(calls, ToolCall{Name: nameMatch[1], Arguments: argsJSON, Exact: exact})
 	}
 }
 
