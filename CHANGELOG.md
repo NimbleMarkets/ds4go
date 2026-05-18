@@ -5,6 +5,7 @@ NOTE: This currently needs a patched `ds4` to make a shared library; we also emb
 ## v0.2.1 (2026-05-17)
 
  * feat: add Context for cancelation
+ * feat: Access to Engine calls are syncronized by mutex, making access thread-safe
 
 ## v0.2.0 (2026-05-17)
 
