@@ -15,3 +15,9 @@ var errLocked = errors.New("a download for this model is already in progress")
 type fileLock struct {
 	f *os.File
 }
+
+// lockExclusive acquires an exclusive lock on path, creating the file if
+// needed. Unlike tryLock, it waits for the existing holder to release it.
+func lockExclusive(path string) (*fileLock, error) {
+	return lockFile(path, false)
+}

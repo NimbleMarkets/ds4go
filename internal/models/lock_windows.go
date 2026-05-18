@@ -12,11 +12,18 @@ import (
 // tryLock acquires a non-blocking exclusive lock on path, creating the file
 // if needed. It returns errLocked if another process holds the lock.
 func tryLock(path string) (*fileLock, error) {
+	return lockFile(path, true)
+}
+
+func lockFile(path string, nonBlocking bool) (*fileLock, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	const flags = windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+	if nonBlocking {
+		flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
+	}
 	if err := windows.LockFileEx(windows.Handle(f.Fd()), flags, 0, 1, 0, &windows.Overlapped{}); err != nil {
 		f.Close()
 		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {

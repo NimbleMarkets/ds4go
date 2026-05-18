@@ -16,6 +16,8 @@ import (
 	"strings"
 )
 
+const stateLockFileName = ".ds4go.state.lock"
+
 // Config is stored at $DS4_DIR/ds4go.json.
 type Config struct {
 	DefaultModel string           `json:"defaultModel"`
@@ -107,6 +109,15 @@ func (m *Manager) LoadConfig() (Config, error) {
 
 // SaveConfig writes ds4go.json.
 func (m *Manager) SaveConfig(cfg Config) error {
+	lock, err := m.lockState()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return m.saveConfigLocked(cfg)
+}
+
+func (m *Manager) saveConfigLocked(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(m.ConfigPath), 0o755); err != nil {
 		return err
 	}
@@ -124,11 +135,20 @@ func (m *Manager) SaveConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.ConfigPath, b, 0o644)
+	return writeFileAtomic(m.ConfigPath, b, 0o644)
 }
 
 // Set switches the default model and updates models/ds4flash.gguf.
 func (m *Manager) Set(alias string) error {
+	lock, err := m.lockState()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return m.setLocked(alias)
+}
+
+func (m *Manager) setLocked(alias string) error {
 	model, ok := lookup(alias)
 	if !ok {
 		return unknownAlias(alias)
@@ -144,11 +164,8 @@ func (m *Manager) Set(alias string) error {
 	}
 	link := filepath.Join(m.ModelsDir, DefaultModelSymlink)
 	target := filepath.Join(m.ModelsDir, model.FileName)
-	_ = os.Remove(link)
-	if err := os.Symlink(target, link); err != nil {
-		if err := os.Link(target, link); err != nil {
-			return fmt.Errorf("update default model: symlink failed and hard-link fallback failed: %w", err)
-		}
+	if err := swapLinkAtomic(target, link); err != nil {
+		return fmt.Errorf("update default model: %w", err)
 	}
 
 	models, cfg, err := m.List()
@@ -158,7 +175,7 @@ func (m *Manager) Set(alias string) error {
 	cfg.DefaultModel = alias
 	cfg.DS4Dir = m.DS4Dir
 	cfg.Models = modelMap(models)
-	return m.SaveConfig(cfg)
+	return m.saveConfigLocked(cfg)
 }
 
 // Download downloads a curated model from Hugging Face with resume support.
@@ -204,11 +221,18 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 		return Model{}, err
 	}
 	model.SHA256 = sha
+
+	stateLock, err := m.lockState()
+	if err != nil {
+		return Model{}, err
+	}
+	defer stateLock.Close()
+
 	// The first inferenceable model becomes the default chat model. Adjunct
 	// models (Optional, e.g. mtp) are never eligible, and an existing default
 	// is never overridden by a later download.
-	if !model.Optional && !m.hasActiveDefault() {
-		if err := m.Set(alias); err != nil {
+	if !model.Optional && !m.hasActiveDefaultLocked() {
+		if err := m.setLocked(alias); err != nil {
 			return Model{}, err
 		}
 	}
@@ -220,7 +244,7 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 				}
 			}
 			cfg.Models = modelMap(models)
-			_ = m.SaveConfig(cfg)
+			_ = m.saveConfigLocked(cfg)
 		}
 	}
 	return model, nil
@@ -295,6 +319,12 @@ func (m *Manager) Delete(alias string) error {
 	}
 	defer lock.Close()
 
+	stateLock, err := m.lockState()
+	if err != nil {
+		return err
+	}
+	defer stateLock.Close()
+
 	if m.installed(model) {
 		if err := os.Remove(out); err != nil {
 			return err
@@ -321,7 +351,7 @@ func (m *Manager) Delete(alias string) error {
 		}
 		freshCfg.DefaultModel = ""
 		freshCfg.Models = modelMap(models)
-		if err := m.SaveConfig(freshCfg); err != nil {
+		if err := m.saveConfigLocked(freshCfg); err != nil {
 			return err
 		}
 		fmt.Fprintln(m.Out, "Cleared default model")
@@ -329,9 +359,70 @@ func (m *Manager) Delete(alias string) error {
 	return nil
 }
 
+func (m *Manager) lockState() (*fileLock, error) {
+	if err := os.MkdirAll(m.DS4Dir, 0o755); err != nil {
+		return nil, err
+	}
+	return lockExclusive(filepath.Join(m.DS4Dir, stateLockFileName))
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func swapLinkAtomic(target, link string) error {
+	f, err := os.CreateTemp(filepath.Dir(link), "."+filepath.Base(link)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	defer os.Remove(tmp)
+
+	if err := os.Link(target, tmp); err != nil {
+		if err := os.Symlink(target, tmp); err != nil {
+			return fmt.Errorf("hard-link failed and symlink fallback failed: %w", err)
+		}
+	}
+	return os.Rename(tmp, link)
+}
+
 // hasActiveDefault reports whether an installed model is currently the
 // configured default chat model.
 func (m *Manager) hasActiveDefault() bool {
+	lock, err := m.lockState()
+	if err != nil {
+		return false
+	}
+	defer lock.Close()
+	return m.hasActiveDefaultLocked()
+}
+
+func (m *Manager) hasActiveDefaultLocked() bool {
 	list, _, err := m.List()
 	if err != nil {
 		return false

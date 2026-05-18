@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -293,6 +295,106 @@ func TestSetRejectsMTPDefault(t *testing.T) {
 	m := testManager(t.TempDir())
 	if err := m.Set("mtp"); err == nil {
 		t.Fatal("Set(mtp) succeeded, want error")
+	}
+}
+
+func TestSaveConfigLeavesValidJSON(t *testing.T) {
+	m := testManager(t.TempDir())
+	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 50; i++ {
+		cfg := Config{
+			DefaultModel: "q2-imatrix",
+			DS4Dir:       m.DS4Dir,
+			Models: map[string]Model{
+				"q2-imatrix": {Alias: "q2-imatrix", FileName: fmt.Sprintf("model-%d.gguf", i)},
+			},
+		}
+		if err := m.SaveConfig(cfg); err != nil {
+			t.Fatalf("SaveConfig(%d): %v", i, err)
+		}
+		raw, err := os.ReadFile(m.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Config
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatalf("config JSON invalid after save %d: %v", i, err)
+		}
+	}
+
+	matches, err := filepath.Glob(m.ConfigPath + ".tmp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temp config files left behind: %v", matches)
+	}
+}
+
+func TestSetKeepsDefaultModelPathResolvableDuringConcurrentSwaps(t *testing.T) {
+	dir := t.TempDir()
+	m := testManager(dir)
+	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{"q2-imatrix", "q4-imatrix"} {
+		model, _ := lookup(alias)
+		if err := os.WriteFile(filepath.Join(m.ModelsDir, model.FileName), []byte(alias), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.Set("q2-imatrix"); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		aliases := []string{"q4-imatrix", "q2-imatrix"}
+		for i := 0; i < 200; i++ {
+			if err := m.Set(aliases[i%len(aliases)]); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+		}
+		close(done)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		link := filepath.Join(m.ModelsDir, DefaultModelSymlink)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if _, err := os.Stat(link); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		t.Fatalf("concurrent Set/resolution failed: %v", err)
+	default:
 	}
 }
 
