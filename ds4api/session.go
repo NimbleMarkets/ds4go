@@ -18,9 +18,11 @@ type Session struct {
 
 // NewSession creates a ds4 session for this engine and context size.
 func (e *Engine) NewSession(ctxSize int) (*Session, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	var out uintptr
 	code := e.lib.raw.ds4SessionCreate(&out, e.ptr, int32(ctxSize))
 	if err := ds4Error("ds4_session_create", code); err != nil {

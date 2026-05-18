@@ -11,6 +11,7 @@ type Engine struct {
 	lib  *Library
 	ptr  uintptr
 	once sync.Once
+	mu   sync.Mutex // guards calls into libds4; see Session for the same pattern
 }
 
 // NewEngine opens a ds4 engine using the default shared library.
@@ -67,18 +68,24 @@ func (e *Engine) Close() {
 	})
 }
 
-func (e *Engine) require() error {
+// require locks the engine and verifies it is open. The returned unlock
+// function MUST be called (typically via defer) to release the lock.
+func (e *Engine) require() (unlock func(), err error) {
+	e.mu.Lock()
 	if e == nil || e.ptr == 0 {
-		return errClosed
+		e.mu.Unlock()
+		return nil, errClosed
 	}
-	return nil
+	return e.mu.Unlock, nil
 }
 
 // Summary prints ds4's engine summary to its configured output.
 func (e *Engine) Summary() error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	e.lib.raw.ds4EngineSummary(e.ptr)
 	return nil
 }
@@ -175,18 +182,22 @@ func LogString(fp File, typ LogType, msg string) {
 
 // CollectIMatrix calls ds4_engine_collect_imatrix.
 func (e *Engine) CollectIMatrix(datasetPath, outputPath string, ctxSize, maxPrompts, maxTokens int) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	code := e.lib.raw.ds4EngineCollectIMatrix(e.ptr, datasetPath, outputPath, int32(ctxSize), int32(maxPrompts), int32(maxTokens))
 	return ds4Error("ds4_engine_collect_imatrix", code)
 }
 
 // DumpTokens calls ds4_engine_dump_tokens.
 func (e *Engine) DumpTokens(tokens *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	e.lib.raw.ds4EngineDumpTokens(e.ptr, tokens.cptr())
 	return nil
 }
@@ -203,49 +214,61 @@ func DumpTextTokenization(modelPath, text string, fp File) error {
 
 // HeadTest calls ds4_engine_head_test.
 func (e *Engine) HeadTest(prompt *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	return ds4Error("ds4_engine_head_test", e.lib.raw.ds4EngineHeadTest(e.ptr, prompt.cptr()))
 }
 
 // FirstTokenTest calls ds4_engine_first_token_test.
 func (e *Engine) FirstTokenTest(prompt *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	return ds4Error("ds4_engine_first_token_test", e.lib.raw.ds4EngineFirstTokenTest(e.ptr, prompt.cptr()))
 }
 
 // MetalGraphTest calls ds4_engine_metal_graph_test.
 func (e *Engine) MetalGraphTest(prompt *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	return ds4Error("ds4_engine_metal_graph_test", e.lib.raw.ds4EngineMetalGraphTest(e.ptr, prompt.cptr()))
 }
 
 // MetalGraphFullTest calls ds4_engine_metal_graph_full_test.
 func (e *Engine) MetalGraphFullTest(prompt *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	return ds4Error("ds4_engine_metal_graph_full_test", e.lib.raw.ds4EngineMetalGraphFullTest(e.ptr, prompt.cptr()))
 }
 
 // MetalGraphPromptTest calls ds4_engine_metal_graph_prompt_test.
 func (e *Engine) MetalGraphPromptTest(prompt *Tokens, ctxSize int) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	return ds4Error("ds4_engine_metal_graph_prompt_test", e.lib.raw.ds4EngineMetalGraphPromptTest(e.ptr, prompt.cptr(), int32(ctxSize)))
 }
 
 // GenerateArgmax calls ds4_engine_generate_argmax.
 func (e *Engine) GenerateArgmax(prompt *Tokens, opts ArgmaxGenerateOptions) ([]int, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	var out []int
 	onToken := opts.OnToken
 	if onToken == nil {
@@ -277,9 +300,11 @@ func (e *Engine) GenerateArgmax(prompt *Tokens, opts ArgmaxGenerateOptions) ([]i
 
 // TokenizeText tokenizes plain text with ds4_tokenize_text.
 func (e *Engine) TokenizeText(text string) (*Tokens, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	var out cTokens
 	e.lib.raw.ds4TokenizeText(e.ptr, text, &out)
 	return tokensFromC(e.lib, out), nil
@@ -287,17 +312,21 @@ func (e *Engine) TokenizeText(text string) (*Tokens, error) {
 
 // NewTokens creates a libds4-owned token vector associated with this engine's library.
 func (e *Engine) NewTokens(ids []int) (*Tokens, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	return newTokensWithLibrary(e.lib, ids)
 }
 
 // TokenizeRenderedChat tokenizes a rendered chat prompt.
 func (e *Engine) TokenizeRenderedChat(text string) (*Tokens, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	var out cTokens
 	e.lib.raw.ds4TokenizeRenderedChat(e.ptr, text, &out)
 	return tokensFromC(e.lib, out), nil
@@ -305,18 +334,22 @@ func (e *Engine) TokenizeRenderedChat(text string) (*Tokens, error) {
 
 // ChatBegin appends ds4's chat preamble to tokens.
 func (e *Engine) ChatBegin(tokens *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	e.lib.raw.ds4ChatBegin(e.ptr, tokens.cptr())
 	return nil
 }
 
 // EncodeChatPrompt encodes a system and user prompt with ds4's chat template.
 func (e *Engine) EncodeChatPrompt(system, prompt string, thinkMode ThinkMode) (*Tokens, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	var out cTokens
 	e.lib.raw.ds4EncodeChatPrompt(e.ptr, system, prompt, thinkMode, &out)
 	return tokensFromC(e.lib, out), nil
@@ -324,36 +357,44 @@ func (e *Engine) EncodeChatPrompt(system, prompt string, thinkMode ThinkMode) (*
 
 // ChatAppendMaxEffortPrefix appends ds4's maximum-effort thinking prefix.
 func (e *Engine) ChatAppendMaxEffortPrefix(tokens *Tokens) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	e.lib.raw.ds4ChatAppendMaxEffortPrefix(e.ptr, tokens.cptr())
 	return nil
 }
 
 // ChatAppendMessage appends a rendered role/content chat message.
 func (e *Engine) ChatAppendMessage(tokens *Tokens, role, content string) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	e.lib.raw.ds4ChatAppendMessage(e.ptr, tokens.cptr(), role, content)
 	return nil
 }
 
 // ChatAppendAssistantPrefix appends the assistant prefix for generation.
 func (e *Engine) ChatAppendAssistantPrefix(tokens *Tokens, thinkMode ThinkMode) error {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	e.lib.raw.ds4ChatAppendAssistantPrefix(e.ptr, tokens.cptr(), thinkMode)
 	return nil
 }
 
 // TokenText decodes one token to text and frees the C allocation returned by ds4.
 func (e *Engine) TokenText(token int) (string, error) {
-	if err := e.require(); err != nil {
+	unlock, err := e.require()
+	if err != nil {
 		return "", err
 	}
+	defer unlock()
 	var n uintptr
 	ptr := e.lib.raw.ds4TokenText(e.ptr, int32(token), &n)
 	if ptr == nil || n == 0 {
@@ -368,6 +409,8 @@ func (e *Engine) TokenText(token int) (string, error) {
 
 // TokenEOS returns ds4's end-of-sequence token id.
 func (e *Engine) TokenEOS() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -376,6 +419,8 @@ func (e *Engine) TokenEOS() int {
 
 // TokenUser returns ds4's user-role token id.
 func (e *Engine) TokenUser() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -384,6 +429,8 @@ func (e *Engine) TokenUser() int {
 
 // TokenAssistant returns ds4's assistant-role token id.
 func (e *Engine) TokenAssistant() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -392,6 +439,8 @@ func (e *Engine) TokenAssistant() int {
 
 // RoutedQuantBits returns the routed expert quantization bits used by the engine.
 func (e *Engine) RoutedQuantBits() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -400,6 +449,8 @@ func (e *Engine) RoutedQuantBits() int {
 
 // HasMTP reports whether this engine has an MTP draft model.
 func (e *Engine) HasMTP() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return false
 	}
@@ -408,6 +459,8 @@ func (e *Engine) HasMTP() bool {
 
 // MTPDraftTokens returns the configured MTP draft length.
 func (e *Engine) MTPDraftTokens() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
