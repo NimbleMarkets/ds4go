@@ -65,6 +65,106 @@ func TestToolRegistryBuildPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildChatPromptNoTools(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+
+	history := []ChatMessage{{Role: "user", Content: "hello there"}}
+	prompt, err := BuildChatPrompt(eng, "system prompt", nil, history, ThinkHigh)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt: %v", err)
+	}
+	defer prompt.Free()
+
+	if got, want := prompt.Len(), expectedPromptLen(t, "system prompt", nil, history, renderChatMessage); got != want {
+		t.Fatalf("prompt Len = %d, want %d", got, want)
+	}
+}
+
+func TestBuildChatPromptToolsWithSystem(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+
+	tools := []dsml.Tool{{
+		Name:        "weather",
+		Description: "Look up weather",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}}
+	history := []ChatMessage{{Role: "user", Content: "forecast"}}
+	prompt, err := BuildChatPrompt(eng, "client system", tools, history, ThinkHigh)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt: %v", err)
+	}
+	defer prompt.Free()
+
+	if got, want := prompt.Len(), expectedPromptLen(t, "client system", tools, history, renderChatMessage); got != want {
+		t.Fatalf("prompt Len = %d, want %d", got, want)
+	}
+}
+
+func TestBuildChatPromptToolsNoSystem(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+
+	tools := []dsml.Tool{{
+		Name:        "lookup",
+		Description: "Lookup data",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+	}}
+	history := []ChatMessage{{Role: "user", Content: "search"}}
+	prompt, err := BuildChatPrompt(eng, "", tools, history, ThinkHigh)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt: %v", err)
+	}
+	defer prompt.Free()
+
+	if got, want := prompt.Len(), expectedPromptLen(t, "", tools, history, renderChatMessage); got != want {
+		t.Fatalf("prompt Len = %d, want %d", got, want)
+	}
+}
+
+func TestBuildChatPromptMultiTurnToolHistory(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+
+	history := []ChatMessage{
+		{Role: "user", Content: "add numbers"},
+		{
+			Role:    "assistant",
+			Content: "calling",
+			ToolCalls: []ToolCall{{
+				ID:        "call_1",
+				Name:      "add",
+				Arguments: `{"a":2,"b":3}`,
+			}},
+		},
+		{Role: "tool", Content: "5", ToolCallID: "call_1"},
+		{Role: "assistant", Content: "answer is 5"},
+	}
+	prompt, err := BuildChatPrompt(eng, "system", nil, history, ThinkHigh)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt: %v", err)
+	}
+	defer prompt.Free()
+
+	rendered, err := renderPromptMessages(history, renderChatMessage)
+	if err != nil {
+		t.Fatalf("renderPromptMessages: %v", err)
+	}
+	if len(rendered) != 4 {
+		t.Fatalf("rendered len = %d, want 4", len(rendered))
+	}
+	if !strings.Contains(rendered[1].content, `<｜DSML｜tool_calls>`) {
+		t.Fatalf("assistant tool calls were not rendered: %q", rendered[1].content)
+	}
+	if rendered[2].role != "user" || rendered[2].content != "<tool_result>5</tool_result>" {
+		t.Fatalf("tool result rendered as %#v", rendered[2])
+	}
+	if got, want := prompt.Len(), expectedPromptLen(t, "system", nil, history, renderChatMessage); got != want {
+		t.Fatalf("prompt Len = %d, want %d", got, want)
+	}
+}
+
 func TestToolAwareSystemContentPlacesToolsFirst(t *testing.T) {
 	got := toolAwareSystemContent("client system", "## Tools\nschemas")
 	want := "## Tools\nschemas\n\nclient system"
@@ -198,4 +298,24 @@ func TestToolRegistryExecuteToolCallsContextCancelled(t *testing.T) {
 	if invoked {
 		t.Error("handler was invoked despite a cancelled context")
 	}
+}
+
+func expectedPromptLen(t *testing.T, system string, tools []dsml.Tool, history []ChatMessage, render chatMessageRenderer) int {
+	t.Helper()
+	toolsSection, err := dsml.RenderToolsSection(tools)
+	if err != nil {
+		t.Fatalf("RenderToolsSection: %v", err)
+	}
+	total := 0
+	if system != "" || toolsSection != "" {
+		total += len(strings.Fields("system: " + toolAwareSystemContent(system, toolsSection)))
+	}
+	rendered, err := renderPromptMessages(history, render)
+	if err != nil {
+		t.Fatalf("renderPromptMessages: %v", err)
+	}
+	for _, msg := range rendered {
+		total += len(strings.Fields(msg.role + ": " + msg.content))
+	}
+	return total
 }

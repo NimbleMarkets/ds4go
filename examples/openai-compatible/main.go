@@ -197,91 +197,22 @@ func run(cfg *cliopts.ServerConfig) error {
 }
 
 func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
-	tokens, err := engine.NewTokens(nil)
+	tools, err := convertTools(req.Tools)
 	if err != nil {
 		return nil, err
 	}
-	if err := engine.ChatBegin(tokens); err != nil {
-		tokens.Free()
-		return nil, err
-	}
-	toolsSection, err := renderToolsSection(req.Tools)
+	system, history, err := convertMessages(req.Messages)
 	if err != nil {
-		tokens.Free()
 		return nil, err
 	}
-	appendedTools := false
-	if toolsSection != "" && !hasSystemMessage(req.Messages) {
-		if err := engine.ChatAppendMessage(tokens, "system", toolsSection); err != nil {
-			tokens.Free()
-			return nil, err
-		}
-		appendedTools = true
-	}
-	seenCallIDs := map[string]bool{}
-	for i := 0; i < len(req.Messages); {
-		msg := req.Messages[i]
-		switch msg.Role {
-		case "assistant":
-			for _, tc := range msg.ToolCalls {
-				if tc.ID != "" {
-					seenCallIDs[tc.ID] = true
-				}
-			}
-		case "tool":
-			var content strings.Builder
-			for i < len(req.Messages) && req.Messages[i].Role == "tool" {
-				toolMsg := req.Messages[i]
-				if toolMsg.ToolCallID == "" || !seenCallIDs[toolMsg.ToolCallID] {
-					tokens.Free()
-					return nil, fmt.Errorf("tool message references unknown tool_call_id %q", toolMsg.ToolCallID)
-				}
-				_, part, err := renderMessage(toolMsg, toolsSection, false)
-				if err != nil {
-					tokens.Free()
-					return nil, err
-				}
-				content.WriteString(part)
-				i++
-			}
-			if err := engine.ChatAppendMessage(tokens, "user", content.String()); err != nil {
-				tokens.Free()
-				return nil, err
-			}
-			continue
-		}
-		role, content, err := renderMessage(msg, toolsSection, !appendedTools)
-		if err != nil {
-			tokens.Free()
-			return nil, err
-		}
-		i++
-		if role == "" {
-			continue
-		}
-		if err := engine.ChatAppendMessage(tokens, role, content); err != nil {
-			tokens.Free()
-			return nil, err
-		}
-		if msg.Role == "system" && toolsSection != "" && !appendedTools {
-			appendedTools = true
-		}
-	}
-	if err := engine.ChatAppendAssistantPrefix(tokens, ds4.ThinkHigh); err != nil {
-		tokens.Free()
-		return nil, err
-	}
-	return tokens, nil
+	return ds4.BuildChatPrompt(engine, system, tools, history, ds4.ThinkHigh)
 }
 
-func renderToolsSection(tools []chatTool) (string, error) {
-	if len(tools) == 0 {
-		return "", nil
-	}
+func convertTools(tools []chatTool) ([]dsml.Tool, error) {
 	out := make([]dsml.Tool, 0, len(tools))
 	for _, tool := range tools {
 		if tool.Type != "" && tool.Type != "function" {
-			return "", fmt.Errorf("unsupported tool type %q", tool.Type)
+			return nil, fmt.Errorf("unsupported tool type %q", tool.Type)
 		}
 		out = append(out, dsml.Tool{
 			Name:        tool.Function.Name,
@@ -289,69 +220,56 @@ func renderToolsSection(tools []chatTool) (string, error) {
 			Parameters:  tool.Function.Parameters,
 		})
 	}
-	return dsml.RenderToolsSection(out)
+	return out, nil
 }
 
-func hasSystemMessage(messages []chatMessage) bool {
+func convertMessages(messages []chatMessage) (string, []ds4.ChatMessage, error) {
+	var systemParts []string
+	history := make([]ds4.ChatMessage, 0, len(messages))
+	seenCallIDs := map[string]bool{}
 	for _, msg := range messages {
-		if msg.Role == "system" {
-			return true
-		}
-	}
-	return false
-}
-
-func renderMessage(msg chatMessage, toolsSection string, appendTools bool) (string, string, error) {
-	switch msg.Role {
-	case "system":
-		content := msg.Content
-		if appendTools && toolsSection != "" {
-			if content == "" {
-				content = toolsSection
-			} else {
-				content = toolsSection + "\n\n" + content
+		switch msg.Role {
+		case "system":
+			if msg.Content != "" {
+				systemParts = append(systemParts, msg.Content)
 			}
+		case "user":
+			history = append(history, ds4.ChatMessage{
+				Role:    "user",
+				Content: msg.Content,
+			})
+		case "assistant":
+			calls := make([]ds4.ToolCall, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					seenCallIDs[tc.ID] = true
+				}
+				calls[i] = ds4.ToolCall{
+					ID:        tc.ID,
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				}
+			}
+			history = append(history, ds4.ChatMessage{
+				Role:      "assistant",
+				Content:   msg.Content,
+				ToolCalls: calls,
+			})
+		case "tool":
+			if msg.ToolCallID == "" || !seenCallIDs[msg.ToolCallID] {
+				return "", nil, fmt.Errorf("tool message references unknown tool_call_id %q", msg.ToolCallID)
+			}
+			history = append(history, ds4.ChatMessage{
+				Role:       "tool",
+				Content:    msg.Content,
+				ToolCallID: msg.ToolCallID,
+			})
+		default:
+			// Keep this example permissive for OpenAI-compatible clients that
+			// include fields or roles this narrow server does not consume.
 		}
-		return "system", content, nil
-	case "user":
-		return "user", msg.Content, nil
-	case "assistant":
-		renderedCalls, err := renderAssistantToolCalls(msg.ToolCalls)
-		if err != nil {
-			return "", "", err
-		}
-		return "assistant", msg.Content + renderedCalls, nil
-	case "tool":
-		result, err := dsml.RenderToolResult(msg.Content)
-		if err != nil {
-			return "", "", err
-		}
-		return "user", result, nil
-	default:
-		return "", "", nil
 	}
-}
-
-// renderAssistantToolCalls re-renders prior assistant tool calls from their
-// JSON arguments. This stateless endpoint does not use dsml.ReplayStore:
-// exact sampled-DSML replay needs conversation-scoped state carried across
-// requests, which a stateful server (not this example) would have to own.
-func renderAssistantToolCalls(calls []chatToolCall) (string, error) {
-	if len(calls) == 0 {
-		return "", nil
-	}
-	invokes := make([]string, len(calls))
-	for i, call := range calls {
-		invoke, err := dsml.RenderToolCall(dsml.ToolCall{
-			Name:      call.Function.Name,
-			Arguments: call.Function.Arguments,
-		})
-		if err != nil {
-			return "", err
-		}
-		invokes[i] = invoke
-	}
-	return dsml.WrapToolCalls(invokes), nil
+	return strings.Join(systemParts, "\n\n"), history, nil
 }
 
 func newToolCallID() (string, error) {

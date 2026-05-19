@@ -164,22 +164,32 @@ func (r *ToolRegistry) Schemas() []ToolSchema {
 
 // RenderToolsSection renders the DSML tools section for the registered tools.
 func (r *ToolRegistry) RenderToolsSection() (string, error) {
-	schemas := r.Schemas()
-	tools := make([]dsml.Tool, len(schemas))
-	for i, schema := range schemas {
-		tools[i] = dsml.Tool{
-			Name:        schema.Name,
-			Description: schema.Description,
-			Parameters:  schema.Parameters,
-		}
-	}
-	return dsml.RenderToolsSection(tools)
+	return dsml.RenderToolsSection(dsmlToolsFromSchemas(r.Schemas()))
+}
+
+// BuildChatPrompt renders a tool-aware chat prompt using ds4's chat helpers.
+//
+// The tools section is prepended to the system message. If system is empty and
+// tools is non-empty, BuildChatPrompt creates a system turn containing only the
+// rendered tools section. Tool result messages are rendered as user turns
+// containing DSML <tool_result> blocks.
+func BuildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode) (*Tokens, error) {
+	return buildChatPrompt(engine, system, tools, history, think, renderChatMessage)
 }
 
 // BuildPrompt renders a tool-aware chat prompt using ds4's chat helpers.
 func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []ChatMessage, think ThinkMode) (*Tokens, error) {
+	return buildChatPrompt(engine, system, dsmlToolsFromSchemas(r.Schemas()), history, think, r.renderMessage)
+}
+
+type chatMessageRenderer func(ChatMessage) (string, string, error)
+
+func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode, render chatMessageRenderer) (*Tokens, error) {
 	if engine == nil {
 		return nil, errors.New("ds4go: nil engine")
+	}
+	if render == nil {
+		render = renderChatMessage
 	}
 	tokens, err := engine.NewTokens(nil)
 	if err != nil {
@@ -189,7 +199,7 @@ func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []Chat
 		tokens.Free()
 		return nil, err
 	}
-	toolsSection, err := r.RenderToolsSection()
+	toolsSection, err := dsml.RenderToolsSection(tools)
 	if err != nil {
 		tokens.Free()
 		return nil, err
@@ -201,7 +211,7 @@ func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []Chat
 			return nil, err
 		}
 	}
-	rendered, err := r.renderPromptMessages(history)
+	rendered, err := renderPromptMessages(history, render)
 	if err != nil {
 		tokens.Free()
 		return nil, err
@@ -278,11 +288,22 @@ func (r *ToolRegistry) ExecuteToolCalls(ctx context.Context, calls []ToolCall) (
 }
 
 func (r *ToolRegistry) renderMessage(msg ChatMessage) (string, string, error) {
+	if msg.Role != "assistant" {
+		return renderChatMessage(msg)
+	}
+	renderedCalls, err := r.renderAssistantToolCalls(msg.ToolCalls)
+	if err != nil {
+		return "", "", err
+	}
+	return "assistant", msg.Content + renderedCalls, nil
+}
+
+func renderChatMessage(msg ChatMessage) (string, string, error) {
 	switch msg.Role {
 	case "", "system", "user":
 		return msg.Role, msg.Content, nil
 	case "assistant":
-		renderedCalls, err := r.renderAssistantToolCalls(msg.ToolCalls)
+		renderedCalls, err := renderToolCalls(msg.ToolCalls)
 		if err != nil {
 			return "", "", err
 		}
@@ -314,12 +335,19 @@ func toolAwareSystemContent(system string, toolsSection string) string {
 }
 
 func (r *ToolRegistry) renderPromptMessages(history []ChatMessage) ([]renderedChatMessage, error) {
+	return renderPromptMessages(history, r.renderMessage)
+}
+
+func renderPromptMessages(history []ChatMessage, render chatMessageRenderer) ([]renderedChatMessage, error) {
+	if render == nil {
+		render = renderChatMessage
+	}
 	out := make([]renderedChatMessage, 0, len(history))
 	for i := 0; i < len(history); {
 		if history[i].Role == "tool" {
 			var content strings.Builder
 			for i < len(history) && history[i].Role == "tool" {
-				role, part, err := r.renderMessage(history[i])
+				role, part, err := render(history[i])
 				if err != nil {
 					return nil, err
 				}
@@ -333,7 +361,7 @@ func (r *ToolRegistry) renderPromptMessages(history []ChatMessage) ([]renderedCh
 			continue
 		}
 
-		role, content, err := r.renderMessage(history[i])
+		role, content, err := render(history[i])
 		if err != nil {
 			return nil, err
 		}
@@ -344,6 +372,24 @@ func (r *ToolRegistry) renderPromptMessages(history []ChatMessage) ([]renderedCh
 		out = append(out, renderedChatMessage{role: role, content: content})
 	}
 	return out, nil
+}
+
+func renderToolCalls(calls []ToolCall) (string, error) {
+	if len(calls) == 0 {
+		return "", nil
+	}
+	invokes := make([]string, len(calls))
+	for i, call := range calls {
+		invoke, err := dsml.RenderToolCall(dsml.ToolCall{
+			Name:      call.Name,
+			Arguments: call.Arguments,
+		})
+		if err != nil {
+			return "", err
+		}
+		invokes[i] = invoke
+	}
+	return dsml.WrapToolCalls(invokes), nil
 }
 
 func (r *ToolRegistry) renderAssistantToolCalls(calls []ToolCall) (string, error) {
@@ -360,18 +406,19 @@ func (r *ToolRegistry) renderAssistantToolCalls(calls []ToolCall) (string, error
 			return exact, nil
 		}
 	}
-	invokes := make([]string, len(calls))
-	for i, call := range calls {
-		invoke, err := dsml.RenderToolCall(dsml.ToolCall{
-			Name:      call.Name,
-			Arguments: call.Arguments,
-		})
-		if err != nil {
-			return "", err
+	return renderToolCalls(calls)
+}
+
+func dsmlToolsFromSchemas(schemas []ToolSchema) []dsml.Tool {
+	tools := make([]dsml.Tool, len(schemas))
+	for i, schema := range schemas {
+		tools[i] = dsml.Tool{
+			Name:        schema.Name,
+			Description: schema.Description,
+			Parameters:  schema.Parameters,
 		}
-		invokes[i] = invoke
 	}
-	return dsml.WrapToolCalls(invokes), nil
+	return tools
 }
 
 func (r *ToolRegistry) lookup(name string) (ToolHandler, error) {
