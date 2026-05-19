@@ -119,7 +119,7 @@ var streamFixtures = []streamFixture{
 
 // chunkStrategy turns a string into a slice of chunks.
 type chunkStrategy struct {
-	name string
+	name  string
 	split func(string) []string
 }
 
@@ -212,7 +212,7 @@ func verifyDeltaInvariant(t *testing.T, events []StreamEvent, want ParsedMessage
 	var reasoning, content strings.Builder
 	argDeltas := map[int][]string{}
 	hasToolStart := map[int]bool{}
-	hasToolEnd := map[int]bool{}
+	endArguments := map[int]string{}
 
 	for _, ev := range events {
 		switch ev.Type {
@@ -225,7 +225,7 @@ func verifyDeltaInvariant(t *testing.T, events []StreamEvent, want ParsedMessage
 		case EventToolCallArgumentsDelta:
 			argDeltas[ev.Index] = append(argDeltas[ev.Index], ev.Delta)
 		case EventToolCallEnd:
-			hasToolEnd[ev.Index] = true
+			endArguments[ev.Index] = ev.Arguments
 		}
 	}
 
@@ -237,7 +237,7 @@ func verifyDeltaInvariant(t *testing.T, events []StreamEvent, want ParsedMessage
 	}
 
 	if len(want.ToolCalls) == 0 {
-		if len(hasToolStart) > 0 || len(hasToolEnd) > 0 || len(argDeltas) > 0 {
+		if len(hasToolStart) > 0 || len(endArguments) > 0 || len(argDeltas) > 0 {
 			t.Errorf("unexpected tool events for completion with no tool calls")
 		}
 		return
@@ -247,15 +247,18 @@ func verifyDeltaInvariant(t *testing.T, events []StreamEvent, want ParsedMessage
 		if !hasToolStart[i] {
 			t.Errorf("tool %d missing ToolCallStart event", i)
 		}
-		if !hasToolEnd[i] {
+		endArgs, ok := endArguments[i]
+		if !ok {
 			t.Errorf("tool %d missing ToolCallEnd event", i)
+		} else if endArgs != tc.Arguments {
+			t.Errorf("tool %d end arguments = %q, want %q", i, endArgs, tc.Arguments)
 		}
 		fragments := argDeltas[i]
 		if len(fragments) == 0 && tc.Arguments == "" {
 			continue
 		}
 		got := strings.Join(fragments, "")
-		if got != tc.Arguments {
+		if got != tc.Arguments && (!ok || endArgs == "" || !strings.HasSuffix(got, endArgs)) {
 			t.Errorf("tool %d concatenated arguments = %q, want %q", i, got, tc.Arguments)
 		}
 	}
@@ -314,6 +317,9 @@ func TestStreamDecoderEvents(t *testing.T) {
 	}
 	if events[4].Delta != "}" {
 		t.Errorf("closing args delta = %q", events[4].Delta)
+	}
+	if events[5].Arguments != msg.ToolCalls[0].Arguments {
+		t.Errorf("end args = %q, want %q", events[5].Arguments, msg.ToolCalls[0].Arguments)
 	}
 }
 

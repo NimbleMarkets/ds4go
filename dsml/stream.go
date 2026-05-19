@@ -22,20 +22,21 @@ const (
 	// EventToolCallStart signals the beginning of a new tool call. Name holds
 	// the tool name and Index is the 0-based tool-call position.
 	EventToolCallStart
-	// EventToolCallArgumentsDelta carries a JSON fragment that should be
-	// concatenated with previous deltas for the same Index to reconstruct the
-	// full arguments object.
+	// EventToolCallArgumentsDelta carries a live JSON fragment. For exact final
+	// arguments, use EventToolCallEnd.Arguments.
 	EventToolCallArgumentsDelta
 	// EventToolCallEnd signals the completion of a tool call at Index.
+	// Arguments holds the final authoritative JSON arguments object.
 	EventToolCallEnd
 )
 
 // StreamEvent carries one incremental update from the decoder.
 type StreamEvent struct {
-	Type  StreamEventType
-	Index int    // tool-call index for tool-related events
-	Delta string // text fragment for delta events
-	Name  string // tool name for EventToolCallStart
+	Type      StreamEventType
+	Index     int    // tool-call index for tool-related events
+	Delta     string // text fragment for delta events
+	Name      string // tool name for EventToolCallStart
+	Arguments string // final JSON arguments for EventToolCallEnd
 }
 
 // StreamDecoder incrementally parses assistant output and emits streaming
@@ -437,7 +438,6 @@ func (d *StreamDecoder) completeInvoke(events *[]StreamEvent) {
 
 	if d.hasDupParam || len(d.pendingArgs.keys) == 0 {
 		// Full JSON for duplicate parameters or no parameters.
-		d.stripPendingArgDeltas(len(d.calls) - 1)
 		d.pendingEvents = append(d.pendingEvents, StreamEvent{
 			Type:  EventToolCallArgumentsDelta,
 			Index: len(d.calls) - 1,
@@ -452,8 +452,9 @@ func (d *StreamDecoder) completeInvoke(events *[]StreamEvent) {
 	}
 
 	d.pendingEvents = append(d.pendingEvents, StreamEvent{
-		Type:  EventToolCallEnd,
-		Index: len(d.calls) - 1,
+		Type:      EventToolCallEnd,
+		Index:     len(d.calls) - 1,
+		Arguments: tc.Arguments,
 	})
 
 	d.pendingArgs = nil
@@ -471,21 +472,6 @@ func (d *StreamDecoder) completeToolBlock(events *[]StreamEvent) {
 	d.seenToolCallsOp = false
 	d.calls = nil
 	d.state = stateContent
-}
-
-// stripPendingArgDeltas removes all EventToolCallArgumentsDelta events for
-// the given tool index from pendingEvents. It is used when a duplicate
-// parameter is detected so the earlier speculative fragments can be replaced
-// by a single full-JSON delta.
-func (d *StreamDecoder) stripPendingArgDeltas(toolIdx int) {
-	filtered := d.pendingEvents[:0]
-	for _, ev := range d.pendingEvents {
-		if ev.Type == EventToolCallArgumentsDelta && ev.Index == toolIdx {
-			continue
-		}
-		filtered = append(filtered, ev)
-	}
-	d.pendingEvents = filtered
 }
 
 // enterRawMode discards any buffered tool events, replays consumed DSML text
