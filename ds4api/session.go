@@ -13,7 +13,6 @@ type Session struct {
 	ptr        uintptr
 	once       sync.Once
 	progressID uintptr
-	mu         sync.Mutex
 }
 
 // NewSession creates a ds4 session for this engine and context size.
@@ -39,8 +38,8 @@ func (s *Session) Close() {
 		return
 	}
 	s.once.Do(func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		libCallMu.Lock()
+		defer libCallMu.Unlock()
 		runtime.SetFinalizer(s, nil)
 		if s.ptr != 0 {
 			s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
@@ -52,12 +51,12 @@ func (s *Session) Close() {
 }
 
 func (s *Session) require() (unlock func(), err error) {
-	s.mu.Lock()
+	libCallMu.Lock()
 	if s == nil || s.ptr == 0 {
-		s.mu.Unlock()
+		libCallMu.Unlock()
 		return nil, errClosed
 	}
-	return s.mu.Unlock, nil
+	return libCallMu.Unlock, nil
 }
 
 // SetProgress sets a persistent progress callback for ds4_session_set_progress.
@@ -129,8 +128,8 @@ func (s *Session) RewriteFromCommon(prompt *Tokens, common int) (SessionRewriteR
 
 // CommonPrefix returns the common prefix length between the live session and prompt.
 func (s *Session) CommonPrefix(prompt *Tokens) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -139,8 +138,8 @@ func (s *Session) CommonPrefix(prompt *Tokens) int {
 
 // Argmax returns the argmax token id for the current logits.
 func (s *Session) Argmax() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -149,8 +148,8 @@ func (s *Session) Argmax() int {
 
 // ArgmaxExcluding returns the argmax token id excluding one token.
 func (s *Session) ArgmaxExcluding(excludedID int) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -159,8 +158,8 @@ func (s *Session) ArgmaxExcluding(excludedID int) int {
 
 // Sample samples the next token from current logits.
 func (s *Session) Sample(temperature float32, topK int, topP, minP float32, rng *uint64) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -252,8 +251,8 @@ func (s *Session) Invalidate() {
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s.ptr != 0 {
 		s.lib.raw.ds4SessionInvalidate(s.ptr)
 	}
@@ -264,8 +263,8 @@ func (s *Session) Rewind(pos int) {
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s.ptr != 0 {
 		s.lib.raw.ds4SessionRewind(s.ptr, int32(pos))
 	}
@@ -273,8 +272,8 @@ func (s *Session) Rewind(pos int) {
 
 // Pos returns the current session token position.
 func (s *Session) Pos() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -283,8 +282,8 @@ func (s *Session) Pos() int {
 
 // Ctx returns the session context size.
 func (s *Session) Ctx() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}
@@ -293,8 +292,8 @@ func (s *Session) Ctx() int {
 
 // Tokens returns a borrowed snapshot of ds4_session_tokens.
 func (s *Session) Tokens() *Tokens {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return nil
 	}
@@ -303,8 +302,8 @@ func (s *Session) Tokens() *Tokens {
 
 // PayloadBytes returns ds4_session_payload_bytes.
 func (s *Session) PayloadBytes() uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if s == nil || s.ptr == 0 {
 		return 0
 	}

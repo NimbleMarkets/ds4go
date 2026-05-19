@@ -11,7 +11,6 @@ type Engine struct {
 	lib  *Library
 	ptr  uintptr
 	once sync.Once
-	mu   sync.Mutex // guards calls into libds4; see Session for the same pattern
 }
 
 // NewEngine opens a ds4 engine using the default shared library.
@@ -60,6 +59,8 @@ func (e *Engine) Close() {
 		return
 	}
 	e.once.Do(func() {
+		libCallMu.Lock()
+		defer libCallMu.Unlock()
 		runtime.SetFinalizer(e, nil)
 		if e.ptr != 0 {
 			e.lib.raw.ds4EngineClose(e.ptr)
@@ -71,12 +72,12 @@ func (e *Engine) Close() {
 // require locks the engine and verifies it is open. The returned unlock
 // function MUST be called (typically via defer) to release the lock.
 func (e *Engine) require() (unlock func(), err error) {
-	e.mu.Lock()
+	libCallMu.Lock()
 	if e == nil || e.ptr == 0 {
-		e.mu.Unlock()
+		libCallMu.Unlock()
 		return nil, errClosed
 	}
-	return e.mu.Unlock, nil
+	return libCallMu.Unlock, nil
 }
 
 // Summary prints ds4's engine summary to its configured output.
@@ -426,8 +427,8 @@ func (e *Engine) TokenText(token int) (string, error) {
 
 // TokenEOS returns ds4's end-of-sequence token id.
 func (e *Engine) TokenEOS() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -436,8 +437,8 @@ func (e *Engine) TokenEOS() int {
 
 // TokenUser returns ds4's user-role token id.
 func (e *Engine) TokenUser() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -446,8 +447,8 @@ func (e *Engine) TokenUser() int {
 
 // TokenAssistant returns ds4's assistant-role token id.
 func (e *Engine) TokenAssistant() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -456,8 +457,8 @@ func (e *Engine) TokenAssistant() int {
 
 // RoutedQuantBits returns the routed expert quantization bits used by the engine.
 func (e *Engine) RoutedQuantBits() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
@@ -466,8 +467,8 @@ func (e *Engine) RoutedQuantBits() int {
 
 // HasMTP reports whether this engine has an MTP draft model.
 func (e *Engine) HasMTP() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return false
 	}
@@ -476,8 +477,8 @@ func (e *Engine) HasMTP() bool {
 
 // MTPDraftTokens returns the configured MTP draft length.
 func (e *Engine) MTPDraftTokens() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
 	if e == nil || e.ptr == 0 {
 		return 0
 	}
