@@ -13,6 +13,7 @@ var (
 	tokenCallbacks            = map[uintptr]TokenEmitFunc{}
 	doneCallbacks             = map[uintptr]GenerationDoneFunc{}
 	progressCallbacks         = map[uintptr]ProgressFunc{}
+	logCallbacks              = map[uintptr]LogFunc{}
 
 	tokenEmitCallback = purego.NewCallback(func(ud uintptr, token int32) {
 		callbackMu.Lock()
@@ -37,6 +38,9 @@ var (
 		if fn != nil {
 			fn(goString(event), int(current), int(total))
 		}
+	})
+	logCallback = purego.NewCallback(func(ud uintptr, typ int32, msg unsafe.Pointer) {
+		invokeLogCallback(ud, LogType(typ), goString(msg))
 	})
 )
 
@@ -106,4 +110,36 @@ func unregisterProgressCallback(id uintptr) {
 	callbackMu.Lock()
 	delete(progressCallbacks, id)
 	callbackMu.Unlock()
+}
+
+func registerLogCallback(fn LogFunc) uintptr {
+	if fn == nil {
+		return 0
+	}
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	id := nextCallbackID()
+	logCallbacks[id] = fn
+	return id
+}
+
+func unregisterLogCallback(id uintptr) {
+	if id == 0 {
+		return
+	}
+	callbackMu.Lock()
+	delete(logCallbacks, id)
+	callbackMu.Unlock()
+}
+
+func invokeLogCallback(id uintptr, typ LogType, msg string) {
+	if id == 0 {
+		return
+	}
+	callbackMu.Lock()
+	fn := logCallbacks[id]
+	callbackMu.Unlock()
+	if fn != nil {
+		fn(typ, msg)
+	}
 }

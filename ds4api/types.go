@@ -66,6 +66,15 @@ const (
 	LogError
 )
 
+// LogFunc receives one complete libds4 diagnostic message.
+//
+// The message already includes the "ds4: " prefix and trailing newline emitted
+// by libds4. The callback may be invoked from native worker threads, so it must
+// be concurrency-safe and should return quickly. It must not call back into
+// ds4go/libds4 APIs; doing so can deadlock when the log is emitted during an
+// active native call.
+type LogFunc func(typ LogType, msg string)
+
 // SessionRewriteResult is returned by ds4 session rewrite helpers.
 type SessionRewriteResult int32
 

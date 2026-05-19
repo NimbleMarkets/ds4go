@@ -26,6 +26,10 @@ type (
 	Backend = ds4api.Backend
 	// ThinkMode controls ds4's rendered chat thinking mode.
 	ThinkMode = ds4api.ThinkMode
+	// LogType is the category used by libds4 diagnostics.
+	LogType = ds4api.LogType
+	// LogFunc receives one complete libds4 diagnostic message.
+	LogFunc = ds4api.LogFunc
 	// TokenEmitFunc is called when ds4 emits a generated token.
 	TokenEmitFunc = ds4api.TokenEmitFunc
 )
@@ -52,6 +56,25 @@ const (
 	// ThinkMax requests maximum-effort thinking. ds4 may downgrade it to
 	// ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax = ds4api.ThinkMax
+
+	// LogDefault is the default ds4 log style.
+	LogDefault = ds4api.LogDefault
+	// LogPrefill marks prefill messages.
+	LogPrefill = ds4api.LogPrefill
+	// LogGeneration marks generation messages.
+	LogGeneration = ds4api.LogGeneration
+	// LogKVCache marks KV-cache messages.
+	LogKVCache = ds4api.LogKVCache
+	// LogTool marks tool-calling messages.
+	LogTool = ds4api.LogTool
+	// LogWarning marks warnings.
+	LogWarning = ds4api.LogWarning
+	// LogTiming marks timing messages.
+	LogTiming = ds4api.LogTiming
+	// LogOK marks successful status messages.
+	LogOK = ds4api.LogOK
+	// LogError marks errors.
+	LogError = ds4api.LogError
 
 	// DefaultMTPDraftTokens is the default number of draft tokens speculative
 	// decoding generates per step when MTP is enabled. A value of 0 disables
@@ -80,6 +103,14 @@ func Load(path string) (*ds4api.Library, error) {
 // SetDefaultLibrary makes lib the low-level package default library.
 func SetDefaultLibrary(lib *ds4api.Library) {
 	ds4api.SetDefaultLibrary(lib)
+}
+
+// SetLogFunc redirects libds4 diagnostics for the default library.
+//
+// Passing nil restores libds4's native stderr logger. The logger is global
+// inside libds4, so install it once during application startup.
+func SetLogFunc(fn LogFunc) error {
+	return ds4api.SetLogFunc(fn)
 }
 
 // NewEngine loads the default libds4 shared library and opens a ds4 engine.

@@ -171,13 +171,28 @@ Most users should import the root package `ds4` from `github.com/NimbleMarkets/d
 
 The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 
-`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API.
+`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetLogFunc` redirects libds4 diagnostics that flow through `ds4_log_set` into a Go callback.
 
 ## Native stderr
 
-`libds4` currently writes some model loading, backend, warmup, diagnostic, and
-progress messages directly to native `stderr`. For CLI use, redirect stderr with
-your shell:
+Recent `libds4` builds expose `ds4_log_set`, and ds4go wraps it as
+`SetLogFunc`. Use it to route libds4 diagnostics into your application's logger
+or to discard them:
+
+```go
+err := ds4.SetLogFunc(func(typ ds4.LogType, msg string) {
+    log.Print(strings.TrimSuffix(msg, "\n"))
+})
+```
+
+The logger is process-global inside libds4, not per engine, so install it once
+during startup. The callback may be invoked from native worker threads; keep it
+concurrency-safe and quick. Install it before `NewEngine`, or immediately after
+an explicit `Load` and before `Library.NewEngine`, if you want to capture
+structured model-load and metadata-validation failures from libds4.
+
+Some native code paths may still write directly to `stderr` until upstream ds4
+converts them to `ds4_log`. For CLI use, redirect stderr with your shell:
 
 ```sh
 ds4go prompt ... 2>ds4.log
@@ -186,11 +201,11 @@ ds4go prompt ... 2>/dev/null
 
 For Go applications, assigning `os.Stderr` only affects Go code that writes
 through `os.Stderr`; it does not reliably capture C `fprintf(stderr, ...)` from
-the loaded shared library. Capturing native stderr inside one process requires
-process-wide file-descriptor redirection, which can interfere with other
-goroutines, libraries, and concurrent engines. Prefer shell redirection, running
-the model worker as a subprocess with `exec.Cmd.Stderr`, or a future libds4 log
-callback/sink when one is available.
+the loaded shared library. Capturing direct native stderr inside one process
+requires process-wide file-descriptor redirection, which can interfere with
+other goroutines, libraries, and concurrent engines. Prefer `SetLogFunc` for
+routed libds4 diagnostics, shell redirection for CLI runs, or running the model
+worker as a subprocess with `exec.Cmd.Stderr`.
 
 ## Signal Safety
 

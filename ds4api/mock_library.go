@@ -19,6 +19,8 @@ import (
 func NewMockLibrary() *Library {
 	lib := &Library{path: "mock", handle: 0}
 	r := &lib.raw
+	var mockLogFn uintptr
+	var mockLogID uintptr
 
 	// Engine lifecycle.
 	r.ds4EngineOpen = mockEngineOpen
@@ -34,7 +36,16 @@ func NewMockLibrary() *Library {
 		return cContextMemory{TotalBytes: 1 << 30}
 	}
 	r.ds4LogIsTTY = func(fp uintptr) bool { return false }
-	r.ds4LogString = func(fp uintptr, typ LogType, format string, msg string) {}
+	r.ds4LogString = func(fp uintptr, typ LogType, format string, msg string) {
+		if mockLogFn == 0 {
+			return
+		}
+		invokeLogCallback(mockLogID, typ, msg)
+	}
+	r.ds4LogSet = func(fn uintptr, ud uintptr) {
+		mockLogFn = fn
+		mockLogID = ud
+	}
 
 	// Engine tests & diagnostics.
 	r.ds4EngineGenerateArgmax = func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32 {

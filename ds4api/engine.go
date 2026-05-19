@@ -1,6 +1,7 @@
 package ds4api
 
 import (
+	"errors"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -179,6 +180,47 @@ func LogString(fp File, typ LogType, msg string) {
 		return
 	}
 	lib.raw.ds4LogString(uintptr(fp), typ, "%s", msg)
+}
+
+// SetLogFunc redirects libds4 diagnostics for the default library.
+//
+// Passing nil restores libds4's default logger, which writes diagnostics to
+// native stderr. The setting is process-global inside libds4; avoid changing it
+// while generation is active.
+func SetLogFunc(fn LogFunc) error {
+	lib, err := DefaultLibrary()
+	if err != nil {
+		return err
+	}
+	return lib.SetLogFunc(fn)
+}
+
+// SetLogFunc redirects libds4 diagnostics for this loaded library.
+//
+// Passing nil restores libds4's default logger, which writes diagnostics to
+// native stderr. libds4 exposes this as a process-global logger, not a per-engine
+// setting, so install it once during application startup. The callback may be
+// invoked from native worker threads and must be concurrency-safe.
+func (l *Library) SetLogFunc(fn LogFunc) error {
+	if l == nil {
+		return errors.New("ds4: nil library")
+	}
+	id := registerLogCallback(fn)
+	fnPtr := uintptr(0)
+	if id != 0 {
+		fnPtr = logCallback
+	}
+
+	libCallMu.Lock()
+	l.raw.ds4LogSet(fnPtr, id)
+	libCallMu.Unlock()
+
+	l.logMu.Lock()
+	old := l.logID
+	l.logID = id
+	l.logMu.Unlock()
+	unregisterLogCallback(old)
+	return nil
 }
 
 // CollectIMatrix calls ds4_engine_collect_imatrix.
