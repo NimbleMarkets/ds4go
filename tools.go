@@ -199,6 +199,12 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 		tokens.Free()
 		return nil, err
 	}
+	if think == ThinkMax {
+		if err := engine.ChatAppendMaxEffortPrefix(tokens); err != nil {
+			tokens.Free()
+			return nil, err
+		}
+	}
 	toolsSection, err := dsml.RenderToolsSection(tools)
 	if err != nil {
 		tokens.Free()

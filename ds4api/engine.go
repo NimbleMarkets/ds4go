@@ -355,7 +355,17 @@ func (e *Engine) EncodeChatPrompt(system, prompt string, thinkMode ThinkMode) (*
 	return tokensFromC(e.lib, out), nil
 }
 
-// ChatAppendMaxEffortPrefix appends ds4's maximum-effort thinking prefix.
+// ChatAppendMaxEffortPrefix appends ds4's maximum-effort thinking prompt text.
+//
+// Use this when constructing a chat prompt incrementally with ChatBegin,
+// ChatAppendMessage, and ChatAppendAssistantPrefix, and the effective thinking
+// mode is ThinkMax. To match ds4_encode_chat_prompt, append it once after
+// ChatBegin and before the system/message turns. It does not append the
+// assistant marker or <think> marker; call ChatAppendAssistantPrefix with the
+// same effective thinking mode at the end of the prompt.
+//
+// Do not call this in addition to EncodeChatPrompt: ds4_encode_chat_prompt
+// already includes this prefix when thinkMode is ThinkMax.
 func (e *Engine) ChatAppendMaxEffortPrefix(tokens *Tokens) error {
 	unlock, err := e.require()
 	if err != nil {
@@ -378,6 +388,13 @@ func (e *Engine) ChatAppendMessage(tokens *Tokens, role, content string) error {
 }
 
 // ChatAppendAssistantPrefix appends the assistant prefix for generation.
+//
+// Passing ThinkHigh or ThinkMax appends the assistant marker followed by the
+// normal <think> marker. Passing ThinkMax here does not append the
+// maximum-effort prompt text; for incremental prompts, call
+// ChatAppendMaxEffortPrefix once near the beginning of the prompt when the
+// effective thinking mode is ThinkMax. The two methods compose and should not
+// be treated as mutually exclusive for ThinkMax.
 func (e *Engine) ChatAppendAssistantPrefix(tokens *Tokens, thinkMode ThinkMode) error {
 	unlock, err := e.require()
 	if err != nil {

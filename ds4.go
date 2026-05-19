@@ -49,7 +49,8 @@ const (
 	ThinkNone = ds4api.ThinkNone
 	// ThinkHigh enables ordinary high-effort thinking.
 	ThinkHigh = ds4api.ThinkHigh
-	// ThinkMax enables the maximum-effort thinking prefix when the context is large enough.
+	// ThinkMax requests maximum-effort thinking. ds4 may downgrade it to
+	// ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax = ds4api.ThinkMax
 
 	// DefaultMTPDraftTokens is the default number of draft tokens speculative

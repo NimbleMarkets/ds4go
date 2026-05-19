@@ -123,6 +123,27 @@ func TestBuildChatPromptToolsNoSystem(t *testing.T) {
 	}
 }
 
+func TestBuildChatPromptThinkMaxAddsMaxEffortPrefix(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+
+	history := []ChatMessage{{Role: "user", Content: "hello"}}
+	high, err := BuildChatPrompt(eng, "system", nil, history, ThinkHigh)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt high: %v", err)
+	}
+	defer high.Free()
+	max, err := BuildChatPrompt(eng, "system", nil, history, ThinkMax)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt max: %v", err)
+	}
+	defer max.Free()
+
+	if got, want := max.Len(), high.Len()+1; got != want {
+		t.Fatalf("ThinkMax prompt Len = %d, want %d", got, want)
+	}
+}
+
 func TestBuildChatPromptMultiTurnToolHistory(t *testing.T) {
 	eng := mockEngine(t)
 	defer eng.Close()

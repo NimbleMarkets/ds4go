@@ -37,7 +37,8 @@ const (
 	ThinkNone ThinkMode = iota
 	// ThinkHigh enables ordinary high-effort thinking.
 	ThinkHigh
-	// ThinkMax enables the maximum-effort thinking prefix when the context is large enough.
+	// ThinkMax requests maximum-effort thinking. ds4_think_mode_for_context
+	// may downgrade it to ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax
 )
 

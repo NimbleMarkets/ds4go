@@ -62,7 +62,9 @@ func NewMockLibrary() *Library {
 	r.ds4TokenizeRenderedChat = mockTokenizeText
 	r.ds4ChatBegin = mockChatBegin
 	r.ds4EncodeChatPrompt = mockEncodeChatPrompt
-	r.ds4ChatAppendMaxEffortPrefix = func(e uintptr, tokens *cTokens) {}
+	r.ds4ChatAppendMaxEffortPrefix = func(e uintptr, tokens *cTokens) {
+		mockTokenizeText(e, "<think_max>", tokens)
+	}
 	r.ds4ChatAppendMessage = mockChatAppendMessage
 	r.ds4ChatAppendAssistantPrefix = func(e uintptr, tokens *cTokens, thinkMode ThinkMode) {}
 
@@ -326,6 +328,9 @@ func mockWordToken(word string) int32 {
 func mockChatBegin(e uintptr, tokens *cTokens) {}
 
 func mockEncodeChatPrompt(e uintptr, system string, prompt string, thinkMode ThinkMode, out *cTokens) {
+	if thinkMode == ThinkMax {
+		mockTokenizeText(e, "<think_max>", out)
+	}
 	for _, word := range strings.Fields(system + " " + prompt) {
 		mockTokensPush(out, mockWordToken(word))
 	}
