@@ -78,7 +78,7 @@ point it at another fork or a specific release:
 ```sh
 ds4go install --repo neomantra/ds4 --version v0.1.0 --backend metal
 ds4go install --url https://github.com/NimbleMarkets/ds4/releases/download/v0.1.0/libds4-v0.1.0-darwin-arm64-metal.tar.gz
-ds4go install --lib ./lib --backend metal
+ds4go install --lib "$DS4_DIR/lib" --backend metal
 ```
 
 Expected release asset names are:

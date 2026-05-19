@@ -16,18 +16,23 @@ Both packages are pure Go:
 
 ## Loader Policy
 
-The root `ds4` loader checks:
+The root `ds4.DefaultLibraryPath` loader policy checks:
 
 1. `DS4_LIB`
-2. `$DS4_DIR/lib` when `DS4_DIR` is set, otherwise `~/.ds4/lib`
-3. executable directory
-4. executable `lib/`
-5. current directory
-6. current `lib/`
-7. platform loader path for `libds4.*`
+2. `$DS4_DIR/lib/libds4.*` when `DS4_DIR` is set, otherwise `~/.ds4/lib/libds4.*`
+3. `libds4.*` in the executable directory
+4. `libds4.*` in a `lib/` directory next to the executable
+5. the bare platform library name, letting the OS dynamic loader resolve `libds4.*`
 
-The low-level `ds4api.Load("")` only applies raw shared-library loading policy:
-`DS4_LIB`, local executable/current-directory paths, and the platform loader path.
+The low-level `ds4api.Load("")` policy does not use `DS4_DIR`. It checks:
+
+1. `DS4_LIB`
+2. `libds4.*` in the executable directory
+3. `libds4.*` in a `lib/` directory next to the executable
+4. the bare platform library name, letting the OS dynamic loader resolve `libds4.*`
+
+The current working directory and repository root are intentionally not searched
+to avoid loading an attacker-planted shared library.
 
 ## Memory Ownership
 

@@ -7,7 +7,7 @@ Suggested command:
 ```sh
 time go run ./cmd/ds4go prompt \
   --model ./ds4flash.gguf \
-  --lib ./lib/libds4.dylib \
+  --lib "$DS4_DIR/lib/libds4.dylib" \
   --ctx 32768 \
   --tokens 256 \
   -p "Explain Redis streams in one paragraph."

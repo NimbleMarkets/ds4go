@@ -63,9 +63,10 @@ ds4go model set q2-imatrix
 The default model path for commands and examples is
 `$DS4_DIR/models/ds4flash.gguf`.
 
-Place the shared library in `~/.ds4/lib/`, next to your executable, or point at
-it explicitly (the working directory is not searched, to avoid loading a
-planted library):
+Place the shared library in `~/.ds4/lib/`, `$DS4_DIR/lib/`, next to your
+executable, or in a `lib/` directory next to your executable. You can also point
+at it explicitly. The current working directory and the repository root are not
+searched, to avoid loading a planted library:
 
 ```sh
 export DS4_LIB=/absolute/path/to/libds4.dylib
@@ -126,7 +127,7 @@ go run ./cmd/ds4go prompt --model ./ds4flash.gguf
 
 `cmd/ds4go prompt` and the examples accept the **same arguments as the upstream `ds4` C programs**, parsed with [`pflag`](https://github.com/spf13/pflag) so options take the `--option` form. `cmd/ds4go prompt`, `examples/simple`, and `examples/chat` mirror the `ds4` CLI (`ds4_cli.c`); `examples/openai-compatible` mirrors `ds4-server` (`ds4_server.c`). Run any of them with `--help` for the full list.
 
-The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime (empty falls back to `DS4_LIB` or `DS4_DIR/lib`).
+The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime. When empty, ds4go searches `DS4_LIB`, `$DS4_DIR/lib` (or `~/.ds4/lib`), executable-local paths, and then the platform loader path.
 
 ```text
 $ ds4go help cheat
@@ -171,6 +172,25 @@ Most users should import the root package `ds4` from `github.com/NimbleMarkets/d
 The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 
 `ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API.
+
+## Native stderr
+
+`libds4` currently writes some model loading, backend, warmup, diagnostic, and
+progress messages directly to native `stderr`. For CLI use, redirect stderr with
+your shell:
+
+```sh
+ds4go prompt ... 2>ds4.log
+ds4go prompt ... 2>/dev/null
+```
+
+For Go applications, assigning `os.Stderr` only affects Go code that writes
+through `os.Stderr`; it does not reliably capture C `fprintf(stderr, ...)` from
+the loaded shared library. Capturing native stderr inside one process requires
+process-wide file-descriptor redirection, which can interfere with other
+goroutines, libraries, and concurrent engines. Prefer shell redirection, running
+the model worker as a subprocess with `exec.Cmd.Stderr`, or a future libds4 log
+callback/sink when one is available.
 
 ## Signal Safety
 
