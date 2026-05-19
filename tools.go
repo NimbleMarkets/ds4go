@@ -64,6 +64,8 @@ type ChatMessage struct {
 	// ToolCalls is the assistant's requested tool calls for this turn.
 	ToolCalls []ToolCall
 	// ToolCallID associates a tool result message with the call it answers.
+	// DSML does not render this ID into <tool_result>; prompt builders expect
+	// tool result messages to be ordered to match the assistant's ToolCalls.
 	ToolCallID string
 }
 

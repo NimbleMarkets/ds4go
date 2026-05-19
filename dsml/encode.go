@@ -233,6 +233,11 @@ func jsonIsObject(b []byte) bool {
 // normal '<', '>', '&', DSML text, and control-token-looking text are preserved.
 // Only the exact </tool_result> sentinel is escaped so the payload cannot break
 // out of the wrapper.
+//
+// DeepSeek V4's rendered DSML format does not include a tool name or call ID in
+// <tool_result>; result correlation is positional. When returning results for
+// multiple assistant tool calls, emit the result blocks in the same order as the
+// assistant's <invoke> blocks.
 func RenderToolResult(content string) (string, error) {
 	return toolResultStart + escapeToolResultText(content) + toolResultEnd, nil
 }
