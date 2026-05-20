@@ -7,9 +7,14 @@ package ds4
 
 import (
 	"fmt"
+	"io"
+	"sync"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 )
+
+var defaultLibraryMu sync.Mutex
+var defaultLibrary *ds4api.Library
 
 type (
 	// Library is a loaded libds4 shared library.
@@ -22,16 +27,28 @@ type (
 	Tokens = ds4api.Tokens
 	// EngineOptions configures ds4_engine_open.
 	EngineOptions = ds4api.EngineOptions
+	// ContextMemory is ds4_context_memory.
+	ContextMemory = ds4api.ContextMemory
+	// TokenScore is ds4_token_score.
+	TokenScore = ds4api.TokenScore
 	// Backend selects the accelerator implementation compiled into libds4.
 	Backend = ds4api.Backend
 	// ThinkMode controls ds4's rendered chat thinking mode.
 	ThinkMode = ds4api.ThinkMode
+	// SessionRewriteResult is returned by session rewrite helpers.
+	SessionRewriteResult = ds4api.SessionRewriteResult
 	// LogType is the category used by libds4 diagnostics.
 	LogType = ds4api.LogType
 	// LogFunc receives one complete libds4 diagnostic message.
 	LogFunc = ds4api.LogFunc
 	// TokenEmitFunc is called when ds4 emits a generated token.
 	TokenEmitFunc = ds4api.TokenEmitFunc
+	// GenerationDoneFunc is called after ds4 completes generation.
+	GenerationDoneFunc = ds4api.GenerationDoneFunc
+	// ProgressFunc receives ds4 progress events.
+	ProgressFunc = ds4api.ProgressFunc
+	// ArgmaxGenerateOptions controls ds4_engine_generate_argmax.
+	ArgmaxGenerateOptions = ds4api.ArgmaxGenerateOptions
 )
 
 const (
@@ -56,6 +73,14 @@ const (
 	// ThinkMax requests maximum-effort thinking. ds4 may downgrade it to
 	// ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax = ds4api.ThinkMax
+
+	// SessionRewriteError means the rewrite failed.
+	SessionRewriteError = ds4api.SessionRewriteError
+	// SessionRewriteOK means the rewrite completed in place.
+	SessionRewriteOK = ds4api.SessionRewriteOK
+	// SessionRewriteRebuildNeeded means the caller should restore or rebuild
+	// the session state.
+	SessionRewriteRebuildNeeded = ds4api.SessionRewriteRebuildNeeded
 
 	// LogDefault is the default ds4 log style.
 	LogDefault = ds4api.LogDefault
@@ -102,15 +127,55 @@ func Load(path string) (*ds4api.Library, error) {
 
 // SetDefaultLibrary makes lib the low-level package default library.
 func SetDefaultLibrary(lib *ds4api.Library) {
+	defaultLibraryMu.Lock()
+	defaultLibrary = lib
+	defaultLibraryMu.Unlock()
 	ds4api.SetDefaultLibrary(lib)
 }
 
 // SetLogFunc redirects libds4 diagnostics for the default library.
 //
-// Passing nil restores libds4's native stderr logger. The logger is global
-// inside libds4, so install it once during application startup.
+// This includes engine diagnostics and Metal/CUDA backend diagnostics routed
+// through ds4_gpu_log. Passing nil restores libds4's native stderr logger. The
+// logger is global inside libds4, so install it once during application
+// startup.
 func SetLogFunc(fn LogFunc) error {
-	return ds4api.SetLogFunc(fn)
+	lib, err := defaultLogLibrary(fn != nil)
+	if err != nil {
+		return err
+	}
+	if lib == nil {
+		return nil
+	}
+	return lib.SetLogFunc(fn)
+}
+
+// SetLogOutput redirects libds4 diagnostics to w.
+//
+// This includes engine diagnostics and Metal/CUDA backend diagnostics routed
+// through ds4_gpu_log. Passing nil restores libds4's native stderr logger.
+// Non-nil writers receive the exact message emitted by libds4, including its
+// prefix and trailing newline. Writes are serialized because libds4 may call
+// the logger from native worker threads. Write errors are ignored because the
+// native callback cannot report them.
+func SetLogOutput(w io.Writer) error {
+	if w == nil {
+		return SetLogFunc(nil)
+	}
+	var mu sync.Mutex
+	return SetLogFunc(func(_ LogType, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = io.WriteString(w, msg)
+	})
+}
+
+// DiscardLogs discards libds4 diagnostics routed through ds4_log_set.
+//
+// This includes Metal/CUDA diagnostics routed through ds4_gpu_log. Native code
+// paths that still write directly to stderr are unaffected.
+func DiscardLogs() error {
+	return SetLogOutput(io.Discard)
 }
 
 // NewEngine loads the default libds4 shared library and opens a ds4 engine.
@@ -119,12 +184,30 @@ func NewEngine(opts ds4api.EngineOptions) (*ds4api.Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	ds4api.SetDefaultLibrary(lib)
+	SetDefaultLibrary(lib)
 	engine, err := lib.NewEngine(opts)
 	if err != nil {
 		return nil, EnrichEngineOpenError(err)
 	}
 	return engine, nil
+}
+
+func defaultLogLibrary(load bool) (*ds4api.Library, error) {
+	defaultLibraryMu.Lock()
+	lib := defaultLibrary
+	defaultLibraryMu.Unlock()
+	if lib != nil {
+		return lib, nil
+	}
+	if !load {
+		return nil, nil
+	}
+	lib, err := Load("")
+	if err != nil {
+		return nil, err
+	}
+	SetDefaultLibrary(lib)
+	return lib, nil
 }
 
 // ApplyMTPDefaults populates MTPPath, MTPDraftTokens, and MTPMargin with

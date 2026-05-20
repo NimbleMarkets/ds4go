@@ -171,18 +171,19 @@ Most users should import the root package `ds4` from `github.com/NimbleMarkets/d
 
 The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 
-`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetLogFunc` redirects libds4 diagnostics that flow through `ds4_log_set` into a Go callback.
+`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetLogFunc` redirects libds4 diagnostics that flow through `ds4_log_set` into a Go callback, including Metal/CUDA backend messages routed through `ds4_gpu_log`.
 
 ## Native stderr
 
 Recent `libds4` builds expose `ds4_log_set`, and ds4go wraps it as
-`SetLogFunc`. Use it to route libds4 diagnostics into your application's logger
-or to discard them:
+`SetLogFunc`. The root package also provides `SetLogOutput` for the common
+`io.Writer` case and `DiscardLogs` for quiet embedders. Use them to route libds4
+diagnostics, including Metal/CUDA backend diagnostics, into your application's
+logger or to discard them:
 
 ```go
-err := ds4.SetLogFunc(func(typ ds4.LogType, msg string) {
-    log.Print(strings.TrimSuffix(msg, "\n"))
-})
+err := ds4.SetLogOutput(log.Writer())
+err = ds4.DiscardLogs()
 ```
 
 The logger is process-global inside libds4, not per engine, so install it once
@@ -191,8 +192,10 @@ concurrency-safe and quick. Install it before `NewEngine`, or immediately after
 an explicit `Load` and before `Library.NewEngine`, if you want to capture
 structured model-load and metadata-validation failures from libds4.
 
-Some native code paths may still write directly to `stderr` until upstream ds4
-converts them to `ds4_log`. For CLI use, redirect stderr with your shell:
+Most engine and GPU backend diagnostics now route through the callback. Some
+native code paths may still write directly to `stderr` until upstream ds4
+converts them to `ds4_log` or `ds4_gpu_log`. For CLI use, redirect stderr with
+your shell:
 
 ```sh
 ds4go prompt ... 2>ds4.log

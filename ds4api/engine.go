@@ -184,9 +184,10 @@ func LogString(fp File, typ LogType, msg string) {
 
 // SetLogFunc redirects libds4 diagnostics for the default library.
 //
+// This includes Metal/CUDA backend diagnostics routed through ds4_gpu_log.
 // Passing nil restores libds4's default logger, which writes diagnostics to
-// native stderr. The setting is process-global inside libds4; avoid changing it
-// while generation is active.
+// native stderr. The setting is process-global inside libds4; avoid changing
+// it while generation is active.
 func SetLogFunc(fn LogFunc) error {
 	lib, err := DefaultLibrary()
 	if err != nil {
@@ -197,10 +198,12 @@ func SetLogFunc(fn LogFunc) error {
 
 // SetLogFunc redirects libds4 diagnostics for this loaded library.
 //
+// This includes Metal/CUDA backend diagnostics routed through ds4_gpu_log.
 // Passing nil restores libds4's default logger, which writes diagnostics to
-// native stderr. libds4 exposes this as a process-global logger, not a per-engine
-// setting, so install it once during application startup. The callback may be
-// invoked from native worker threads and must be concurrency-safe.
+// native stderr. libds4 exposes this as a process-global logger, not a
+// per-engine setting, so install it once during application startup. The
+// callback may be invoked from native worker threads and must be
+// concurrency-safe.
 func (l *Library) SetLogFunc(fn LogFunc) error {
 	if l == nil {
 		return errors.New("ds4: nil library")
