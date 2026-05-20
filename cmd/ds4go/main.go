@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/NimbleMarkets/ds4go/internal/install"
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/NimbleMarkets/ds4go/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -45,7 +45,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	root.SilenceUsage = true
-	root.AddCommand(newPromptCommand(), newInstallCommand(), newModelCommand())
+	root.AddCommand(newPromptCommand(), newInstallCommand(), newUninstallCommand(), newModelCommand())
 	root.SetHelpCommand(newHelpCommand(root))
 	return root
 }
@@ -114,6 +114,26 @@ func newInstallValidateCommand() *cobra.Command {
 	fs.StringVar(&opts.DestDir, "lib", "", "directory where libds4 is installed (default $DS4_DIR/lib or ~/.ds4/lib)")
 	fs.StringVar(&opts.GOOS, "os", "", "target operating system (default current)")
 	fs.StringVar(&opts.GOARCH, "arch", "", "target architecture (default current)")
+	return cmd
+}
+
+func newUninstallCommand() *cobra.Command {
+	var opts install.Options
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Uninstall the installed libds4 shared library",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.Out = os.Stdout
+			opts.ProgressOut = os.Stderr
+			opts.In = os.Stdin
+			return install.Uninstall(cmd.Context(), opts)
+		},
+	}
+	fs := cmd.Flags()
+	fs.StringVar(&opts.DestDir, "lib", "", "directory where libds4 is installed (default $DS4_DIR/lib or ~/.ds4/lib)")
+	fs.StringVar(&opts.GOOS, "os", "", "target operating system (default current)")
+	fs.StringVar(&opts.GOARCH, "arch", "", "target architecture (default current)")
+	fs.BoolVar(&opts.Force, "force", false, "uninstall without confirmation prompt")
 	return cmd
 }
 
@@ -419,27 +439,16 @@ func runModelDelete(args []string, assumeYes bool) error {
 		if target.Default {
 			fmt.Fprintln(os.Stdout, "This is the active default model; the default will be cleared.")
 		}
-		if !confirm(os.Stdin, os.Stdout, "Are you sure?") {
+		result, err := tui.Confirm("Are you sure?", false, os.Stdin, os.Stdout)
+		if err != nil {
+			return fmt.Errorf("read prompt response: %w", err)
+		}
+		if result != tui.ConfirmYes {
 			fmt.Fprintln(os.Stdout, "Cancelled")
 			return nil
 		}
 	}
 	return m.Delete(alias)
-}
-
-// confirm prints prompt and returns true only if the user answers yes.
-func confirm(in io.Reader, out io.Writer, prompt string) bool {
-	fmt.Fprintf(out, "%s [y/N] ", prompt)
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
-	case "y", "yes":
-		return true
-	default:
-		return false
-	}
 }
 
 func filterDownloadable(list []models.Model) []models.Model {
@@ -498,8 +507,8 @@ func printModelGroup(title string, list []models.Model, installed bool) {
 	aliasStyle := lipgloss.NewStyle().Width(14)
 	sizeStyle := lipgloss.NewStyle().Width(10).Align(lipgloss.Right)
 	ramStyle := lipgloss.NewStyle().Width(12)
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D8590"))
-	success := lipgloss.NewStyle().Foreground(lipgloss.Color("#39FFB6"))
+	muted := tui.MutedStyle
+	success := tui.ActiveStyle
 
 	for _, model := range list {
 		if model.Installed != installed {

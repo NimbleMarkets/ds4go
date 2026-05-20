@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/NimbleMarkets/ds4go/internal/tui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -53,10 +54,10 @@ func (m modelPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m modelPicker) View() tea.View {
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#39FFB6")).Render(m.title)
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D8590"))
-	active := lipgloss.NewStyle().Foreground(lipgloss.Color("#39FFB6")).Bold(true)
-	primary := lipgloss.NewStyle().Foreground(lipgloss.Color("#C9D1D9"))
+	title := tui.TitleStyle.Render(m.title)
+	muted := tui.MutedStyle
+	active := tui.ActiveStyle
+	primary := tui.PrimaryStyle
 
 	// Fixed-width columns so aliases, sizes, RAM, and flags line up.
 	aliasStyle := lipgloss.NewStyle().Width(14)

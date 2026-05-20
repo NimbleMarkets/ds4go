@@ -148,6 +148,20 @@ This command will:
 - Attempt a dynamic `dlopen` load to resolve all ABI symbols (useful for troubleshooting driver/runtime dependencies like CUDA libraries on Linux or architecture mismatches).
 - Report backend type and installation metadata.
 
+## Uninstalling
+
+To cleanly remove `libds4`, its `.sha256` sidecar checksum file, and the `ds4go-install.json` metadata file, use the `uninstall` command:
+
+```sh
+ds4go uninstall
+```
+
+Options:
+- `--lib`: specify the custom directory to uninstall from.
+- `--force`: uninstall without confirmation prompt (useful for scripting).
+
+On interactive terminals, the command will prompt for confirmation before deleting the files. On non-interactive terminals, the command will fail unless `--force` is provided.
+
 ## Manual Install from `ds4` repository
 
 ### 1. Build libds4

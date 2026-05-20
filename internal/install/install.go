@@ -24,9 +24,8 @@ import (
 
 	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/internal/tui"
 	"github.com/charmbracelet/x/term"
-	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -167,17 +166,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			}
 
 			if isTerminalFunc(opts.In) {
-				p := tea.NewProgram(
-					confirmPrompt{message: fmt.Sprintf("Replace %s?", res.Library)},
-					tea.WithInput(opts.In),
-					tea.WithOutput(opts.Out),
-				)
-				resModel, err := p.Run()
+				result, err := tui.Confirm(fmt.Sprintf("Replace %s?", res.Library), false, opts.In, opts.Out)
 				if err != nil {
 					return nil, fmt.Errorf("read prompt response: %w", err)
 				}
-				model, ok := resModel.(confirmPrompt)
-				if !ok || model.cancel || !model.value {
+				if result != tui.ConfirmYes {
 					return nil, fmt.Errorf("install cancelled")
 				}
 				fmt.Fprintln(opts.Out)
@@ -759,38 +752,73 @@ func Validate(ctx context.Context, opts Options) error {
 	return nil
 }
 
-type confirmPrompt struct {
-	message string
-	cancel  bool
-	value   bool
-}
+// Uninstall removes the installed libds4 shared library, sidecar, and metadata files from opts.DestDir.
+func Uninstall(ctx context.Context, opts Options) error {
+	opts = normalize(opts)
 
-func (m confirmPrompt) Init() tea.Cmd {
+	libName := libraryFileName(opts.GOOS)
+	libPath := filepath.Join(opts.DestDir, libName)
+	sidecarPath := libPath + ".sha256"
+	metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
+
+	// 1. Check if any file exists
+	libExists := false
+	if _, err := os.Stat(libPath); err == nil {
+		libExists = true
+	}
+	sidecarExists := false
+	if _, err := os.Stat(sidecarPath); err == nil {
+		sidecarExists = true
+	}
+	metaExists := false
+	if _, err := os.Stat(metaPath); err == nil {
+		metaExists = true
+	}
+
+	if !libExists && !sidecarExists && !metaExists {
+		fmt.Fprintf(opts.Out, "libds4 is not installed in %s\n", opts.DestDir)
+		return nil
+	}
+
+	// 2. Prompt for confirmation if not forced
+	if !opts.Force {
+		if isTerminalFunc(opts.In) {
+			result, err := tui.Confirm(fmt.Sprintf("Uninstall libds4 and metadata files from %s?", opts.DestDir), false, opts.In, opts.Out)
+			if err != nil {
+				return fmt.Errorf("read prompt response: %w", err)
+			}
+			if result != tui.ConfirmYes {
+				return fmt.Errorf("uninstall cancelled")
+			}
+			fmt.Fprintln(opts.Out)
+		} else {
+			return fmt.Errorf("libds4 files exist in %s; pass --force to uninstall them", opts.DestDir)
+		}
+	}
+
+	// 3. Perform uninstallation (delete files). Continue on error so a failure
+	// on one file doesn't leave the others behind; aggregate and report at end.
+	var errs []error
+	if libExists {
+		if err := os.Remove(libPath); err != nil {
+			errs = append(errs, fmt.Errorf("remove library: %w", err))
+		}
+	}
+	if sidecarExists {
+		if err := os.Remove(sidecarPath); err != nil {
+			errs = append(errs, fmt.Errorf("remove sidecar: %w", err))
+		}
+	}
+	if metaExists {
+		if err := os.Remove(metaPath); err != nil {
+			errs = append(errs, fmt.Errorf("remove metadata: %w", err))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	fmt.Fprintf(opts.Out, "✓ Uninstalled libds4 and metadata files\n")
 	return nil
 }
 
-func (m confirmPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c", "esc", "q":
-			m.cancel = true
-			return m, tea.Quit
-		case "y", "Y":
-			m.value = true
-			return m, tea.Quit
-		case "n", "N", "enter":
-			m.value = false
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-func (m confirmPrompt) View() tea.View {
-	boldGreen := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#39FFB6"))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D8590"))
-
-	prompt := boldGreen.Render("? ") + m.message + muted.Render(" [y/N] ")
-	return tea.NewView(prompt)
-}

@@ -631,4 +631,111 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestUninstall(t *testing.T) {
+	originalIsTerminal := isTerminalFunc
+	defer func() { isTerminalFunc = originalIsTerminal }()
+
+	var isTerminalVal bool
+	isTerminalFunc = func(r io.Reader) bool {
+		return isTerminalVal
+	}
+
+	destDir := t.TempDir()
+	opts := Options{
+		DestDir: destDir,
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+		Out:     io.Discard,
+	}
+
+	// 1. Uninstall empty directory reports not installed
+	var outBuf bytes.Buffer
+	opts.Out = &outBuf
+	err := Uninstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected uninstall on empty dir to succeed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "libds4 is not installed") {
+		t.Errorf("Expected not installed message, got: %s", outBuf.String())
+	}
+
+	// 2. Install files to prepare for uninstall
+	libPath := filepath.Join(destDir, "libds4.dylib")
+	_ = os.WriteFile(libPath, []byte("native-lib-data"), 0o600)
+	sidecarPath := libPath + ".sha256"
+	_ = os.WriteFile(sidecarPath, []byte("sha-val"), 0o600)
+	metaPath := filepath.Join(destDir, "ds4go-install.json")
+	_ = os.WriteFile(metaPath, []byte("{}"), 0o600)
+
+	// 3. Uninstall in interactive terminal, declining prompt
+	isTerminalVal = true
+	opts.In = bytes.NewBufferString("no\n")
+	err = Uninstall(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected uninstall to fail when prompt is declined")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("Expected cancelled error, got: %v", err)
+	}
+
+	// Verify files still exist
+	if _, err := os.Stat(libPath); err != nil {
+		t.Error("Expected library file to still exist")
+	}
+
+	// 4. Uninstall in interactive terminal, accepting prompt
+	opts.In = bytes.NewBufferString("y\n")
+	outBuf.Reset()
+	err = Uninstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected uninstall to succeed when prompt is accepted: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "Uninstalled libds4 and metadata files") {
+		t.Errorf("Expected uninstalled message, got: %s", outBuf.String())
+	}
+
+	// Verify files are deleted
+	if _, err := os.Stat(libPath); !os.IsNotExist(err) {
+		t.Error("Expected library file to be deleted")
+	}
+	if _, err := os.Stat(sidecarPath); !os.IsNotExist(err) {
+		t.Error("Expected sidecar file to be deleted")
+	}
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Error("Expected metadata file to be deleted")
+	}
+
+	// 5. Re-create files for non-interactive test
+	_ = os.WriteFile(libPath, []byte("native-lib-data"), 0o600)
+	_ = os.WriteFile(sidecarPath, []byte("sha-val"), 0o600)
+	_ = os.WriteFile(metaPath, []byte("{}"), 0o600)
+
+	// Uninstall in non-interactive terminal without --force (should fail)
+	isTerminalVal = false
+	err = Uninstall(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected uninstall to fail in non-interactive environment without --force")
+	}
+	if !strings.Contains(err.Error(), "pass --force to uninstall") {
+		t.Errorf("Expected force warning error, got: %v", err)
+	}
+
+	// 6. Uninstall with --force (should succeed)
+	opts.Force = true
+	outBuf.Reset()
+	err = Uninstall(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected forced uninstall to succeed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "Uninstalled libds4 and metadata files") {
+		t.Errorf("Expected success message, got: %s", outBuf.String())
+	}
+
+	// Verify files are deleted
+	if _, err := os.Stat(libPath); !os.IsNotExist(err) {
+		t.Error("Expected library file to be deleted")
+	}
+}
+
+
 

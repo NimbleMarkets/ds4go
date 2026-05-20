@@ -146,6 +146,8 @@ ds4go — command cheat sheet
   ├── install  Download a prebuilt libds4 shared library
   │   └── validate  Validate the installed libds4 shared library
   │
+  ├── uninstall  Uninstall the installed libds4 shared library
+  │
   ├── model         Browse, download, and manage curated ds4 models
   │   ├── delete    Delete a downloaded model from disk
   │   ├── download  Download a curated model from Hugging Face
