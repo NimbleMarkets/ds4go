@@ -29,6 +29,8 @@ const (
 	DefaultRepo = "NimbleMarkets/ds4"
 
 	defaultUserAgent = "ds4go installer"
+
+	maxReleaseAssetBytes = 2 << 30
 )
 
 // Options configures a libds4 installation.
@@ -326,6 +328,9 @@ func download(ctx context.Context, opts Options, url string) ([]byte, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("download %s: %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
 	}
+	if resp.ContentLength > maxReleaseAssetBytes {
+		return nil, fmt.Errorf("download %s: asset is %s, exceeds limit %s", url, formatBytes(resp.ContentLength), formatBytes(maxReleaseAssetBytes))
+	}
 
 	body := resp.Body
 	var progress *downloadProgress
@@ -333,7 +338,7 @@ func download(ctx context.Context, opts Options, url string) ([]byte, error) {
 		progress = newDownloadProgress(opts.ProgressOut, filepath.Base(req.URL.Path), resp.ContentLength)
 		body = progress.Wrap(body)
 	}
-	data, err := io.ReadAll(body)
+	data, err := readAllLimited(body, maxReleaseAssetBytes)
 	if progress != nil {
 		progress.Done(err)
 	}
@@ -341,6 +346,18 @@ func download(ctx context.Context, opts Options, url string) ([]byte, error) {
 		return nil, fmt.Errorf("read %s: %w", url, err)
 	}
 	return data, nil
+}
+
+func readAllLimited(r io.Reader, limit int64) ([]byte, error) {
+	var buf bytes.Buffer
+	n, err := io.CopyN(&buf, r, limit+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if n > limit {
+		return nil, fmt.Errorf("asset exceeds limit %s", formatBytes(limit))
+	}
+	return buf.Bytes(), nil
 }
 
 func newRequest(ctx context.Context, opts Options, url string) (*http.Request, error) {

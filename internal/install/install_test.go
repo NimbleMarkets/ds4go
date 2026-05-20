@@ -170,6 +170,33 @@ func TestDownloadReportsProgress(t *testing.T) {
 	}
 }
 
+func TestDownloadRejectsLargeContentLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "2147483649")
+	}))
+	defer srv.Close()
+
+	_, err := download(context.Background(), Options{
+		HTTPClient: srv.Client(),
+	}, srv.URL+"/libds4.tar.gz")
+	if err == nil {
+		t.Fatal("download succeeded, want size limit error")
+	}
+	if !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("download error = %v, want size limit", err)
+	}
+}
+
+func TestReadAllLimitedRejectsUnknownLengthOversize(t *testing.T) {
+	_, err := readAllLimited(strings.NewReader("123456789"), 8)
+	if err == nil {
+		t.Fatal("readAllLimited succeeded, want size limit error")
+	}
+	if !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("readAllLimited error = %v, want size limit", err)
+	}
+}
+
 func makeTarGz(t *testing.T, name string, data []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer

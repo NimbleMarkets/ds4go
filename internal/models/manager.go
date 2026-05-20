@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const stateLockFileName = ".ds4go.state.lock"
@@ -42,7 +44,7 @@ func NewManager() *Manager {
 		DS4Dir:      dir,
 		ModelsDir:   filepath.Join(dir, "models"),
 		ConfigPath:  filepath.Join(dir, ConfigFileName),
-		HTTPClient:  &http.Client{Timeout: 0},
+		HTTPClient:  defaultHTTPClient(),
 		Out:         io.Discard,
 		ProgressOut: io.Discard,
 	}
@@ -503,7 +505,7 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 	if start > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
 	}
-	resp, err := m.HTTPClient.Do(req)
+	resp, err := m.httpClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", url, err)
 	}
@@ -603,7 +605,7 @@ func (m *Manager) remoteMetadata(ctx context.Context, url, token string) (remote
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := *m.HTTPClient
+	client := *m.httpClient()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -622,6 +624,26 @@ func (m *Manager) remoteMetadata(ctx context.Context, url, token string) (remote
 		}
 	}
 	return remoteModelMetadata{Size: size, SHA256: sha256FromHeaders(resp.Header)}, nil
+}
+
+func (m *Manager) httpClient() *http.Client {
+	if m.HTTPClient != nil {
+		return m.HTTPClient
+	}
+	return defaultHTTPClient()
+}
+
+func defaultHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.ResponseHeaderTimeout = 30 * time.Second
+	tr.ExpectContinueTimeout = 1 * time.Second
+	tr.IdleConnTimeout = 90 * time.Second
+	return &http.Client{Transport: tr}
 }
 
 func (m *Manager) promoteCompletePart(part, out string, meta remoteModelMetadata, expectedSHA string) (string, error) {

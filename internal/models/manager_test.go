@@ -178,6 +178,29 @@ func TestSHA256FromHeadersIgnoresBareETag(t *testing.T) {
 	}
 }
 
+func TestNewManagerUsesBoundedHTTPTransport(t *testing.T) {
+	m := NewManager()
+	if m.HTTPClient == nil {
+		t.Fatal("HTTPClient is nil")
+	}
+	if m.HTTPClient.Timeout != 0 {
+		t.Fatalf("HTTPClient.Timeout = %s, want zero total timeout for large downloads", m.HTTPClient.Timeout)
+	}
+	tr, ok := m.HTTPClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("HTTPClient.Transport = %T, want *http.Transport", m.HTTPClient.Transport)
+	}
+	if tr.ResponseHeaderTimeout <= 0 {
+		t.Fatal("ResponseHeaderTimeout is not set")
+	}
+	if tr.TLSHandshakeTimeout <= 0 {
+		t.Fatal("TLSHandshakeTimeout is not set")
+	}
+	if tr.IdleConnTimeout <= 0 {
+		t.Fatal("IdleConnTimeout is not set")
+	}
+}
+
 func TestListMarksPartialDownload(t *testing.T) {
 	dir := t.TempDir()
 	m := testManager(dir)

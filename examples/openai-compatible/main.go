@@ -11,15 +11,27 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/dsml"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/spf13/pflag"
+)
+
+const (
+	maxChatRequestBytes = 4 << 20
+
+	httpReadHeaderTimeout = 10 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 30 * time.Minute
+	httpIdleTimeout       = 120 * time.Second
 )
 
 type chatRequest struct {
@@ -115,8 +127,13 @@ func run(cfg *cliopts.ServerConfig) error {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		var req chatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req, err := decodeChatRequest(w, r, maxChatRequestBytes)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -133,12 +150,10 @@ func run(cfg *cliopts.ServerConfig) error {
 		}
 		defer prompt.Free()
 
-		maxTokens := req.MaxTokens
-		if maxTokens <= 0 {
-			maxTokens = req.MaxCompletionTokens
-		}
-		if maxTokens <= 0 {
-			maxTokens = cfg.Tokens
+		maxTokens, err := resolveMaxTokens(req, cfg.Tokens)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		var text string
 		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, ds4.GenerateOptions{
@@ -193,7 +208,7 @@ func run(cfg *cliopts.ServerConfig) error {
 
 	addr := cfg.Addr()
 	fmt.Println("listening on http://" + addr)
-	return http.ListenAndServe(addr, mux)
+	return newHTTPServer(addr, mux).ListenAndServe()
 }
 
 func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
@@ -206,6 +221,52 @@ func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
 		return nil, err
 	}
 	return ds4.BuildChatPrompt(engine, system, tools, history, ds4.ThinkHigh)
+}
+
+func decodeChatRequest(w http.ResponseWriter, r *http.Request, maxBytes int64) (chatRequest, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	defer r.Body.Close()
+
+	var req chatRequest
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		return chatRequest{}, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("request body contains multiple JSON values")
+		}
+		return chatRequest{}, err
+	}
+	return req, nil
+}
+
+func resolveMaxTokens(req chatRequest, serverLimit int) (int, error) {
+	if serverLimit <= 0 {
+		return 0, fmt.Errorf("server token limit must be positive")
+	}
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = req.MaxCompletionTokens
+	}
+	if maxTokens <= 0 {
+		return serverLimit, nil
+	}
+	if maxTokens > serverLimit {
+		return 0, fmt.Errorf("requested max tokens %d exceeds server limit %d", maxTokens, serverLimit)
+	}
+	return maxTokens, nil
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
+	}
 }
 
 func convertTools(tools []chatTool) ([]dsml.Tool, error) {
