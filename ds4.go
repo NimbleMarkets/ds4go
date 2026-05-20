@@ -41,6 +41,8 @@ type (
 	LogType = ds4api.LogType
 	// LogFunc receives one complete libds4 diagnostic message.
 	LogFunc = ds4api.LogFunc
+	// AbortFunc receives a libds4 fatal-invariant message immediately before abort.
+	AbortFunc = ds4api.AbortFunc
 	// TokenEmitFunc is called when ds4 emits a generated token.
 	TokenEmitFunc = ds4api.TokenEmitFunc
 	// GenerationDoneFunc is called after ds4 completes generation.
@@ -140,7 +142,7 @@ func SetDefaultLibrary(lib *ds4api.Library) {
 // logger is global inside libds4, so install it once during application
 // startup.
 func SetLogFunc(fn LogFunc) error {
-	lib, err := defaultLogLibrary(fn != nil)
+	lib, err := defaultCallbackLibrary(fn != nil)
 	if err != nil {
 		return err
 	}
@@ -148,6 +150,24 @@ func SetLogFunc(fn LogFunc) error {
 		return nil
 	}
 	return lib.SetLogFunc(fn)
+}
+
+// SetAbortFunc installs a last-chance libds4 fatal-invariant callback.
+//
+// libds4 invokes the callback after logging the fatal message and immediately
+// before native abort(). Passing nil restores the default behavior. This hook
+// is process-global inside libds4 and is intended for crash telemetry, flushing
+// logs, or deliberate process termination; returning from the callback does not
+// recover the engine.
+func SetAbortFunc(fn AbortFunc) error {
+	lib, err := defaultCallbackLibrary(fn != nil)
+	if err != nil {
+		return err
+	}
+	if lib == nil {
+		return nil
+	}
+	return lib.SetAbortFunc(fn)
 }
 
 // SetLogOutput redirects libds4 diagnostics to w.
@@ -192,7 +212,7 @@ func NewEngine(opts ds4api.EngineOptions) (*ds4api.Engine, error) {
 	return engine, nil
 }
 
-func defaultLogLibrary(load bool) (*ds4api.Library, error) {
+func defaultCallbackLibrary(load bool) (*ds4api.Library, error) {
 	defaultLibraryMu.Lock()
 	lib := defaultLibrary
 	defaultLibraryMu.Unlock()

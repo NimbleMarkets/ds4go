@@ -171,7 +171,7 @@ Most users should import the root package `ds4` from `github.com/NimbleMarkets/d
 
 The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 
-`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetLogFunc` redirects libds4 diagnostics that flow through `ds4_log_set` into a Go callback, including Metal/CUDA backend messages routed through `ds4_gpu_log`.
+`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetLogFunc` redirects libds4 diagnostics that flow through `ds4_log_set` into a Go callback, including Metal/CUDA backend messages routed through `ds4_gpu_log`. `SetAbortFunc` exposes libds4's fatal-invariant hook, which fires immediately before libds4 aborts the process.
 
 ## Native stderr
 
@@ -209,6 +209,25 @@ requires process-wide file-descriptor redirection, which can interfere with
 other goroutines, libraries, and concurrent engines. Prefer `SetLogFunc` for
 routed libds4 diagnostics, shell redirection for CLI runs, or running the model
 worker as a subprocess with `exec.Cmd.Stderr`.
+
+## Fatal abort hook
+
+Recent `libds4` builds expose `ds4_abort_set`, and ds4go wraps it as
+`SetAbortFunc`. This is a last-chance fatal-invariant hook: libds4 calls it
+after logging the fatal message at `LogError` and immediately before native
+`abort()`.
+
+```go
+err := ds4.SetAbortFunc(func(msg string) {
+    crashReporter.Record("libds4 fatal invariant", msg)
+})
+```
+
+Returning from the callback does not recover the engine. The native library
+still calls `abort()` because the invariant is already broken. Use the hook for
+crash telemetry, flushing logs, or deliberate process termination. Do not call
+back into ds4go/libds4 from the callback; it can run from native worker threads
+while an FFI call is active.
 
 ## Signal Safety
 

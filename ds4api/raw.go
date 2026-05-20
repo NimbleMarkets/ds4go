@@ -58,6 +58,7 @@ type rawSymbols struct {
 	ds4LogIsTTY                      func(fp uintptr) bool
 	ds4LogString                     func(fp uintptr, typ LogType, format string, msg string)
 	ds4LogSet                        func(fn uintptr, ud uintptr)
+	ds4AbortSet                      func(fn uintptr, ud uintptr)
 	ds4EngineGenerateArgmax          func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32
 	ds4EngineCollectIMatrix          func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32) int32
 	ds4EngineDumpTokens              func(e uintptr, tokens *cTokens)

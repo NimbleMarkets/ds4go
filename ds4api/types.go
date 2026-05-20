@@ -75,6 +75,18 @@ const (
 // active native call.
 type LogFunc func(typ LogType, msg string)
 
+// AbortFunc receives a libds4 fatal-invariant message immediately before
+// libds4 aborts the process.
+//
+// libds4 calls this from ds4_die and allocation-guard failures after routing
+// the same text through the log callback as LogError. Returning from AbortFunc
+// does not recover the engine: libds4 calls abort() immediately afterward. Use
+// this hook only for last-chance crash telemetry, flushing logs, or deliberate
+// process termination. The callback may be invoked from native worker threads,
+// so it must be concurrency-safe, quick, and must not call back into
+// ds4go/libds4 APIs; doing so can deadlock during an active native call.
+type AbortFunc func(msg string)
+
 // SessionRewriteResult is returned by ds4 session rewrite helpers.
 type SessionRewriteResult int32
 

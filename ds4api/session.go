@@ -1,6 +1,7 @@
 package ds4api
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"unsafe"
@@ -14,6 +15,8 @@ type Session struct {
 	once       sync.Once
 	progressID uintptr
 }
+
+var maxInt = int(^uint(0) >> 1)
 
 // NewSession creates a ds4 session for this engine and context size.
 func (e *Engine) NewSession(ctxSize int) (*Session, error) {
@@ -370,6 +373,9 @@ func (s *Session) SaveSnapshot() ([]byte, error) {
 	defer s.lib.raw.ds4SessionSnapshotFree(&snap)
 	if snap.Ptr == nil || snap.Len == 0 {
 		return nil, nil
+	}
+	if snap.Len > uint64(maxInt) {
+		return nil, fmt.Errorf("ds4_session_save_snapshot returned %d bytes, which exceeds Go's maximum slice length", snap.Len)
 	}
 	return append([]byte(nil), unsafe.Slice((*byte)(snap.Ptr), int(snap.Len))...), nil
 }

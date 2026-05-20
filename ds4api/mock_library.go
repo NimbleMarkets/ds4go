@@ -46,6 +46,7 @@ func NewMockLibrary() *Library {
 		mockLogFn = fn
 		mockLogID = ud
 	}
+	r.ds4AbortSet = func(fn uintptr, ud uintptr) {}
 
 	// Engine tests & diagnostics.
 	r.ds4EngineGenerateArgmax = func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32 {

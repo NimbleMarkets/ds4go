@@ -54,3 +54,19 @@ func TestDiscardLogsAndRestoreNativeLogger(t *testing.T) {
 		t.Fatalf("log output after discard/restore = %q, want %q", got, want)
 	}
 }
+
+func TestSetAbortFuncUsesDefaultLibrary(t *testing.T) {
+	lib := ds4api.NewMockLibrary()
+	SetDefaultLibrary(lib)
+	t.Cleanup(func() {
+		_ = SetAbortFunc(nil)
+		SetDefaultLibrary(nil)
+	})
+
+	if err := SetAbortFunc(func(string) {}); err != nil {
+		t.Fatalf("SetAbortFunc: %v", err)
+	}
+	if err := SetAbortFunc(nil); err != nil {
+		t.Fatalf("SetAbortFunc(nil): %v", err)
+	}
+}

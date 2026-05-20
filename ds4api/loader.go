@@ -17,11 +17,13 @@ import (
 
 // Library is a loaded libds4 shared library.
 type Library struct {
-	path   string
-	handle uintptr
-	raw    rawSymbols
-	logMu  sync.Mutex
-	logID  uintptr
+	path    string
+	handle  uintptr
+	raw     rawSymbols
+	logMu   sync.Mutex
+	logID   uintptr
+	abortMu sync.Mutex
+	abortID uintptr
 }
 
 var (
@@ -114,6 +116,7 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4LogIsTTY, "ds4_log_is_tty")
 	mustRegister(&r.ds4LogString, "ds4_log")
 	mustRegister(&r.ds4LogSet, "ds4_log_set")
+	mustRegister(&r.ds4AbortSet, "ds4_abort_set")
 	mustRegister(&r.ds4EngineGenerateArgmax, "ds4_engine_generate_argmax")
 	mustRegister(&r.ds4EngineCollectIMatrix, "ds4_engine_collect_imatrix")
 	mustRegister(&r.ds4EngineDumpTokens, "ds4_engine_dump_tokens")

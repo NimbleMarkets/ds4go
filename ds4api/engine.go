@@ -226,6 +226,52 @@ func (l *Library) SetLogFunc(fn LogFunc) error {
 	return nil
 }
 
+// SetAbortFunc installs a last-chance libds4 fatal-invariant callback for the
+// default library.
+//
+// Passing nil restores libds4's default behavior: no callback, then native
+// abort(). The setting is process-global inside libds4; install it once during
+// application startup. Returning from the callback does not recover the engine:
+// libds4 calls abort() immediately afterward.
+func SetAbortFunc(fn AbortFunc) error {
+	lib, err := DefaultLibrary()
+	if err != nil {
+		return err
+	}
+	return lib.SetAbortFunc(fn)
+}
+
+// SetAbortFunc installs a last-chance libds4 fatal-invariant callback for this
+// loaded library.
+//
+// libds4 invokes the callback from ds4_die and allocation-guard failures after
+// logging the same message at LogError and immediately before abort(). Passing
+// nil restores the default behavior. This hook is for crash telemetry, flushing
+// diagnostics, or deliberate process termination; it is not a normal recovery
+// mechanism. If the callback returns, libds4 still aborts. The callback may be
+// invoked from native worker threads and must be concurrency-safe.
+func (l *Library) SetAbortFunc(fn AbortFunc) error {
+	if l == nil {
+		return errors.New("ds4: nil library")
+	}
+	id := registerAbortCallback(fn)
+	fnPtr := uintptr(0)
+	if id != 0 {
+		fnPtr = abortCallback
+	}
+
+	libCallMu.Lock()
+	l.raw.ds4AbortSet(fnPtr, id)
+	libCallMu.Unlock()
+
+	l.abortMu.Lock()
+	old := l.abortID
+	l.abortID = id
+	l.abortMu.Unlock()
+	unregisterAbortCallback(old)
+	return nil
+}
+
 // CollectIMatrix calls ds4_engine_collect_imatrix.
 func (e *Engine) CollectIMatrix(datasetPath, outputPath string, ctxSize, maxPrompts, maxTokens int) error {
 	unlock, err := e.require()
