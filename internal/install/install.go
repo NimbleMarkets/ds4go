@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -22,6 +23,10 @@ import (
 	"time"
 
 	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/charmbracelet/x/term"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -50,6 +55,7 @@ type Options struct {
 	Out          io.Writer
 	ProgressOut  io.Writer
 	HTTPClient   *http.Client
+	In           io.Reader
 }
 
 // Result describes the installed release asset.
@@ -65,6 +71,29 @@ type Result struct {
 	ChecksumOK bool
 	DryRun     bool
 }
+
+// InstallMetadata holds information about the installed prebuilt release.
+type InstallMetadata struct {
+	Repo        string    `json:"repo"`
+	Version     string    `json:"version"`
+	AssetName   string    `json:"asset_name"`
+	AssetURL    string    `json:"asset_url"`
+	Backend     string    `json:"backend"`
+	GOOS        string    `json:"goos"`
+	GOARCH      string    `json:"goarch"`
+	Digest      string    `json:"digest,omitempty"`
+	SHA256      string    `json:"sha256"`
+	InstalledAt time.Time `json:"installed_at"`
+}
+
+var isTerminalFunc = func(r io.Reader) bool {
+	if file, ok := r.(*os.File); ok {
+		return term.IsTerminal(file.Fd())
+	}
+	return false
+}
+
+var loadLibraryFunc = ds4api.Load
 
 type release struct {
 	TagName string  `json:"tag_name"`
@@ -105,11 +134,60 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return res, nil
 	}
 
-	if !opts.Force {
-		if st, err := os.Stat(res.Library); err == nil && !st.IsDir() {
-			return nil, fmt.Errorf("%s already exists; pass --force to replace it", res.Library)
+	overwrite := opts.Force
+	if _, err := os.Stat(res.Library); err == nil {
+		if !opts.Force {
+			currentSHA, shaErr := fileSHA256(res.Library)
+			metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
+			metaData, metaReadErr := os.ReadFile(metaPath)
+
+			var isManaged bool
+			var meta InstallMetadata
+			if metaReadErr == nil {
+				if json.Unmarshal(metaData, &meta) == nil {
+					isManaged = true
+				}
+			}
+
+			if isManaged && shaErr == nil {
+				// Compare all relevant fields to see if already installed and matches checksum
+				if meta.Repo == opts.Repo &&
+					meta.Version == version &&
+					meta.AssetName == assetName &&
+					meta.Backend == opts.Backend &&
+					meta.GOOS == opts.GOOS &&
+					meta.GOARCH == opts.GOARCH &&
+					currentSHA == meta.SHA256 {
+					fmt.Fprintf(opts.Out, "%s is already installed\n", res.Library)
+					return res, nil
+				}
+				fmt.Fprintf(opts.Out, "A different version of libds4 is currently installed: version %s (%s) -> %s (%s)\n", meta.Version, meta.Backend, version, opts.Backend)
+			} else {
+				fmt.Fprintf(opts.Out, "An unmanaged library already exists at %s\n", res.Library)
+			}
+
+			if isTerminalFunc(opts.In) {
+				p := tea.NewProgram(
+					confirmPrompt{message: fmt.Sprintf("Replace %s?", res.Library)},
+					tea.WithInput(opts.In),
+					tea.WithOutput(opts.Out),
+				)
+				resModel, err := p.Run()
+				if err != nil {
+					return nil, fmt.Errorf("read prompt response: %w", err)
+				}
+				model, ok := resModel.(confirmPrompt)
+				if !ok || model.cancel || !model.value {
+					return nil, fmt.Errorf("install cancelled")
+				}
+				fmt.Fprintln(opts.Out)
+				overwrite = true
+			} else {
+				return nil, fmt.Errorf("%s already exists; pass --force to replace it", res.Library)
+			}
 		}
 	}
+
 	if err := os.MkdirAll(opts.DestDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create %s: %w", opts.DestDir, err)
 	}
@@ -125,7 +203,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 		res.ChecksumOK = ok
 	}
-	if err := extractLibrary(assetName, data, opts.DestDir, opts.GOOS, opts.Force); err != nil {
+	if err := extractLibrary(assetName, data, opts.DestDir, opts.GOOS, overwrite); err != nil {
 		return nil, err
 	}
 	// Record the installed library's checksum so the loader can detect later
@@ -133,6 +211,35 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := writeLibraryChecksum(res.Library); err != nil {
 		fmt.Fprintf(opts.Out, "warning: could not record library checksum: %v\n", err)
 	}
+
+	// Record metadata
+	libSHA, err := fileSHA256(res.Library)
+	if err != nil {
+		fmt.Fprintf(opts.Out, "warning: could not read installed library for metadata: %v\n", err)
+	} else {
+		meta := InstallMetadata{
+			Repo:        opts.Repo,
+			Version:     version,
+			AssetName:   assetName,
+			AssetURL:    assetURL,
+			Backend:     opts.Backend,
+			GOOS:        opts.GOOS,
+			GOARCH:      opts.GOARCH,
+			Digest:      a.Digest,
+			SHA256:      libSHA,
+			InstalledAt: time.Now(),
+		}
+		metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
+		metaBytes, err := json.MarshalIndent(meta, "", "  ")
+		if err != nil {
+			fmt.Fprintf(opts.Out, "warning: could not marshal install metadata: %v\n", err)
+		} else {
+			if err := os.WriteFile(metaPath, metaBytes, 0o600); err != nil {
+				fmt.Fprintf(opts.Out, "warning: could not write install metadata: %v\n", err)
+			}
+		}
+	}
+
 	fmt.Fprintf(opts.Out, "installed %s\n", res.Library)
 	return res, nil
 }
@@ -140,17 +247,24 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 // writeLibraryChecksum writes a "<libPath>.sha256" sidecar with the SHA256 of
 // the installed library, which ds4api verifies before loading it.
 func writeLibraryChecksum(libPath string) error {
-	f, err := os.Open(libPath)
+	sum, err := fileSHA256(libPath)
 	if err != nil {
 		return err
+	}
+	return os.WriteFile(libPath+".sha256", []byte(sum+"\n"), 0o600)
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		return "", err
 	}
-	sum := hex.EncodeToString(h.Sum(nil))
-	return os.WriteFile(libPath+".sha256", []byte(sum+"\n"), 0o600)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func normalize(opts Options) Options {
@@ -177,6 +291,9 @@ func normalize(opts Options) Options {
 	}
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 5 * time.Minute}
+	}
+	if opts.In == nil {
+		opts.In = os.Stdin
 	}
 	return opts
 }
@@ -504,9 +621,176 @@ func libraryFileName(goos string) string {
 	}
 }
 
+var isCUDAPresentFunc = func() bool {
+	if _, err := os.Stat("/dev/nvidiactl"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/dev/nvidia0"); err == nil {
+		return true
+	}
+	if _, err := exec.LookPath("nvidia-smi"); err == nil {
+		return true
+	}
+	return false
+}
+
+var isROCmPresentFunc = func() bool {
+	if _, err := os.Stat("/dev/kfd"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("/opt/rocm"); err == nil {
+		return true
+	}
+	return false
+}
+
 func defaultBackend(goos, goarch string) string {
 	if goos == "darwin" && goarch == "arm64" {
 		return "metal"
 	}
+	if goos == "linux" {
+		if isCUDAPresentFunc() {
+			return "cuda"
+		}
+		if isROCmPresentFunc() {
+			// Once ROCm is supported upstream, we will return "rocm" here.
+			// For now, fall back to "cpu".
+			// return "rocm"
+		}
+		return "cpu"
+	}
 	return "cpu"
+}
+
+// Validate checks the installation of libds4 in opts.DestDir.
+// It verifies existence, permissions, checksums, and dynamic loading.
+func Validate(ctx context.Context, opts Options) error {
+	opts = normalize(opts)
+
+	libName := libraryFileName(opts.GOOS)
+	libPath := filepath.Join(opts.DestDir, libName)
+
+	fmt.Fprintf(opts.Out, "Checking library at: %s\n", libPath)
+
+	// 1. Check file existence
+	fi, err := os.Stat(libPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("shared library not found at %s. Please run 'ds4go install' first", libPath)
+		}
+		return fmt.Errorf("stat library: %w", err)
+	}
+
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to load %s: not a regular file", libPath)
+	}
+	fmt.Fprintf(opts.Out, "✓ Shared library file exists\n")
+
+	// 2. File permissions check (POSIX only)
+	if opts.GOOS != "windows" {
+		perm := fi.Mode().Perm()
+		if perm&0o022 != 0 {
+			return fmt.Errorf("refusing to load %s: writable by group/other (%#o); run: chmod go-w %s", libPath, perm, libPath)
+		}
+		dir := filepath.Dir(libPath)
+		if di, err := os.Stat(dir); err == nil {
+			if dperm := di.Mode().Perm(); dperm&0o022 != 0 {
+				return fmt.Errorf("refusing to load %s: directory %q is writable by group/other (%#o); run: chmod go-w %s", libPath, dir, dperm, dir)
+			}
+		}
+	}
+	fmt.Fprintf(opts.Out, "✓ File permissions are secure\n")
+
+	// 3. Compute local SHA256
+	localSHA, err := fileSHA256(libPath)
+	if err != nil {
+		return fmt.Errorf("calculate local sha256: %w", err)
+	}
+
+	// Verify sidecar checksum file
+	sidecarPath := libPath + ".sha256"
+	if scData, err := os.ReadFile(sidecarPath); err == nil {
+		wantSHA := strings.TrimSpace(string(scData))
+		if !strings.EqualFold(localSHA, wantSHA) {
+			return fmt.Errorf("checksum mismatch in sidecar %s: local is %s, sidecar wants %s", sidecarPath, localSHA, wantSHA)
+		}
+		fmt.Fprintf(opts.Out, "✓ Sidecar checksum file matches\n")
+	} else {
+		fmt.Fprintf(opts.Out, "warning: no checksum sidecar found at %s.sha256\n", libPath)
+	}
+
+	// Verify metadata file
+	metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
+	var meta InstallMetadata
+	var hasMeta bool
+	if mData, err := os.ReadFile(metaPath); err == nil {
+		if err := json.Unmarshal(mData, &meta); err == nil {
+			hasMeta = true
+			if !strings.EqualFold(localSHA, meta.SHA256) {
+				return fmt.Errorf("checksum mismatch in install metadata %s: local is %s, metadata wants %s", metaPath, localSHA, meta.SHA256)
+			}
+			fmt.Fprintf(opts.Out, "✓ Install metadata matches local checksum\n")
+		} else {
+			fmt.Fprintf(opts.Out, "warning: install metadata file is corrupt: %v\n", err)
+		}
+	} else {
+		fmt.Fprintf(opts.Out, "warning: no install metadata file found at %s\n", metaPath)
+	}
+
+	// 4. Dynamic Loading verification
+	lib, err := loadLibraryFunc(libPath)
+	if err != nil {
+		return fmt.Errorf("failed to load dynamic library: %w", err)
+	}
+	fmt.Fprintf(opts.Out, "✓ Dynamically loaded library and registered symbols\n")
+
+	// Print metadata info
+	if hasMeta {
+		fmt.Fprintln(opts.Out, "\n[Metadata]")
+		fmt.Fprintf(opts.Out, "  Version:     %s\n", meta.Version)
+		fmt.Fprintf(opts.Out, "  Backend:     %s\n", meta.Backend)
+		fmt.Fprintf(opts.Out, "  Installed:   %s\n", meta.InstalledAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(opts.Out, "  Source Repo: %s\n", meta.Repo)
+	}
+
+	// Make the loaded library the default one for future calls in the CLI lifecycle
+	ds4api.SetDefaultLibrary(lib)
+
+	return nil
+}
+
+type confirmPrompt struct {
+	message string
+	cancel  bool
+	value   bool
+}
+
+func (m confirmPrompt) Init() tea.Cmd {
+	return nil
+}
+
+func (m confirmPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc", "q":
+			m.cancel = true
+			return m, tea.Quit
+		case "y", "Y":
+			m.value = true
+			return m, tea.Quit
+		case "n", "N", "enter":
+			m.value = false
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m confirmPrompt) View() tea.View {
+	boldGreen := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#39FFB6"))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D8590"))
+
+	prompt := boldGreen.Render("? ") + m.message + muted.Render(" [y/N] ")
+	return tea.NewView(prompt)
 }

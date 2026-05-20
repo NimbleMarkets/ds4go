@@ -63,7 +63,7 @@ $DS4_DIR/lib/      native shared libraries
 $DS4_DIR/models/   GGUF model files
 ```
 
-`--backend auto` selects `metal` on macOS arm64 and `cpu` elsewhere. Select a
+`--backend auto` selects `metal` on macOS arm64, `cuda` on Linux, and `cpu` elsewhere. Select a
 specific build when needed:
 
 ```sh
@@ -101,6 +101,23 @@ tampering and corruption. A mismatch aborts the install. Pass `--skip-checksum`
 to bypass (local testing only); direct `--url` installs have no API digest and
 skip this check.
 
+## Upgrade Behavior and Metadata
+
+When `ds4go install` successfully downloads and extracts `libds4`, it writes an installation metadata file `ds4go-install.json` beside the installed library (e.g., at `~/.ds4/lib/ds4go-install.json`).
+
+This file records:
+- The source repository and release version/tag
+- The resolved asset name and browser download URL
+- The architecture, operating system, and backend (e.g. `metal`, `cuda`, `cpu`)
+- The library SHA256 checksum and installation timestamp
+
+On subsequent installs, the installer checks if the library already exists:
+- **Up-to-Date**: If the same version and backend are already installed and the library checksum matches, the command prints a concise message and exits successfully.
+- **Upgrades / Replacements**: If a different version/backend is installed, or if the library exists but no metadata is found (meaning it is unmanaged):
+  - On **interactive terminals**, you will be prompted: `Replace /path/to/libds4.*? [y/N]`.
+  - On **non-interactive terminals**, the command will fail and report that the file already exists.
+  - You can pass `--force` to automatically overwrite the existing library in either mode.
+
 Each libds4 release also carries a Sigstore build provenance attestation.
 `ds4go` does not verify it in-process — doing so would pull in a very large
 dependency tree — but you can verify it out of band with the
@@ -109,6 +126,27 @@ dependency tree — but you can verify it out of band with the
 ```sh
 gh attestation verify libds4-VERSION-macos-arm64-metal.tar.gz --repo NimbleMarkets/ds4
 ```
+
+## Validating your Installation
+
+To verify your installation and ensure that `libds4` has loaded correctly with all expected symbols and permissions, you can use the `validate` subcommand:
+
+```sh
+ds4go install validate
+```
+
+Optionally, pass `--lib` to validate a library in a custom directory:
+
+```sh
+ds4go install validate --lib /path/to/directory
+```
+
+This command will:
+- Check that the shared library exists and is a regular file.
+- Verify file permissions (making sure it is secure and not group/world-writable).
+- Verify the SHA256 integrity checksum against the sidecar `.sha256` and `ds4go-install.json` files.
+- Attempt a dynamic `dlopen` load to resolve all ABI symbols (useful for troubleshooting driver/runtime dependencies like CUDA libraries on Linux or architecture mismatches).
+- Report backend type and installation metadata.
 
 ## Manual Install from `ds4` repository
 

@@ -44,6 +44,10 @@ ds4go install --backend auto
 The installer downloads from `github.com/NimbleMarkets/ds4` by default. Use
 `--repo`, `--version`, `--backend`, or `--url` to select a fork, release, build,
 or direct archive. It installs into `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`.
+`--backend auto` selects `metal` on macOS arm64, `cuda` on Linux, and `cpu` elsewhere.
+If the library is already installed and up-to-date, the installer exits successfully
+without re-downloading. If a different version is present, it will prompt to replace it
+(or require `--force` in non-interactive environments).
 
 `DS4_DIR` is the ds4 home directory used by ds4go tooling:
 
@@ -140,6 +144,7 @@ ds4go — command cheat sheet
   │   └── zsh         Generate the autocompletion script for zsh
   │
   ├── install  Download a prebuilt libds4 shared library
+  │   └── validate  Validate the installed libds4 shared library
   │
   ├── model         Browse, download, and manage curated ds4 models
   │   ├── delete    Delete a downloaded model from disk

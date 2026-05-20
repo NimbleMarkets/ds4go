@@ -8,6 +8,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/NimbleMarkets/ds4go/ds4api"
 )
 
 func TestCandidateAssetNames(t *testing.T) {
@@ -242,3 +247,388 @@ func contains(ss []string, want string) bool {
 	}
 	return false
 }
+
+func TestDefaultBackendLinux(t *testing.T) {
+	origCUDA := isCUDAPresentFunc
+	origROCm := isROCmPresentFunc
+	defer func() {
+		isCUDAPresentFunc = origCUDA
+		isROCmPresentFunc = origROCm
+	}()
+
+	// 1. Test case: CUDA GPU present on Linux
+	isCUDAPresentFunc = func() bool { return true }
+	isROCmPresentFunc = func() bool { return false }
+
+	backend := defaultBackend("linux", "amd64")
+	if backend != "cuda" {
+		t.Errorf("defaultBackend(\"linux\", \"amd64\") with CUDA present = %q, want %q", backend, "cuda")
+	}
+
+	// 2. Test case: ROCm GPU present on Linux (no CUDA)
+	isCUDAPresentFunc = func() bool { return false }
+	isROCmPresentFunc = func() bool { return true }
+
+	backend2 := defaultBackend("linux", "amd64")
+	if backend2 != "cpu" {
+		t.Errorf("defaultBackend(\"linux\", \"amd64\") with ROCm present = %q, want %q", backend2, "cpu")
+	}
+
+	// 3. Test case: Neither CUDA nor ROCm GPU present on Linux
+	isCUDAPresentFunc = func() bool { return false }
+	isROCmPresentFunc = func() bool { return false }
+
+	backend3 := defaultBackend("linux", "amd64")
+	if backend3 != "cpu" {
+		t.Errorf("defaultBackend(\"linux\", \"amd64\") with no GPUs = %q, want %q", backend3, "cpu")
+	}
+}
+
+type mockTransport struct {
+	targetHost   string
+	targetScheme string
+	underlying   http.RoundTripper
+}
+
+func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.URL.Scheme = m.targetScheme
+	req.URL.Host = m.targetHost
+	return m.underlying.RoundTrip(req)
+}
+
+func TestInstallMetadataAndUpgradeFlow(t *testing.T) {
+	originalIsTerminal := isTerminalFunc
+	defer func() { isTerminalFunc = originalIsTerminal }()
+
+	// We'll mock isTerminalFunc to control interactivity in tests
+	var isTerminalVal bool
+	isTerminalFunc = func(r io.Reader) bool {
+		return isTerminalVal
+	}
+
+	// Create a test server to mock GitHub Release requests
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/releases/") {
+			// Mock fetchRelease
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+				"tag_name": "v0.1.20260520",
+				"assets": [
+					{
+						"name": "libds4-v0.1.20260520-macos-arm64-metal.tar.gz",
+						"browser_download_url": "http://`+r.Host+`/download/lib.tar.gz",
+						"digest": "sha256:4c7d0d087b2de13cd2f0a8d4615b3c5c56c2057d2a58b885ff7489999b90468f"
+					}
+				]
+			}`)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/download/") {
+			// Serve mock tar.gz containing libds4.dylib with "native-lib" content
+			tarGzData := makeTarGz(t, "dist/libds4.dylib", []byte("native-lib"))
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(tarGzData)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	destDir := t.TempDir()
+	opts := Options{
+		Repo:         "NimbleMarkets/ds4",
+		Version:      "v0.1.20260520",
+		Backend:      "metal",
+		GOOS:         "darwin",
+		GOARCH:       "arm64",
+		DestDir:      destDir,
+		Out:          io.Discard,
+		ProgressOut:  io.Discard,
+		HTTPClient: &http.Client{
+			Transport: &mockTransport{
+				targetHost:   srv.Listener.Addr().String(),
+				targetScheme: "http",
+				underlying:   srv.Client().Transport,
+			},
+		},
+		SkipChecksum: true, // skip digest mismatch checks for easier mock asset names
+	}
+
+	// 1. Clean Install
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Clean install failed: %v", err)
+	}
+
+	libPath := filepath.Join(destDir, "libds4.dylib")
+	if _, err := os.Stat(libPath); err != nil {
+		t.Fatalf("Library not installed: %v", err)
+	}
+
+	// Verify metadata file was written
+	metaPath := filepath.Join(destDir, "ds4go-install.json")
+	metaData, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("Metadata file not found: %v", err)
+	}
+
+	var meta InstallMetadata
+	if err := json.Unmarshal(metaData, &meta); err != nil {
+		t.Fatalf("Failed to parse metadata JSON: %v", err)
+	}
+
+	if meta.Version != "v0.1.20260520" || meta.Backend != "metal" || meta.AssetName != "libds4-v0.1.20260520-macos-arm64-metal.tar.gz" {
+		t.Errorf("Metadata content mismatch: %+v", meta)
+	}
+
+	libSHA, _ := fileSHA256(libPath)
+	if meta.SHA256 != libSHA {
+		t.Errorf("Metadata SHA256 %q does not match file SHA256 %q", meta.SHA256, libSHA)
+	}
+
+	// 2. Re-install same version/asset (should exit successfully as already installed)
+	var outBuf bytes.Buffer
+	opts.Out = &outBuf
+	res2, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Re-installing same version failed: %v", err)
+	}
+	if res2.Library != res.Library {
+		t.Errorf("Expected same library path, got %q", res2.Library)
+	}
+	if !strings.Contains(outBuf.String(), "already installed") {
+		t.Errorf("Expected 'already installed' message, got output: %q", outBuf.String())
+	}
+
+	// 3. Try installing a different version/asset on non-interactive terminal (should fail)
+	opts.Version = "v0.2.0"
+	isTerminalVal = false
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/releases/") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+				"tag_name": "v0.2.0",
+				"assets": [
+					{
+						"name": "libds4-v0.2.0-macos-arm64-metal.tar.gz",
+						"browser_download_url": "http://`+r.Host+`/download/lib.tar.gz",
+						"digest": ""
+					}
+				]
+			}`)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/download/") {
+			tarGzData := makeTarGz(t, "dist/libds4.dylib", []byte("native-lib-v2"))
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(tarGzData)
+			return
+		}
+	}))
+	defer srv2.Close()
+	opts.HTTPClient = &http.Client{
+		Transport: &mockTransport{
+			targetHost:   srv2.Listener.Addr().String(),
+			targetScheme: "http",
+			underlying:   srv2.Client().Transport,
+		},
+	}
+
+	outBuf.Reset()
+	_, err = Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected run on non-interactive terminal to fail when library already exists")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("Expected 'already exists' error, got: %v", err)
+	}
+
+	// 4. Try installing a different version with --force (should succeed)
+	opts.Force = true
+	res3, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Install with --force failed: %v", err)
+	}
+	if res3.Library != libPath {
+		t.Errorf("Expected library path %q, got %q", libPath, res3.Library)
+	}
+	// Check content updated
+	v2Data, _ := os.ReadFile(libPath)
+	if string(v2Data) != "native-lib-v2" {
+		t.Errorf("Expected updated library content, got %q", string(v2Data))
+	}
+	opts.Force = false
+
+	// Let's reset the libds4 to version 1 for prompt tests
+	tarGzData := makeTarGz(t, "dist/libds4.dylib", []byte("native-lib"))
+	_ = os.WriteFile(libPath, tarGzData, 0o600)
+	_ = writeLibraryChecksum(libPath)
+	libSHA, _ = fileSHA256(libPath)
+	meta.Version = "v0.1.20260520"
+	meta.AssetName = "libds4-v0.1.20260520-macos-arm64-metal.tar.gz"
+	meta.SHA256 = libSHA
+	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
+	_ = os.WriteFile(metaPath, metaBytes, 0o600)
+
+	// 5. Try installing a different version on interactive terminal, decline prompt
+	isTerminalVal = true
+	opts.In = bytes.NewBufferString("no\n")
+	outBuf.Reset()
+	_, err = Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected install to fail when user declines prompt")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("Expected cancelled error, got %v", err)
+	}
+
+	// 6. Try installing a different version on interactive terminal, accept prompt
+	opts.In = bytes.NewBufferString("y\n")
+	outBuf.Reset()
+	res4, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected install with prompt confirmation to succeed: %v", err)
+	}
+	if res4.Library != libPath {
+		t.Errorf("Expected library path %q, got %q", libPath, res4.Library)
+	}
+
+	// 7. Unmanaged library check
+	// Delete metadata file to simulate unmanaged library
+	_ = os.Remove(metaPath)
+	// Declining prompt
+	isTerminalVal = true
+	opts.In = bytes.NewBufferString("n\n")
+	_, err = Run(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected install to fail on unmanaged library when prompt declined")
+	}
+
+	// Accepting prompt on unmanaged library
+	opts.In = bytes.NewBufferString("y\n")
+	_, err = Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected install to succeed on unmanaged library when prompt accepted: %v", err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	// Temporarily override loadLibraryFunc
+	oldLoad := loadLibraryFunc
+	loadLibraryFunc = func(path string) (*ds4api.Library, error) {
+		if strings.Contains(path, "load_fail") {
+			return nil, errors.New("mock load failure")
+		}
+		return ds4api.NewMockLibrary(), nil
+	}
+	defer func() {
+		loadLibraryFunc = oldLoad
+	}()
+
+	destDir := t.TempDir()
+	opts := Options{
+		DestDir: destDir,
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+		Out:     io.Discard,
+	}
+
+	// 1. Validate should fail if the library doesn't exist
+	err := Validate(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected error when library does not exist")
+	}
+	if !strings.Contains(err.Error(), "shared library not found") {
+		t.Errorf("Expected 'shared library not found' error, got: %v", err)
+	}
+
+	// 2. Create the library file
+	libPath := filepath.Join(destDir, "libds4.dylib")
+	err = os.WriteFile(libPath, []byte("native-lib-data"), 0o600)
+	if err != nil {
+		t.Fatalf("Failed to create mock library: %v", err)
+	}
+
+	// 3. Successful validation (with warnings about missing sidecar and metadata)
+	var outBuf bytes.Buffer
+	opts.Out = &outBuf
+	err = Validate(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected validation to succeed, got: %v", err)
+	}
+	output := outBuf.String()
+	if !strings.Contains(output, "Shared library file exists") ||
+		!strings.Contains(output, "warning: no checksum sidecar found") ||
+		!strings.Contains(output, "warning: no install metadata file found") {
+		t.Errorf("Unexpected validation output: %s", output)
+	}
+
+	// 4. Validation with sidecar file
+	sha, _ := fileSHA256(libPath)
+	sidecarPath := libPath + ".sha256"
+	_ = os.WriteFile(sidecarPath, []byte(sha), 0o600)
+
+	outBuf.Reset()
+	err = Validate(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected validation to succeed with sidecar, got: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "Sidecar checksum file matches") {
+		t.Errorf("Expected sidecar verified message, got: %s", outBuf.String())
+	}
+
+	// 5. Validation with sidecar mismatch
+	_ = os.WriteFile(sidecarPath, []byte("wrong-sha"), 0o600)
+	err = Validate(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected validation to fail with checksum mismatch in sidecar")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("Expected checksum mismatch error, got: %v", err)
+	}
+	_ = os.WriteFile(sidecarPath, []byte(sha), 0o600) // reset
+
+	// 6. Validation with metadata file
+	metaPath := filepath.Join(destDir, "ds4go-install.json")
+	meta := InstallMetadata{
+		Repo:        "NimbleMarkets/ds4",
+		Version:     "v0.1.20260520",
+		AssetName:   "libds4-v0.1.20260520-macos-arm64-metal.tar.gz",
+		AssetURL:    "https://github.com/...",
+		Backend:     "metal",
+		GOOS:        "darwin",
+		GOARCH:      "arm64",
+		SHA256:      sha,
+		InstalledAt: time.Now(),
+	}
+	metaBytes, _ := json.Marshal(meta)
+	_ = os.WriteFile(metaPath, metaBytes, 0o600)
+
+	outBuf.Reset()
+	err = Validate(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Expected validation to succeed with metadata, got: %v", err)
+	}
+	output = outBuf.String()
+	if !strings.Contains(output, "Install metadata matches local checksum") ||
+		!strings.Contains(output, "[Metadata]") ||
+		!strings.Contains(output, "Backend:     metal") {
+		t.Errorf("Expected metadata printout, got: %s", output)
+	}
+
+	// 7. Validation with load failure
+	opts.DestDir = filepath.Join(destDir, "load_fail")
+	_ = os.MkdirAll(opts.DestDir, 0o755)
+	failLibPath := filepath.Join(opts.DestDir, "libds4.dylib")
+	_ = os.WriteFile(failLibPath, []byte("native-lib-data"), 0o600)
+
+	err = Validate(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Expected validation to fail on library load failure")
+	}
+	if !strings.Contains(err.Error(), "failed to load dynamic library") {
+		t.Errorf("Expected dynamic library load error, got: %v", err)
+	}
+}
+
+
