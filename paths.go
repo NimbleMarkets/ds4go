@@ -28,6 +28,12 @@ func DefaultLibraryDir() string {
 	return filepath.Join(DefaultDir(), "lib")
 }
 
+// DefaultModelsDir returns the directory where downloaded models are stored:
+// the "models" subdirectory of DefaultDir.
+func DefaultModelsDir() string {
+	return filepath.Join(DefaultDir(), "models")
+}
+
 // DefaultModelPath returns the path to the default model symlink.
 //
 // The default model is a symlink at $DS4_DIR/models/<DefaultModelSymlink> that

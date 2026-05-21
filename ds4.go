@@ -8,9 +8,13 @@ package ds4
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/internal/install"
 )
 
 var defaultLibraryMu sync.Mutex
@@ -246,4 +250,99 @@ func ApplyMTPDefaults(opts *EngineOptions) {
 	if opts.MTPPath != "" && opts.MTPMargin <= 0 {
 		opts.MTPMargin = DefaultMTPMargin
 	}
+}
+
+// ProcessInfo represents a process holding or using a ds4 resource.
+type ProcessInfo struct {
+	PID  int
+	Name string
+}
+
+// LibraryHolders returns a list of processes currently holding onto the libds4 shared library.
+// If libPath is empty, it uses the default library path. To ensure security, queries are restricted
+// to paths within authorized directories (DefaultDir, executable directory, or explicit DS4_LIB).
+func LibraryHolders(libPath string) ([]ProcessInfo, error) {
+	if libPath == "" {
+		libPath = DefaultLibraryPath()
+	}
+	if libPath == "" {
+		return nil, fmt.Errorf("ds4go: default library path not resolved")
+	}
+
+	if !isPathWithinSafeDomain(libPath) {
+		return nil, fmt.Errorf("ds4go: query path %q is outside the authorized security domain", libPath)
+	}
+
+	procs, err := install.FindLibraryHolders(libPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var res []ProcessInfo
+	for _, p := range procs {
+		res = append(res, ProcessInfo{PID: p.PID, Name: p.Name})
+	}
+	return res, nil
+}
+
+// EngineHolders returns a map of process PIDs to the list of model files they are currently running.
+// If modelsDir is empty, it uses the default models directory. To ensure security, queries are restricted
+// to paths within authorized directories (DefaultDir or executable directory).
+func EngineHolders(modelsDir string) (map[int][]string, error) {
+	if modelsDir == "" {
+		modelsDir = DefaultModelsDir()
+	}
+
+	if !isPathWithinSafeDomain(modelsDir) {
+		return nil, fmt.Errorf("ds4go: query directory %q is outside the authorized security domain", modelsDir)
+	}
+
+	holders, err := install.FindDirHolders(modelsDir)
+	if err != nil {
+		return nil, err
+	}
+	return holders, nil
+}
+
+func isPathWithinSafeDomain(path string) bool {
+	if path == "" {
+		return false
+	}
+	// Check if it is a bare library filename (system loader path)
+	if filepath.Base(path) == path && (path == "libds4.dylib" || path == "libds4.dll" || path == "libds4.so") {
+		return true
+	}
+
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+
+	// 1. Check if it is within DefaultDir()
+	defaultDir, err := filepath.Abs(DefaultDir())
+	if err == nil {
+		if absPath == defaultDir || strings.HasPrefix(absPath, defaultDir+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	// 2. Check if it is in the executable directory
+	if exe, err := os.Executable(); err == nil {
+		exeDir, err := filepath.Abs(filepath.Dir(exe))
+		if err == nil {
+			if absPath == exeDir || strings.HasPrefix(absPath, exeDir+string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+
+	// 3. Check if it matches DS4_LIB
+	if ds4Lib := os.Getenv("DS4_LIB"); ds4Lib != "" {
+		absDs4Lib, err := filepath.Abs(filepath.Clean(ds4Lib))
+		if err == nil && absPath == absDs4Lib {
+			return true
+		}
+	}
+
+	return false
 }
