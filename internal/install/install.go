@@ -19,11 +19,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 	"github.com/NimbleMarkets/ds4go/internal/tui"
 	"github.com/charmbracelet/x/term"
 )
@@ -292,7 +293,13 @@ func normalize(opts Options) Options {
 }
 
 func defaultDir() string {
-	return ds4.DefaultDir()
+	if dir := os.Getenv("DS4_DIR"); dir != "" {
+		return dir
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".ds4")
+	}
+	return ".ds4"
 }
 
 func resolveAsset(ctx context.Context, opts Options) (asset, string, error) {
@@ -737,6 +744,38 @@ func Validate(ctx context.Context, opts Options) error {
 	}
 	fmt.Fprintf(opts.Out, "✓ Dynamically loaded library and registered symbols\n")
 
+	// 5. Active process verification (excluding the current process)
+	if holders, err := FindLibraryHolders(libPath); err == nil {
+		var otherHolders []ProcessInfo
+		myPID := os.Getpid()
+		for _, p := range holders {
+			if p.PID != myPID {
+				otherHolders = append(otherHolders, p)
+			}
+		}
+		if len(otherHolders) > 0 {
+			modelsDir := filepath.Join(opts.DestDir, "..", "models")
+			if opts.DestDir == "" {
+				modelsDir = filepath.Join(defaultDir(), "models")
+			}
+			modelHolders, _ := FindDirHolders(modelsDir)
+
+			fmt.Fprintf(opts.Out, "\nwarning: The following other active processes are holding onto the library:\n")
+			for _, p := range otherHolders {
+				status := "library loaded"
+				if files, ok := modelHolders[p.PID]; ok && len(files) > 0 {
+					var basenames []string
+					for _, f := range files {
+						basenames = append(basenames, filepath.Base(f))
+					}
+					status = fmt.Sprintf("running engine with %s", strings.Join(basenames, ", "))
+				}
+				fmt.Fprintf(opts.Out, "  - PID %d: %s (%s)\n", p.PID, p.Name, status)
+			}
+			fmt.Fprintln(opts.Out, "This may prevent updates or uninstallation.")
+		}
+	}
+
 	// Print metadata info
 	if hasMeta {
 		fmt.Fprintln(opts.Out, "\n[Metadata]")
@@ -819,5 +858,418 @@ func Uninstall(ctx context.Context, opts Options) error {
 	}
 
 	fmt.Fprintf(opts.Out, "✓ Uninstalled libds4 and metadata files\n")
+	return nil
+}
+
+// ProcessInfo represents a process holding or using a shared library.
+type ProcessInfo struct {
+	PID  int
+	Name string
+}
+
+// FindLibraryHolders finds all processes holding onto the library path.
+func FindLibraryHolders(libPath string) ([]ProcessInfo, error) {
+	// First, check if the file exists. If it doesn't, there are no holders.
+	if _, err := os.Stat(libPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// Make sure it's an absolute path
+	absPath, err := filepath.Abs(libPath)
+	if err != nil {
+		absPath = libPath
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		return findHoldersLsof(absPath)
+	case "linux":
+		// Try proc maps first as it's pure-Go and fast.
+		holders, err := findHoldersProc(absPath)
+		if err == nil {
+			return holders, nil
+		}
+		// Fall back to lsof if proc maps fails
+		return findHoldersLsof(absPath)
+	case "windows":
+		return findHoldersWindows(absPath)
+	default:
+		// Attempt lsof as a best effort on other POSIX-like systems
+		return findHoldersLsof(absPath)
+	}
+}
+
+func findHoldersLsof(libPath string) ([]ProcessInfo, error) {
+	cmd := exec.Command("lsof", "-F", "pfnc", libPath)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	// lsof returns non-zero (often 1) if no files are open.
+	err := cmd.Run()
+	if err != nil {
+		if _, ok := err.(*exec.Error); ok {
+			return nil, fmt.Errorf("lsof not found: %w", err)
+		}
+	}
+
+	procs, err := parseLsofOutput(stdout.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	var results []ProcessInfo
+	for _, p := range procs {
+		results = append(results, ProcessInfo{PID: p.PID, Name: p.Name})
+	}
+	return results, nil
+}
+
+// LsofProcess represents a process and its open files parsed from lsof.
+type LsofProcess struct {
+	PID   int
+	Name  string
+	Files []string
+}
+
+func parseLsofOutput(data []byte) ([]LsofProcess, error) {
+	var results []LsofProcess
+	lines := strings.Split(string(data), "\n")
+	type Proc struct {
+		PID   int
+		Name  string
+		Files []string
+	}
+	var current Proc
+	current.PID = -1
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		prefix := line[0]
+		val := line[1:]
+
+		switch prefix {
+		case 'p':
+			if current.PID != -1 {
+				results = append(results, LsofProcess{PID: current.PID, Name: current.Name, Files: current.Files})
+			}
+			pid, err := strconv.Atoi(val)
+			if err != nil {
+				current.PID = -1
+			} else {
+				current.PID = pid
+				current.Name = ""
+				current.Files = nil
+			}
+		case 'c':
+			if current.PID != -1 {
+				current.Name = val
+			}
+		case 'n':
+			if current.PID != -1 {
+				current.Files = append(current.Files, val)
+			}
+		}
+	}
+	if current.PID != -1 {
+		results = append(results, LsofProcess{PID: current.PID, Name: current.Name, Files: current.Files})
+	}
+	return results, nil
+}
+
+func findHoldersProc(libPath string) ([]ProcessInfo, error) {
+	matches, err := filepath.Glob("/proc/[0-9]*/maps")
+	if err != nil {
+		return nil, err
+	}
+
+	var results []ProcessInfo
+	for _, match := range matches {
+		parts := strings.Split(match, "/")
+		if len(parts) < 3 {
+			continue
+		}
+		pidStr := parts[2]
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+
+		content, err := os.ReadFile(match)
+		if err != nil {
+			continue
+		}
+
+		if strings.Contains(string(content), libPath) {
+			name := getProcName(pidStr)
+			results = append(results, ProcessInfo{PID: pid, Name: name})
+		}
+	}
+	return results, nil
+}
+
+func getProcName(pidStr string) string {
+	commPath := filepath.Join("/proc", pidStr, "comm")
+	if data, err := os.ReadFile(commPath); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+	cmdlinePath := filepath.Join("/proc", pidStr, "cmdline")
+	if data, err := os.ReadFile(cmdlinePath); err == nil {
+		parts := strings.Split(string(data), "\x00")
+		if len(parts) > 0 && parts[0] != "" {
+			return filepath.Base(parts[0])
+		}
+	}
+	return "unknown"
+}
+
+func findHoldersWindows(libPath string) ([]ProcessInfo, error) {
+	filename := filepath.Base(libPath)
+	cmd := exec.Command("tasklist", "/m", filename)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("tasklist failed: %w", err)
+	}
+
+	return parseTasklistOutput(stdout.String(), filename)
+}
+
+func parseTasklistOutput(output, filename string) ([]ProcessInfo, error) {
+	var results []ProcessInfo
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "=") || strings.HasPrefix(line, "Image Name") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		pid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			pidIdx := -1
+			for i := 1; i < len(fields); i++ {
+				if val, err := strconv.Atoi(fields[i]); err == nil {
+					pid = val
+					pidIdx = i
+					break
+				}
+			}
+			if pidIdx == -1 {
+				continue
+			}
+			name := strings.Join(fields[:pidIdx], " ")
+			results = append(results, ProcessInfo{PID: pid, Name: name})
+			continue
+		}
+
+		results = append(results, ProcessInfo{PID: pid, Name: fields[0]})
+	}
+	return results, nil
+}
+
+// FindDirHolders finds processes holding any files under dirPath.
+// It returns a map of PID to a list of file paths they hold under that directory.
+func FindDirHolders(dirPath string) (map[int][]string, error) {
+	if _, err := os.Stat(dirPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	absPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		absPath = dirPath
+	}
+
+	results := make(map[int][]string)
+
+	// 1. Scan for native run lock files in dirPath
+	if entries, err := os.ReadDir(absPath); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".run.lock") {
+				lockPath := filepath.Join(absPath, entry.Name())
+				pid, err := models.GetLockHolder(lockPath)
+				if err == nil && pid > 0 {
+					modelPath := strings.TrimSuffix(lockPath, ".run.lock")
+					results[pid] = append(results[pid], modelPath)
+				}
+			}
+		}
+	}
+
+	// 2. Query other processes holding files under dirPath using platform-specific fallback (lsof / /proc)
+	var fallback map[int][]string
+	switch runtime.GOOS {
+	case "darwin":
+		fallback, _ = findDirHoldersLsof(absPath)
+	case "linux":
+		fallback, err = findDirHoldersProc(absPath)
+		if err != nil {
+			fallback, _ = findDirHoldersLsof(absPath)
+		}
+	default:
+		fallback, _ = findDirHoldersLsof(absPath)
+	}
+
+	// Merge fallback results into results
+	for pid, files := range fallback {
+		for _, f := range files {
+			if strings.HasSuffix(f, ".run.lock") {
+				continue
+			}
+			results[pid] = append(results[pid], f)
+		}
+	}
+
+	// Deduplicate and sort lists for each PID
+	for pid, files := range results {
+		slices.Sort(files)
+		results[pid] = slices.Compact(files)
+	}
+
+	return results, nil
+}
+
+func findDirHoldersLsof(dirPath string) (map[int][]string, error) {
+	cmd := exec.Command("lsof", "+D", dirPath, "-F", "pfnc")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	// lsof returns 1 if no files are open under the directory.
+	err := cmd.Run()
+	if err != nil {
+		if _, ok := err.(*exec.Error); ok {
+			return nil, fmt.Errorf("lsof not found: %w", err)
+		}
+	}
+
+	procs, err := parseLsofOutput(stdout.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	results := make(map[int][]string)
+	for _, p := range procs {
+		var filteredFiles []string
+		for _, f := range p.Files {
+			if strings.HasPrefix(f, dirPath) {
+				filteredFiles = append(filteredFiles, f)
+			}
+		}
+		if len(filteredFiles) > 0 {
+			slices.Sort(filteredFiles)
+			results[p.PID] = slices.Compact(filteredFiles)
+		}
+	}
+	return results, nil
+}
+
+func findDirHoldersProc(dirPath string) (map[int][]string, error) {
+	absDir, err := filepath.Abs(dirPath)
+	if err != nil {
+		absDir = dirPath
+	}
+
+	matches, err := filepath.Glob("/proc/[0-9]*/maps")
+	if err != nil {
+		return nil, err
+	}
+
+	results := make(map[int][]string)
+	for _, match := range matches {
+		parts := strings.Split(match, "/")
+		if len(parts) < 3 {
+			continue
+		}
+		pidStr := parts[2]
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+
+		// Read maps
+		if content, err := os.ReadFile(match); err == nil {
+			lines := strings.Split(string(content), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				fields := strings.Fields(line)
+				if len(fields) < 6 {
+					continue
+				}
+				path := fields[5]
+				if strings.HasPrefix(path, absDir) {
+					results[pid] = append(results[pid], path)
+				}
+			}
+		}
+
+		// Read fd directory
+		fds, err := filepath.Glob(fmt.Sprintf("/proc/%s/fd/*", pidStr))
+		if err == nil {
+			for _, fd := range fds {
+				if target, err := os.Readlink(fd); err == nil {
+					if strings.HasPrefix(target, absDir) {
+						results[pid] = append(results[pid], target)
+					}
+				}
+			}
+		}
+	}
+
+	// Deduplicate lists
+	for pid, list := range results {
+		slices.Sort(list)
+		results[pid] = slices.Compact(list)
+	}
+
+	return results, nil
+}
+
+// Status finds and displays processes holding the library.
+func Status(ctx context.Context, opts Options) error {
+	opts = normalize(opts)
+	libName := libraryFileName(opts.GOOS)
+	libPath := filepath.Join(opts.DestDir, libName)
+
+	libHolders, err := FindLibraryHolders(libPath)
+	if err != nil {
+		return fmt.Errorf("failed to query library holders: %w", err)
+	}
+
+	modelsDir := filepath.Join(opts.DestDir, "..", "models")
+	if opts.DestDir == "" {
+		modelsDir = filepath.Join(defaultDir(), "models")
+	}
+	modelHolders, _ := FindDirHolders(modelsDir)
+
+	if len(libHolders) == 0 {
+		fmt.Fprintf(opts.Out, "No active processes are holding onto the library at: %s\n", libPath)
+		return nil
+	}
+
+	fmt.Fprintf(opts.Out, "Processes holding onto %s:\n\n", libPath)
+	fmt.Fprintf(opts.Out, "%-10s %-20s %s\n", "PID", "PROCESS NAME", "HOLDING ENGINE (MODEL)")
+	fmt.Fprintf(opts.Out, "%-10s %-20s %s\n", "---", "------------", "----------------------")
+	for _, p := range libHolders {
+		status := "No"
+		if files, ok := modelHolders[p.PID]; ok && len(files) > 0 {
+			var basenames []string
+			for _, f := range files {
+				basenames = append(basenames, filepath.Base(f))
+			}
+			status = fmt.Sprintf("Yes (%s)", strings.Join(basenames, ", "))
+		}
+		fmt.Fprintf(opts.Out, "%-10d %-20s %s\n", p.PID, p.Name, status)
+	}
 	return nil
 }

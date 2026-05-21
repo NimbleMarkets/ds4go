@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 func TestCandidateAssetNames(t *testing.T) {
@@ -734,5 +735,129 @@ func TestUninstall(t *testing.T) {
 	// Verify files are deleted
 	if _, err := os.Stat(libPath); !os.IsNotExist(err) {
 		t.Error("Expected library file to be deleted")
+	}
+}
+
+func TestParseLsofOutput(t *testing.T) {
+	input := `p12289
+cds4go-toy-svgpad
+ftxt
+n/Users/evan/.ds4/lib/libds4.dylib
+p14898
+cds4go-toy-svgpad
+ftxt
+n/Users/evan/.ds4/lib/libds4.dylib`
+
+	results, err := parseLsofOutput([]byte(input))
+	if err != nil {
+		t.Fatalf("parseLsofOutput failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].PID != 12289 || results[0].Name != "ds4go-toy-svgpad" {
+		t.Errorf("unexpected result 0: %+v", results[0])
+	}
+	if len(results[0].Files) != 1 || results[0].Files[0] != "/Users/evan/.ds4/lib/libds4.dylib" {
+		t.Errorf("unexpected files for result 0: %v", results[0].Files)
+	}
+
+	if results[1].PID != 14898 || results[1].Name != "ds4go-toy-svgpad" {
+		t.Errorf("unexpected result 1: %+v", results[1])
+	}
+}
+
+func TestParseTasklistOutput(t *testing.T) {
+	input := `Image Name                     PID Modules
+========================= ======== ============================================
+ds4go.exe                     4567 libds4.dll
+my app.exe                    1234 libds4.dll`
+
+	results, err := parseTasklistOutput(input, "libds4.dll")
+	if err != nil {
+		t.Fatalf("parseTasklistOutput failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].PID != 4567 || results[0].Name != "ds4go.exe" {
+		t.Errorf("unexpected result 0: %+v", results[0])
+	}
+	if results[1].PID != 1234 || results[1].Name != "my app.exe" {
+		t.Errorf("unexpected result 1: %+v", results[1])
+	}
+}
+
+func TestStatusNoHolders(t *testing.T) {
+	destDir := t.TempDir()
+	opts := Options{
+		DestDir: destDir,
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+	}
+
+	// Create mock library file so FindLibraryHolders doesn't immediately return nil, nil
+	libName := libraryFileName(opts.GOOS)
+	libPath := filepath.Join(destDir, libName)
+	err := os.WriteFile(libPath, []byte("native-lib-data"), 0o600)
+	if err != nil {
+		t.Fatalf("Failed to create mock library: %v", err)
+	}
+
+	var outBuf bytes.Buffer
+	opts.Out = &outBuf
+
+	err = Status(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("expected Status to succeed: %v", err)
+	}
+
+	output := outBuf.String()
+	if !strings.Contains(output, "No active processes are holding onto the library") {
+		t.Errorf("expected 'No active processes' in output, got: %s", output)
+	}
+}
+
+func TestFindDirHoldersNoHolders(t *testing.T) {
+	tempDir := t.TempDir()
+	holders, err := FindDirHolders(tempDir)
+	if err != nil {
+		t.Fatalf("expected FindDirHolders to succeed on empty dir, got: %v", err)
+	}
+	if len(holders) != 0 {
+		t.Errorf("expected no holders on empty dir, got: %v", holders)
+	}
+}
+
+func TestFindDirHoldersNativeLock(t *testing.T) {
+	tempDir := t.TempDir()
+
+	modelName := "my-model.gguf"
+	modelPath := filepath.Join(tempDir, modelName)
+	lockPath := modelPath + ".run.lock"
+
+	lock, err := models.TryLock(lockPath)
+	if err != nil {
+		t.Fatalf("Failed to acquire lock: %v", err)
+	}
+	defer lock.Close()
+
+	holders, err := FindDirHolders(tempDir)
+	if err != nil {
+		t.Fatalf("FindDirHolders failed: %v", err)
+	}
+
+	expectedPid := os.Getpid()
+	files, ok := holders[expectedPid]
+	if !ok {
+		t.Fatalf("expected PID %d in holders, got: %v", expectedPid, holders)
+	}
+
+	if len(files) != 1 || files[0] != modelPath {
+		t.Errorf("expected model path %s, got %v", modelPath, files)
 	}
 }

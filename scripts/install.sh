@@ -140,6 +140,76 @@ download_and_verify() {
   [ -x "$WORKDIR/ds4go" ] || die "extracted archive did not contain a ds4go binary"
 }
 
+# ---- preflight ---------------------------------------------------------------
+
+# Best-effort symlink resolution. realpath is GNU-only; readlink -f isn't on
+# macOS pre-Sonoma; this falls back to a python one-liner, then to $1.
+realpath_portable() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$1" 2>/dev/null && return 0
+  fi
+  if readlink -f "$1" >/dev/null 2>&1; then
+    readlink -f "$1" && return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$1" 2>/dev/null && return 0
+  fi
+  echo "$1"
+}
+
+is_brew_path() {
+  case "$1" in
+    /opt/homebrew/*|\
+    /home/linuxbrew/.linuxbrew/*|\
+    /usr/local/Cellar/*|\
+    /usr/local/opt/ds4go/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+preflight() {
+  existing_dir="$INSTALL_DIR/ds4go"
+  on_path=$(command -v ds4go 2>/dev/null || true)
+
+  # Resolve through symlinks for accurate brew detection.
+  resolved_dir=""
+  if [ -e "$existing_dir" ]; then
+    resolved_dir=$(realpath_portable "$existing_dir")
+  fi
+  resolved_path=""
+  if [ -n "$on_path" ]; then
+    resolved_path=$(realpath_portable "$on_path")
+  fi
+
+  # Rule 1: brew-managed.
+  if { [ -n "$resolved_dir" ] && is_brew_path "$resolved_dir"; } || \
+     { [ -n "$resolved_path" ] && is_brew_path "$resolved_path"; }; then
+    brew_at="$resolved_dir"
+    [ -z "$brew_at" ] && brew_at="$resolved_path"
+    if [ "$DS4GO_FORCE" != "1" ]; then
+      die "ds4go appears to be installed via Homebrew at $brew_at.
+Use 'brew upgrade ds4go' instead, or re-run with DS4GO_FORCE=1."
+    fi
+    info "warning: overriding Homebrew-managed install at $brew_at (DS4GO_FORCE=1)"
+    return 0
+  fi
+
+  # Rule 2: same-location upgrade.
+  if [ -e "$existing_dir" ]; then
+    current=$("$existing_dir" --version 2>/dev/null | head -n1 || echo "unknown version")
+    info "replacing $current at $existing_dir"
+    return 0
+  fi
+
+  # Rule 3: different-location coexistence.
+  if [ -n "$on_path" ]; then
+    info "warning: another ds4go is on PATH at $on_path; whether the new install at $INSTALL_DIR shadows it depends on PATH order"
+    return 0
+  fi
+
+  # Rule 4: clean install — silent.
+}
+
 # ---- main --------------------------------------------------------------------
 
 main() {
@@ -154,11 +224,11 @@ main() {
   info "  platform: $PLATFORM"
   info "  target:   $INSTALL_DIR/ds4go"
 
+  preflight
   make_workdir
   download_and_verify
 
-  info "(download verified; install step not yet implemented)"
-  info "extracted binary at $WORKDIR/ds4go"
+  info "(preflight passed and download verified; install step not yet implemented)"
 }
 
 main "$@"
