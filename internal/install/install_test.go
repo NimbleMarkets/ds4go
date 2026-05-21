@@ -336,14 +336,14 @@ func TestInstallMetadataAndUpgradeFlow(t *testing.T) {
 
 	destDir := t.TempDir()
 	opts := Options{
-		Repo:         "NimbleMarkets/ds4",
-		Version:      "v0.1.20260520",
-		Backend:      "metal",
-		GOOS:         "darwin",
-		GOARCH:       "arm64",
-		DestDir:      destDir,
-		Out:          io.Discard,
-		ProgressOut:  io.Discard,
+		Repo:        "NimbleMarkets/ds4",
+		Version:     "v0.1.20260520",
+		Backend:     "metal",
+		GOOS:        "darwin",
+		GOARCH:      "arm64",
+		DestDir:     destDir,
+		Out:         io.Discard,
+		ProgressOut: io.Discard,
 		HTTPClient: &http.Client{
 			Transport: &mockTransport{
 				targetHost:   srv.Listener.Addr().String(),
@@ -736,6 +736,3 @@ func TestUninstall(t *testing.T) {
 		t.Error("Expected library file to be deleted")
 	}
 }
-
-
-

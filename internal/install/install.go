@@ -821,4 +821,3 @@ func Uninstall(ctx context.Context, opts Options) error {
 	fmt.Fprintf(opts.Out, "✓ Uninstalled libds4 and metadata files\n")
 	return nil
 }
-
