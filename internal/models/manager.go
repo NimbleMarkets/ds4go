@@ -211,7 +211,7 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 	}
 	// Hold an exclusive lock for the duration of the download so a second
 	// process cannot race on the same .part file and corrupt it.
-	lock, err := tryLock(out + ".lock")
+	lock, err := TryLock(out + ".lock")
 	if err != nil {
 		return Model{}, err
 	}
@@ -312,9 +312,9 @@ func (m *Manager) Delete(alias string) error {
 
 	out := filepath.Join(m.ModelsDir, model.FileName)
 	// Hold the download lock so we never delete a file mid-download.
-	lock, err := tryLock(out + ".lock")
+	lock, err := TryLock(out + ".lock")
 	if err != nil {
-		if errors.Is(err, errLocked) {
+		if errors.Is(err, ErrLocked) {
 			return fmt.Errorf("cannot delete %s: a download for it is still in progress — cancel that download first", alias)
 		}
 		return err
@@ -361,11 +361,11 @@ func (m *Manager) Delete(alias string) error {
 	return nil
 }
 
-func (m *Manager) lockState() (*fileLock, error) {
+func (m *Manager) lockState() (*FileLock, error) {
 	if err := os.MkdirAll(m.DS4Dir, 0o755); err != nil {
 		return nil, err
 	}
-	return lockExclusive(filepath.Join(m.DS4Dir, stateLockFileName))
+	return LockExclusive(filepath.Join(m.DS4Dir, stateLockFileName))
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
