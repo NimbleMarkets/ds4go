@@ -2,16 +2,21 @@ package ds4api
 
 import (
 	"errors"
+	"os"
 	"runtime"
 	"sync"
 	"unsafe"
+
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 // Engine wraps a ds4_engine.
 type Engine struct {
-	lib  *Library
-	ptr  uintptr
-	once sync.Once
+	lib      *Library
+	ptr      uintptr
+	once     sync.Once
+	runLock  *models.FileLock
+	lockPath string
 }
 
 // NewEngine opens a ds4 engine using the default shared library.
@@ -25,6 +30,17 @@ func NewEngine(opts EngineOptions) (*Engine, error) {
 
 // NewEngine opens a ds4 engine using this shared library.
 func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
+	var runLock *models.FileLock
+	var lockPath string
+	if opts.ModelPath != "" {
+		lockPath = opts.ModelPath + ".run.lock"
+		var err error
+		runLock, err = models.AcquireEngineRunLock(opts.ModelPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	modelBytes, modelPtr := cStringPointer(opts.ModelPath)
 	mtpBytes, mtpPtr := cStringPointer(opts.MTPPath)
 	steerBytes, steerPtr := cStringPointer(opts.DirectionalSteeringFile)
@@ -47,9 +63,13 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	runtime.KeepAlive(mtpBytes)
 	runtime.KeepAlive(steerBytes)
 	if err := ds4Error("ds4_engine_open", code); err != nil {
+		if runLock != nil {
+			runLock.Close()
+			os.Remove(lockPath)
+		}
 		return nil, err
 	}
-	e := &Engine{lib: l, ptr: out}
+	e := &Engine{lib: l, ptr: out, runLock: runLock, lockPath: lockPath}
 	runtime.SetFinalizer(e, (*Engine).Close)
 	return e, nil
 }
@@ -67,8 +87,16 @@ func (e *Engine) Close() {
 			e.lib.raw.ds4EngineClose(e.ptr)
 			e.ptr = 0
 		}
+		if e.runLock != nil {
+			e.runLock.Close()
+			if e.lockPath != "" {
+				os.Remove(e.lockPath)
+			}
+			e.runLock = nil
+		}
 	})
 }
+
 
 // require locks the engine and verifies it is open. The returned unlock
 // function MUST be called (typically via defer) to release the lock.
