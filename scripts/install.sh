@@ -210,6 +210,36 @@ Use 'brew upgrade ds4go' instead, or re-run with DS4GO_FORCE=1."
   # Rule 4: clean install — silent.
 }
 
+# ---- install -----------------------------------------------------------------
+
+install_binary() {
+  src="$WORKDIR/ds4go"
+  dst="$INSTALL_DIR/ds4go"
+
+  mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+
+  if [ -w "$INSTALL_DIR" ]; then
+    mv "$src" "$dst"     || die "could not move binary into $INSTALL_DIR"
+    chmod 755 "$dst"     || die "could not chmod $dst"
+  else
+    info "INSTALL_DIR ($INSTALL_DIR) is not writable; escalating with sudo:"
+    info "  sudo install -m 0755 '$src' '$dst'"
+    sudo install -m 0755 "$src" "$dst" || die "sudo install failed"
+  fi
+}
+
+post_install_message() {
+  cat <<EOF
+
+Installed ds4go $DS4GO_VERSION to $INSTALL_DIR/ds4go.
+
+Next steps:
+  1. Install the libds4 runtime:    ds4go install --backend auto
+     (downloads several hundred MB)
+  2. Download a model (multi-GB):  see https://github.com/$REPO/blob/main/MODELS.md
+EOF
+}
+
 # ---- main --------------------------------------------------------------------
 
 main() {
@@ -227,8 +257,8 @@ main() {
   preflight
   make_workdir
   download_and_verify
-
-  info "(preflight passed and download verified; install step not yet implemented)"
+  install_binary
+  post_install_message
 }
 
 main "$@"

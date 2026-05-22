@@ -16,6 +16,26 @@ No C compiler is needed for Go builds.  Runtime requires `ds4`, read on...
 
 ## Install the `ds4go` CLI
 
+### Quick install (Linux / macOS)
+
+```sh
+curl -fsSL https://nimblemarkets.github.io/ds4go/install.sh | sh
+```
+
+This downloads a checksum-verified `ds4go` binary into `/usr/local/bin`
+(escalating with `sudo` if needed). It installs **only the CLI**: you still need
+to fetch the `libds4` runtime with `ds4go install --backend auto` (several
+hundred MB) and download a model (multi-GB; see [MODELS.md](./MODELS.md))
+before `ds4go infer` will work.
+
+The script accepts these environment variables:
+
+| Env var          | Default          | Purpose                                                                    |
+|------------------|------------------|----------------------------------------------------------------------------|
+| `DS4GO_VERSION`  | `latest`         | Release tag (`latest`, `v0.3.0`, or `0.3.0`).                              |
+| `INSTALL_DIR`    | `/usr/local/bin` | Where to place the binary; `sudo` is used if the directory isn't writable. |
+| `DS4GO_FORCE`    | unset            | Set to `1` to override the "Homebrew-managed install detected" refusal.    |
+
 Install the prebuilt `ds4go` CLI with Homebrew, or build it with the Go
 toolchain:
 

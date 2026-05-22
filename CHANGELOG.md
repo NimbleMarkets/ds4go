@@ -2,6 +2,10 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/neomantra/ds4/tree/nm-shared
 
+## Unreleased
+
+ * **Quick install script**: `curl -fsSL https://nimblemarkets.github.io/ds4go/install.sh | sh` lands the CLI in `/usr/local/bin` with checksum verification
+
 ## v0.3.0 (2026-05-20)
 
  * **DSML tool calling**: end-to-end DSML encoder/decoder/dispatch, with an

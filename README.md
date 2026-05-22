@@ -19,9 +19,12 @@ We try to maintain parity with the upstream `ds4` library, wrapping its C API.  
 
 ## Install
 
-Install the `ds4go` CLI with Homebrew or the Go toolchain:
+Install the `ds4go` CLI with the quick-install script, Homebrew, or the Go toolchain:
 
 ```sh
+# Quick install script (Linux/macOS)
+curl -fsSL https://nimblemarkets.github.io/ds4go/install.sh | sh
+
 # Homebrew (macOS/Linux)
 brew install nimblemarkets/tap/ds4go
 
