@@ -183,3 +183,35 @@ func TestContinueMaxTokensDefault(t *testing.T) {
 		t.Fatalf("expected deadline exceeded, got: %v", err)
 	}
 }
+
+func TestContinueContextFull(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+
+	// Small context so generation reaches the cap quickly.
+	sess, err := eng.NewSession(8)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+
+	toks, err := eng.TokenizeText("hello world")
+	if err != nil {
+		t.Fatalf("TokenizeText: %v", err)
+	}
+	defer toks.Free()
+
+	// Sync consumes 2 of the 8 context slots, leaving room = 6. MaxTokens far
+	// exceeds the room, so generation is capped at room-1 = 5 tokens and the
+	// call returns those tokens together with ErrContextFull.
+	got, err := (Generator{Engine: eng, Session: sess}).GenerateTokens(toks, GenerateOptions{
+		MaxTokens: 100,
+	})
+
+	if !errors.Is(err, ErrContextFull) {
+		t.Fatalf("expected ErrContextFull, got: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 generated tokens (room-1), got %d", len(got))
+	}
+}
