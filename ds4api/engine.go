@@ -17,6 +17,7 @@ type Engine struct {
 	once     sync.Once
 	runLock  *models.FileLock
 	lockPath string
+	cleanup  runtime.Cleanup
 }
 
 // NewEngine opens a ds4 engine using the default shared library.
@@ -70,8 +71,34 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 		return nil, err
 	}
 	e := &Engine{lib: l, ptr: out, runLock: runLock, lockPath: lockPath}
-	runtime.SetFinalizer(e, (*Engine).Close)
+	e.cleanup = runtime.AddCleanup(e, cleanEngine, engineCleanupArg{
+		lib:      l,
+		ptr:      out,
+		runLock:  runLock,
+		lockPath: lockPath,
+	})
 	return e, nil
+}
+
+type engineCleanupArg struct {
+	lib      *Library
+	ptr      uintptr
+	runLock  *models.FileLock
+	lockPath string
+}
+
+func cleanEngine(arg engineCleanupArg) {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if arg.ptr != 0 {
+		arg.lib.raw.ds4EngineClose(arg.ptr)
+	}
+	if arg.runLock != nil {
+		arg.runLock.Close()
+		if arg.lockPath != "" {
+			os.Remove(arg.lockPath)
+		}
+	}
 }
 
 // Close releases the underlying ds4_engine.
@@ -80,9 +107,9 @@ func (e *Engine) Close() {
 		return
 	}
 	e.once.Do(func() {
+		e.cleanup.Stop()
 		libCallMu.Lock()
 		defer libCallMu.Unlock()
-		runtime.SetFinalizer(e, nil)
 		if e.ptr != 0 {
 			e.lib.raw.ds4EngineClose(e.ptr)
 			e.ptr = 0

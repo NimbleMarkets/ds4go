@@ -9,11 +9,32 @@ import (
 
 // Session wraps a ds4_session.
 type Session struct {
-	lib        *Library
-	engine     *Engine
-	ptr        uintptr
-	once       sync.Once
+	lib     *Library
+	engine  *Engine
+	ptr     uintptr
+	once    sync.Once
+	state   *sessionCleanupState
+	cleanup runtime.Cleanup
+}
+
+type sessionCleanupState struct {
 	progressID uintptr
+}
+
+type sessionCleanupArg struct {
+	lib   *Library
+	ptr   uintptr
+	state *sessionCleanupState
+}
+
+func cleanSession(arg sessionCleanupArg) {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if arg.ptr != 0 {
+		arg.lib.raw.ds4SessionSetProgress(arg.ptr, 0, 0)
+		unregisterProgressCallback(arg.state.progressID)
+		arg.lib.raw.ds4SessionFree(arg.ptr)
+	}
 }
 
 var maxInt = int(^uint(0) >> 1)
@@ -30,8 +51,13 @@ func (e *Engine) NewSession(ctxSize int) (*Session, error) {
 	if err := ds4Error("ds4_session_create", code); err != nil {
 		return nil, err
 	}
-	s := &Session{lib: e.lib, engine: e, ptr: out}
-	runtime.SetFinalizer(s, (*Session).Close)
+	state := &sessionCleanupState{}
+	s := &Session{lib: e.lib, engine: e, ptr: out, state: state}
+	s.cleanup = runtime.AddCleanup(s, cleanSession, sessionCleanupArg{
+		lib:   e.lib,
+		ptr:   out,
+		state: state,
+	})
 	return s, nil
 }
 
@@ -41,12 +67,12 @@ func (s *Session) Close() {
 		return
 	}
 	s.once.Do(func() {
+		s.cleanup.Stop()
 		libCallMu.Lock()
 		defer libCallMu.Unlock()
-		runtime.SetFinalizer(s, nil)
 		if s.ptr != 0 {
 			s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
-			unregisterProgressCallback(s.progressID)
+			unregisterProgressCallback(s.state.progressID)
 			s.lib.raw.ds4SessionFree(s.ptr)
 			s.ptr = 0
 		}
@@ -69,16 +95,16 @@ func (s *Session) SetProgress(fn ProgressFunc) error {
 		return err
 	}
 	defer unlock()
-	if s.progressID != 0 {
+	if s.state.progressID != 0 {
 		s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
-		unregisterProgressCallback(s.progressID)
-		s.progressID = 0
+		unregisterProgressCallback(s.state.progressID)
+		s.state.progressID = 0
 	}
 	if fn == nil {
 		return nil
 	}
 	id := registerProgressCallback(fn)
-	s.progressID = id
+	s.state.progressID = id
 	s.lib.raw.ds4SessionSetProgress(s.ptr, progressCallback, id)
 	return nil
 }
