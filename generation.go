@@ -8,6 +8,11 @@ import (
 	"github.com/NimbleMarkets/ds4go/ds4api"
 )
 
+// ErrContextFull is returned when a session has no room left in its context
+// window. When generation is capped by the remaining room, it is returned
+// alongside the tokens produced before the limit was reached.
+var ErrContextFull = errors.New("ds4go: session context full")
+
 // GenerateOptions controls Go-native session generation helpers.
 type GenerateOptions struct {
 	// MaxTokens is the maximum number of tokens to generate.
@@ -70,6 +75,14 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	if maxTokens <= 0 {
 		maxTokens = 128
 	}
+	room := g.Session.Ctx() - g.Session.Pos()
+	var capped bool
+	if room <= 1 {
+		return nil, ErrContextFull
+	} else if maxTokens > room-1 {
+		maxTokens = room - 1
+		capped = true
+	}
 	eos := -1
 	if opts.StopOnEOS && g.Engine != nil {
 		eos = g.Engine.TokenEOS()
@@ -81,7 +94,8 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	useSpec := g.Engine != nil && g.Engine.HasMTP() && g.Engine.MTPDraftTokens() > 1 &&
 		opts.Temperature <= 0 && opts.ExcludeToken == 0
 
-	for i := 0; i < maxTokens; {
+	i := 0
+	for i < maxTokens {
 		if opts.Context != nil {
 			select {
 			case <-opts.Context.Done():
@@ -142,6 +156,9 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 			}
 			i++
 		}
+	}
+	if capped && i >= maxTokens {
+		return out, ErrContextFull
 	}
 	return out, nil
 }
