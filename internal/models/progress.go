@@ -9,9 +9,18 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-
-	"github.com/NimbleMarkets/ds4go/internal/tui"
 )
+
+var (
+	colorAccent  = lipgloss.Color("#5FBE9E")
+	colorPrimary = lipgloss.Color("#C9D1D9")
+	colorSurface = lipgloss.Color("#30363D")
+	colorDark    = lipgloss.Color("#0B1411")
+
+	progressDone = lipgloss.NewStyle().Bold(true).Foreground(colorDark).Background(colorAccent)
+	progressRest = lipgloss.NewStyle().Foreground(colorPrimary).Background(colorSurface)
+)
+
 
 type progressReader struct {
 	out        io.Writer
@@ -101,7 +110,7 @@ func (p *progressReader) progressName(usedWidth int) string {
 		fill = lipgloss.Width(name)
 	}
 	done, rest := splitByWidth(name, fill)
-	return tui.ProgressDone.Render(done) + tui.ProgressRest.Render(rest)
+	return progressDone.Render(done) + progressRest.Render(rest)
 }
 
 func (p *progressReader) bytesPerSecond() int64 {

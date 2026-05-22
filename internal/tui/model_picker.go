@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/NimbleMarkets/ds4go/internal/models"
-	"github.com/NimbleMarkets/ds4go/internal/tui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -54,10 +53,10 @@ func (m modelPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m modelPicker) View() tea.View {
-	title := tui.TitleStyle.Render(m.title)
-	muted := tui.MutedStyle
-	active := tui.ActiveStyle
-	primary := tui.PrimaryStyle
+	title := TitleStyle.Render(m.title)
+	muted := MutedStyle
+	active := ActiveStyle
+	primary := PrimaryStyle
 
 	// Fixed-width columns so aliases, sizes, RAM, and flags line up.
 	aliasStyle := lipgloss.NewStyle().Width(14)
@@ -79,7 +78,7 @@ func (m modelPicker) View() tea.View {
 		if model.Installed {
 			status = "installed"
 		} else if model.Partial {
-			status = "partial " + formatPartialModel(model.PartialBytes, model.SizeGB)
+			status = "partial " + FormatPartialModel(model.PartialBytes, model.SizeGB)
 		}
 		if model.Default {
 			status += ", default"
@@ -87,7 +86,7 @@ func (m modelPicker) View() tea.View {
 		colAlias := aliasStyle.Render(model.Alias)
 		colSize := sizeStyle.Render(fmt.Sprintf("%.1f GiB", model.SizeGB))
 		colRAM := ramStyle.Render(model.RecommendedRAM)
-		colFlags := flagsStyle.Render(modelFlags(model))
+		colFlags := flagsStyle.Render(ModelFlags(model))
 		b.WriteString(style.Render(marker + colAlias + " " + colSize))
 		b.WriteString(muted.Render("  " + colRAM + "  " + colFlags + "  " + status))
 		b.WriteString("\n")
@@ -98,7 +97,8 @@ func (m modelPicker) View() tea.View {
 	return v
 }
 
-func pickModelAlias(title string, list []models.Model, in io.Reader, out io.Writer) (string, error) {
+// PickModelAlias launches a TUI picker to let the user select a model from the list.
+func PickModelAlias(title string, list []models.Model, in io.Reader, out io.Writer) (string, error) {
 	if len(list) == 0 {
 		return "", fmt.Errorf("no models available")
 	}
