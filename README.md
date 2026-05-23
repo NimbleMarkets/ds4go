@@ -147,9 +147,6 @@ ds4go — command cheat sheet
   │   └── zsh         Generate the autocompletion script for zsh
   │
   ├── install  Download a prebuilt libds4 shared library
-  │   └── validate  Validate the installed libds4 shared library
-  │
-  ├── uninstall  Uninstall the installed libds4 shared library
   │
   ├── model         Browse, download, and manage curated ds4 models
   │   ├── delete    Delete a downloaded model from disk
@@ -158,7 +155,13 @@ ds4go — command cheat sheet
   │   ├── list      List installed and available models
   │   └── set       Set the default chat model
   │
-  └── prompt  Run prompt or interactive chat inference
+  ├── prompt  Run prompt or interactive chat inference
+  │
+  ├── status  Find processes holding or using the libds4 shared library
+  │
+  ├── uninstall  Uninstall the installed libds4 shared library
+  │
+  └── validate  Validate the installed libds4 shared library
 
 Run 'ds4go help <command>' for detailed usage.
 ```

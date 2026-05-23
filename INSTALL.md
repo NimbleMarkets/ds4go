@@ -149,16 +149,16 @@ gh attestation verify libds4-VERSION-macos-arm64-metal.tar.gz --repo NimbleMarke
 
 ## Validating your Installation
 
-To verify your installation and ensure that `libds4` has loaded correctly with all expected symbols and permissions, you can use the `validate` subcommand:
+To verify your installation and ensure that `libds4` has loaded correctly with all expected symbols and permissions, you can use the `validate` command:
 
 ```sh
-ds4go install validate
+ds4go validate
 ```
 
 Optionally, pass `--lib` to validate a library in a custom directory:
 
 ```sh
-ds4go install validate --lib /path/to/directory
+ds4go validate --lib /path/to/directory
 ```
 
 This command will:
@@ -166,7 +166,10 @@ This command will:
 - Verify file permissions (making sure it is secure and not group/world-writable).
 - Verify the SHA256 integrity checksum against the sidecar `.sha256` and `ds4go-install.json` files.
 - Attempt a dynamic `dlopen` load to resolve all ABI symbols (useful for troubleshooting driver/runtime dependencies like CUDA libraries on Linux or architecture mismatches).
+- Print a short fingerprint (first 8 hex chars of the SHA256) so you can eyeball it against a release's published checksum.
 - Report backend type and installation metadata.
+
+To see which processes are currently holding the library or running engines against installed models, use `ds4go status`.
 
 ## Uninstalling
 
@@ -204,29 +207,29 @@ libds4.dll    Windows
 
 This repository does not compile C, Objective-C, Metal, or CUDA code.
 
-### 2. Put the Library Where Go Can Find It
+### 2. Pin Your Custom Library
 
-Any of these work:
-
-```sh
-mkdir -p ~/.ds4/lib ~/.ds4/models
-cp /path/to/libds4.dylib ~/.ds4/lib/
-```
+For a custom-built `libds4` (a fork, a debug build, a one-off experiment),
+use `ds4go install --pin` to copy it into the configured ds4 lib directory
+and mark it as deliberately custom:
 
 ```sh
-export DS4_LIB=/path/to/libds4.dylib
+ds4go install --pin /path/to/your/libds4.dylib
+ds4go install --pin /path/to/your/libds4.so --backend cuda  # record the backend
 ```
+
+A pinned install behaves like any other install (loader sidecar regenerated,
+metadata recorded) but:
+
+- `ds4go install` (release-style) refuses to overwrite a pinned library;
+  pass `--force` to override, or run `ds4go uninstall` first.
+- `ds4go uninstall` warns that the library is pinned (and shows its source)
+  before removing it.
+
+For ad-hoc local testing without changing what is installed, set `DS4_LIB`:
 
 ```sh
-export DS4_DIR=/opt/ds4
-mkdir -p "$DS4_DIR/lib" "$DS4_DIR/models"
-cp /path/to/libds4.so "$DS4_DIR/lib/"
+export DS4_LIB=/path/to/your/libds4.dylib
 ```
 
-The package searches `DS4_LIB`, `$DS4_DIR/lib` when `DS4_DIR` is set, otherwise
-`~/.ds4/lib`, then the executable directory, and the platform library name.
-
-The current working directory is intentionally not searched: loading a shared
-library from the CWD would let an attacker plant a malicious `libds4` in a
-directory you run `ds4go` from. Use `DS4_LIB` or `DS4_DIR` for non-default
-locations.
+`DS4_LIB` wins over `$DS4_DIR/lib` in the load-path search order.

@@ -23,6 +23,8 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(
 		newPromptCommand(),
 		newInstallCommand(),
+		newValidateCommand(),
+		newStatusCommand(),
 		newUninstallCommand(),
 		newModelCommand(),
 	)

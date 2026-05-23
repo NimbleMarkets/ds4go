@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -616,6 +617,10 @@ func TestValidate(t *testing.T) {
 		!strings.Contains(output, "Backend:     metal") {
 		t.Errorf("Expected metadata printout, got: %s", output)
 	}
+	wantFP := "Fingerprint: " + sha[:8]
+	if !strings.Contains(output, wantFP) {
+		t.Errorf("Expected fingerprint line %q in output, got: %s", wantFP, output)
+	}
 
 	// 7. Validation with load failure
 	opts.DestDir = filepath.Join(destDir, "load_fail")
@@ -792,6 +797,20 @@ my app.exe                    1234 libds4.dll`
 	}
 }
 
+func TestDefaultModelsDirIgnoresDestDir(t *testing.T) {
+	// Models always live under $DS4_DIR/models, regardless of where libds4
+	// itself is installed. Previously Status/Validate derived modelsDir from
+	// opts.DestDir (--lib), so a custom --lib redirected scanning to the wrong
+	// directory. Pin DS4_DIR and verify the helper returns the canonical
+	// location.
+	t.Setenv("DS4_DIR", "/opt/myds4")
+	got := defaultModelsDir()
+	want := filepath.Join("/opt/myds4", "models")
+	if got != want {
+		t.Errorf("defaultModelsDir() = %q, want %q", got, want)
+	}
+}
+
 func TestStatusNoHolders(t *testing.T) {
 	destDir := t.TempDir()
 	opts := Options{
@@ -833,6 +852,56 @@ func TestFindDirHoldersNoHolders(t *testing.T) {
 	}
 }
 
+func TestInstallMetadataBackCompatNoKind(t *testing.T) {
+	// A metadata file written by an older ds4go version has no "kind" field.
+	// Unmarshaling must succeed and the zero-value Kind must be treated as
+	// "release" by the rest of the system.
+	raw := []byte(`{
+		"repo": "NimbleMarkets/ds4",
+		"version": "v0.1.0",
+		"asset_name": "libds4-v0.1.0-darwin-arm64-metal.tar.gz",
+		"asset_url": "https://example.com/lib.tar.gz",
+		"backend": "metal",
+		"goos": "darwin",
+		"goarch": "arm64",
+		"sha256": "abc",
+		"installed_at": "2026-05-23T12:00:00Z"
+	}`)
+	var meta InstallMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatalf("unmarshal legacy metadata: %v", err)
+	}
+	if meta.Kind != "" {
+		t.Fatalf("Kind = %q, want empty (treated as release)", meta.Kind)
+	}
+	if meta.Source != "" {
+		t.Fatalf("Source = %q, want empty for legacy metadata", meta.Source)
+	}
+}
+
+func TestInstallMetadataPinnedRoundTrip(t *testing.T) {
+	in := InstallMetadata{
+		Kind:        "pinned",
+		Source:      "/Users/dev/build/libds4.dylib",
+		Backend:     "metal",
+		GOOS:        "darwin",
+		GOARCH:      "arm64",
+		SHA256:      "deadbeef",
+		InstalledAt: time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC),
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out InstallMetadata
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(in, out) {
+		t.Fatalf("round-trip: got %+v, want %+v", out, in)
+	}
+}
+
 func TestFindDirHoldersNativeLock(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -859,5 +928,489 @@ func TestFindDirHoldersNativeLock(t *testing.T) {
 
 	if len(files) != 1 || files[0] != modelPath {
 		t.Errorf("expected model path %s, got %v", modelPath, files)
+	}
+}
+
+func TestReadInstallMetadataMissing(t *testing.T) {
+	dir := t.TempDir()
+	_, ok, err := readInstallMetadata(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("ok=true for missing metadata file, want false")
+	}
+}
+
+func TestReadInstallMetadataCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, MetadataFileName), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err := readInstallMetadata(dir)
+	if err == nil {
+		t.Fatal("want error for corrupt metadata, got nil")
+	}
+	if ok {
+		t.Fatal("ok=true for corrupt metadata, want false")
+	}
+}
+
+func TestReadInstallMetadataLegacyNoKind(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{"repo":"r","version":"v","backend":"metal","goos":"darwin","goarch":"arm64","sha256":"abc","installed_at":"2026-05-23T12:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(dir, MetadataFileName), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta, ok, err := readInstallMetadata(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	if meta.Kind != "" {
+		t.Fatalf("Kind=%q, want empty for legacy metadata", meta.Kind)
+	}
+}
+
+func TestRunPinIntoEmptyDir(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom-lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	destDir := t.TempDir()
+	opts := Options{
+		Pin:     srcPath,
+		Backend: "metal",
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+		DestDir: destDir,
+		Out:     io.Discard,
+	}
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("pin install: %v", err)
+	}
+
+	libPath := filepath.Join(destDir, "libds4.dylib")
+	got, err := os.ReadFile(libPath)
+	if err != nil {
+		t.Fatalf("read installed lib: %v", err)
+	}
+	if string(got) != "custom-lib" {
+		t.Fatalf("lib contents = %q, want %q", got, "custom-lib")
+	}
+
+	sidecar, err := os.ReadFile(libPath + ".sha256")
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	if len(strings.TrimSpace(string(sidecar))) != 64 {
+		t.Fatalf("sidecar = %q, want 64-char sha256", sidecar)
+	}
+
+	meta, ok, err := readInstallMetadata(destDir)
+	if err != nil || !ok {
+		t.Fatalf("metadata: ok=%v err=%v", ok, err)
+	}
+	if meta.Kind != KindPinned {
+		t.Errorf("Kind = %q, want %q", meta.Kind, KindPinned)
+	}
+	if meta.Source != srcPath {
+		t.Errorf("Source = %q, want %q", meta.Source, srcPath)
+	}
+	if meta.Backend != "metal" {
+		t.Errorf("Backend = %q, want %q", meta.Backend, "metal")
+	}
+	if meta.Repo != "" || meta.Version != "" || meta.AssetName != "" || meta.AssetURL != "" {
+		t.Errorf("release fields should be empty in pinned metadata: %+v", meta)
+	}
+}
+
+func TestRunPinDefaultsBackendToCustom(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+
+	if _, err := Run(context.Background(), Options{
+		Pin:     srcPath,
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+		DestDir: destDir,
+		Out:     io.Discard,
+		// Backend intentionally empty
+	}); err != nil {
+		t.Fatalf("pin install: %v", err)
+	}
+	meta, _, _ := readInstallMetadata(destDir)
+	if meta.Backend != "custom" {
+		t.Errorf("Backend = %q, want %q (default for pinned)", meta.Backend, "custom")
+	}
+}
+
+func TestRunPinRejectsConflictingFlags(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+
+	cases := []struct {
+		name string
+		opt  Options
+	}{
+		{"with-url", Options{Pin: srcPath, URL: "https://example.com/lib.tar.gz", DestDir: destDir, Out: io.Discard}},
+		{"with-version", Options{Pin: srcPath, Version: "v0.1.0", DestDir: destDir, Out: io.Discard}},
+		{"with-asset", Options{Pin: srcPath, Asset: "lib.tar.gz", DestDir: destDir, Out: io.Discard}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.opt.GOOS, tc.opt.GOARCH = "darwin", "arm64"
+			if _, err := Run(context.Background(), tc.opt); err == nil {
+				t.Fatal("want error, got nil")
+			}
+		})
+	}
+}
+
+func TestRunPinRejectsMissingSource(t *testing.T) {
+	destDir := t.TempDir()
+	_, err := Run(context.Background(), Options{
+		Pin:     filepath.Join(t.TempDir(), "nope.dylib"),
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+		DestDir: destDir,
+		Out:     io.Discard,
+	})
+	if err == nil {
+		t.Fatal("want error for missing source file, got nil")
+	}
+}
+
+func TestRunPinRejectsNonRegularSource(t *testing.T) {
+	srcDir := t.TempDir() // a directory, not a regular file
+	destDir := t.TempDir()
+	_, err := Run(context.Background(), Options{
+		Pin:     srcDir,
+		GOOS:    "darwin",
+		GOARCH:  "arm64",
+		DestDir: destDir,
+		Out:     io.Discard,
+	})
+	if err == nil {
+		t.Fatal("want error for non-regular source, got nil")
+	}
+}
+
+func TestRunPinDryRunMakesNoChanges(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+
+	var outBuf bytes.Buffer
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, DryRun: true, Out: &outBuf,
+	}); err != nil {
+		t.Fatalf("dry-run pin: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "would pin") {
+		t.Errorf("expected 'would pin' in output, got: %q", outBuf.String())
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "libds4.dylib")); !os.IsNotExist(err) {
+		t.Errorf("dry-run created library: stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, MetadataFileName)); !os.IsNotExist(err) {
+		t.Errorf("dry-run created metadata: stat err=%v", err)
+	}
+}
+
+func TestRunPinOverExistingPinRefusesWithoutForce(t *testing.T) {
+	srcA := filepath.Join(t.TempDir(), "libds4.dylib")
+	if err := os.WriteFile(srcA, []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srcB := filepath.Join(t.TempDir(), "libds4.dylib")
+	if err := os.WriteFile(srcB, []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+
+	// First pin.
+	if _, err := Run(context.Background(), Options{
+		Pin: srcA, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second pin without --force must refuse.
+	_, err := Run(context.Background(), Options{
+		Pin: srcB, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("want error for pin-over-pin without --force, got nil")
+	}
+	if !strings.Contains(err.Error(), "pinned") {
+		t.Errorf("error = %q, want message mentioning 'pinned'", err)
+	}
+	// File should still be A.
+	got, _ := os.ReadFile(filepath.Join(destDir, "libds4.dylib"))
+	if string(got) != "a" {
+		t.Errorf("lib contents after refused repin = %q, want %q", got, "a")
+	}
+}
+
+func TestRunPinOverExistingPinWithForceRepins(t *testing.T) {
+	srcA := filepath.Join(t.TempDir(), "libds4.dylib")
+	if err := os.WriteFile(srcA, []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srcB := filepath.Join(t.TempDir(), "libds4.dylib")
+	if err := os.WriteFile(srcB, []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+
+	if _, err := Run(context.Background(), Options{
+		Pin: srcA, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), Options{
+		Pin: srcB, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Force: true, Out: io.Discard,
+	}); err != nil {
+		t.Fatalf("pin-over-pin with --force: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(destDir, "libds4.dylib"))
+	if string(got) != "b" {
+		t.Errorf("after --force repin, lib contents = %q, want %q", got, "b")
+	}
+	meta, _, _ := readInstallMetadata(destDir)
+	abs, _ := filepath.Abs(srcB)
+	if meta.Source != abs {
+		t.Errorf("Source = %q, want %q", meta.Source, abs)
+	}
+}
+
+func TestRunReleaseRefusesAgainstPin(t *testing.T) {
+	originalIsTerminal := isTerminalFunc
+	defer func() { isTerminalFunc = originalIsTerminal }()
+	isTerminalFunc = func(io.Reader) bool { return true } // even on TTY, must refuse
+
+	// First, set up a pinned install.
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom-lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now attempt a release install over the pin.
+	_, err := Run(context.Background(), Options{
+		Repo: "NimbleMarkets/ds4", Version: "v0.1.0", Backend: "metal",
+		GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir,
+		Out:     io.Discard,
+		// no Force
+	})
+	if err == nil {
+		t.Fatal("release install over pin: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "pinned") {
+		t.Fatalf("error = %q, want message mentioning 'pinned'", err)
+	}
+
+	// File should be untouched.
+	got, _ := os.ReadFile(filepath.Join(destDir, "libds4.dylib"))
+	if string(got) != "custom-lib" {
+		t.Fatalf("pinned file modified: %q", got)
+	}
+}
+
+func TestUninstallPromptText(t *testing.T) {
+	destDir := t.TempDir()
+
+	// No metadata: generic prompt.
+	if got := uninstallPrompt(destDir); !strings.Contains(got, "Uninstall libds4") || strings.Contains(got, "pinned") {
+		t.Errorf("unmanaged prompt = %q, want generic uninstall text", got)
+	}
+
+	// Pinned: prompt names source.
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := uninstallPrompt(destDir)
+	if !strings.Contains(got, "pinned to") {
+		t.Errorf("pinned prompt = %q, want mention of 'pinned to'", got)
+	}
+	abs, _ := filepath.Abs(srcPath)
+	if !strings.Contains(got, abs) {
+		t.Errorf("pinned prompt = %q, want mention of source %q", got, abs)
+	}
+}
+
+func TestUninstallPinnedTTYProceeds(t *testing.T) {
+	originalIsTerminal := isTerminalFunc
+	defer func() { isTerminalFunc = originalIsTerminal }()
+	isTerminalFunc = func(io.Reader) bool { return true }
+
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom-lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Accept the prompt; verify removal.
+	if err := Uninstall(context.Background(), Options{
+		GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir,
+		In:      strings.NewReader("y\n"),
+		Out:     io.Discard,
+	}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "libds4.dylib")); !os.IsNotExist(err) {
+		t.Errorf("library not removed: stat err=%v", err)
+	}
+}
+
+func TestUninstallPinnedForceSkipsPrompt(t *testing.T) {
+	originalIsTerminal := isTerminalFunc
+	defer func() { isTerminalFunc = originalIsTerminal }()
+	isTerminalFunc = func(io.Reader) bool { return false }
+
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom-lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Uninstall(context.Background(), Options{
+		GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir,
+		Force:   true,
+		Out:     io.Discard,
+	}); err != nil {
+		t.Fatalf("uninstall --force: %v", err)
+	}
+}
+
+func TestValidateReportsPinnedKind(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "libds4.dylib")
+	if err := os.WriteFile(srcPath, []byte("custom-lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stub the loader so Validate doesn't try a real dlopen.
+	originalLoad := loadLibraryFunc
+	defer func() { loadLibraryFunc = originalLoad }()
+	loadLibraryFunc = func(path string) (*ds4api.Library, error) {
+		return &ds4api.Library{}, nil
+	}
+
+	// Make the lib non-world-writable (test temp dirs already satisfy this on most
+	// systems, but be explicit).
+	if err := os.Chmod(filepath.Join(destDir, "libds4.dylib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var outBuf bytes.Buffer
+	err := Validate(context.Background(), Options{
+		GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir,
+		Out:     &outBuf,
+	})
+	if err != nil {
+		t.Fatalf("validate: %v\noutput: %s", err, outBuf.String())
+	}
+	out := outBuf.String()
+	if !strings.Contains(out, "Kind:") || !strings.Contains(out, "pinned") {
+		t.Errorf("expected 'Kind:' and 'pinned' in output, got: %q", out)
+	}
+	if !strings.Contains(out, srcPath) {
+		t.Errorf("expected source path %q in output, got: %q", srcPath, out)
+	}
+}
+
+func TestRunPinOverUnmanagedNonTTYRequiresForce(t *testing.T) {
+	originalIsTerminal := isTerminalFunc
+	defer func() { isTerminalFunc = originalIsTerminal }()
+	isTerminalFunc = func(io.Reader) bool { return false }
+
+	destDir := t.TempDir()
+	// Plant an unmanaged file (no metadata).
+	libPath := filepath.Join(destDir, "libds4.dylib")
+	if err := os.WriteFile(libPath, []byte("unmanaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(t.TempDir(), "libds4.dylib")
+	if err := os.WriteFile(src, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(context.Background(), Options{
+		Pin: src, GOOS: "darwin", GOARCH: "arm64",
+		DestDir: destDir, Out: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("want error for pin-over-unmanaged on non-TTY without --force, got nil")
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("error = %q, want mention of --force", err)
+	}
+	got, _ := os.ReadFile(libPath)
+	if string(got) != "unmanaged" {
+		t.Errorf("file modified despite refusal: %q", got)
 	}
 }

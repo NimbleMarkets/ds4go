@@ -38,6 +38,21 @@ const (
 	maxReleaseAssetBytes = 2 << 30
 )
 
+const (
+	// MetadataFileName is the name of the JSON metadata file written
+	// alongside libds4 to record what is installed.
+	MetadataFileName = "ds4go-install.json"
+
+	// KindRelease marks metadata for a prebuilt asset downloaded from
+	// GitHub. An empty Kind is treated as release for back-compat with
+	// metadata written before pinning existed.
+	KindRelease = "release"
+
+	// KindPinned marks metadata for a developer-supplied libds4 copied in
+	// via `install --pin`.
+	KindPinned = "pinned"
+)
+
 // Options configures a libds4 installation.
 type Options struct {
 	Repo         string
@@ -47,6 +62,7 @@ type Options struct {
 	GOARCH       string
 	DestDir      string
 	URL          string
+	Pin          string // local libds4 file to copy in and mark pinned
 	Asset        string
 	Token        string
 	Force        bool
@@ -72,12 +88,21 @@ type Result struct {
 	DryRun     bool
 }
 
-// InstallMetadata holds information about the installed prebuilt release.
+// InstallMetadata holds information about the installed libds4.
+//
+// Kind discriminates between the supported install sources:
+//   - "release" (or "" for back-compat with metadata written by older ds4go
+//     versions): a prebuilt asset downloaded from GitHub. Repo/Version/
+//     AssetName/AssetURL/Digest are populated.
+//   - "pinned": a developer-supplied file copied in via `install --pin`.
+//     Source holds the absolute path the file was copied from.
 type InstallMetadata struct {
-	Repo        string    `json:"repo"`
-	Version     string    `json:"version"`
-	AssetName   string    `json:"asset_name"`
-	AssetURL    string    `json:"asset_url"`
+	Kind        string    `json:"kind,omitempty"`
+	Repo        string    `json:"repo,omitempty"`
+	Version     string    `json:"version,omitempty"`
+	AssetName   string    `json:"asset_name,omitempty"`
+	AssetURL    string    `json:"asset_url,omitempty"`
+	Source      string    `json:"source,omitempty"`
 	Backend     string    `json:"backend"`
 	GOOS        string    `json:"goos"`
 	GOARCH      string    `json:"goarch"`
@@ -111,6 +136,20 @@ type asset struct {
 // Run downloads, verifies when possible, and extracts a prebuilt libds4 asset.
 func Run(ctx context.Context, opts Options) (*Result, error) {
 	opts = normalize(opts)
+	if opts.Pin != "" {
+		return runPin(ctx, opts)
+	}
+	// If the dest already holds a pinned libds4, refuse a release install
+	// unless --force. This check runs before any network resolution so
+	// callers don't pay for the GitHub API call just to be told the pin
+	// blocks them.
+	if meta, ok, _ := readInstallMetadata(opts.DestDir); ok && meta.Kind == KindPinned {
+		libPath := filepath.Join(opts.DestDir, libraryFileName(opts.GOOS))
+		if !opts.Force {
+			return nil, fmt.Errorf("libds4 at %s is pinned to %s; run 'ds4go uninstall' first or pass --force", libPath, meta.Source)
+		}
+		fmt.Fprintf(opts.Out, "replacing pinned libds4 (source was %s)\n", meta.Source)
+	}
 	a, version, err := resolveAsset(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -138,16 +177,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if _, err := os.Stat(res.Library); err == nil {
 		if !opts.Force {
 			currentSHA, shaErr := fileSHA256(res.Library)
-			metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
-			metaData, metaReadErr := os.ReadFile(metaPath)
-
-			var isManaged bool
-			var meta InstallMetadata
-			if metaReadErr == nil {
-				if json.Unmarshal(metaData, &meta) == nil {
-					isManaged = true
-				}
-			}
+			meta, isManaged, _ := readInstallMetadata(opts.DestDir)
 
 			if isManaged && shaErr == nil {
 				// Compare all relevant fields to see if already installed and matches checksum
@@ -212,6 +242,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		fmt.Fprintf(opts.Out, "warning: could not read installed library for metadata: %v\n", err)
 	} else {
 		meta := InstallMetadata{
+			Kind:        KindRelease,
 			Repo:        opts.Repo,
 			Version:     version,
 			AssetName:   assetName,
@@ -223,7 +254,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			SHA256:      libSHA,
 			InstalledAt: time.Now(),
 		}
-		metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
+		metaPath := filepath.Join(opts.DestDir, MetadataFileName)
 		metaBytes, err := json.MarshalIndent(meta, "", "  ")
 		if err != nil {
 			fmt.Fprintf(opts.Out, "warning: could not marshal install metadata: %v\n", err)
@@ -236,6 +267,130 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	fmt.Fprintf(opts.Out, "installed %s\n", res.Library)
 	return res, nil
+}
+
+// runPin installs a developer-supplied libds4 by copying opts.Pin into
+// opts.DestDir, regenerating the .sha256 sidecar, and writing pinned
+// metadata. Pin is mutually exclusive with --version, --url, and --asset.
+func runPin(ctx context.Context, opts Options) (*Result, error) {
+	if opts.URL != "" || opts.Asset != "" || (opts.Version != "" && opts.Version != "latest") {
+		return nil, fmt.Errorf("--pin is mutually exclusive with --url, --version, and --asset")
+	}
+
+	srcInfo, err := os.Stat(opts.Pin)
+	if err != nil {
+		return nil, fmt.Errorf("stat pin source: %w", err)
+	}
+	if !srcInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("pin source %s is not a regular file", opts.Pin)
+	}
+
+	absSrc, err := filepath.Abs(opts.Pin)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pin source: %w", err)
+	}
+
+	libPath := filepath.Join(opts.DestDir, libraryFileName(opts.GOOS))
+	res := &Result{
+		Backend: opts.Backend,
+		GOOS:    opts.GOOS,
+		GOARCH:  opts.GOARCH,
+		Library: libPath,
+		DryRun:  opts.DryRun,
+	}
+	if opts.DryRun {
+		fmt.Fprintf(opts.Out, "would pin %s -> %s\n", absSrc, libPath)
+		return res, nil
+	}
+
+	overwrite, err := decidePinOverwrite(opts, libPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(opts.DestDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create %s: %w", opts.DestDir, err)
+	}
+
+	if err := copyFile(absSrc, libPath, overwrite); err != nil {
+		return nil, err
+	}
+	if err := writeLibraryChecksum(libPath); err != nil {
+		fmt.Fprintf(opts.Out, "warning: could not record library checksum: %v\n", err)
+	}
+
+	libSHA, err := fileSHA256(libPath)
+	if err != nil {
+		fmt.Fprintf(opts.Out, "warning: could not read installed library for metadata: %v\n", err)
+	} else {
+		meta := InstallMetadata{
+			Kind:        KindPinned,
+			Source:      absSrc,
+			Backend:     opts.Backend,
+			GOOS:        opts.GOOS,
+			GOARCH:      opts.GOARCH,
+			SHA256:      libSHA,
+			InstalledAt: time.Now(),
+		}
+		metaBytes, err := json.MarshalIndent(meta, "", "  ")
+		if err != nil {
+			fmt.Fprintf(opts.Out, "warning: could not marshal install metadata: %v\n", err)
+		} else {
+			if err := os.WriteFile(filepath.Join(opts.DestDir, MetadataFileName), metaBytes, 0o600); err != nil {
+				fmt.Fprintf(opts.Out, "warning: could not write install metadata: %v\n", err)
+			}
+		}
+	}
+
+	fmt.Fprintf(opts.Out, "pinned %s -> %s\n", absSrc, libPath)
+	return res, nil
+}
+
+// decidePinOverwrite returns true when the existing dest should be replaced.
+// Behavior depends on what is currently at libPath; see the design doc's
+// behavior matrix.
+func decidePinOverwrite(opts Options, libPath string) (bool, error) {
+	if _, err := os.Stat(libPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil // no existing file, no overwrite needed
+		}
+		return false, fmt.Errorf("stat dest: %w", err)
+	}
+	// File exists. Pin-over-pin requires --force regardless of TTY; other
+	// existing states use TTY-prompt-or-`--force`, mirroring today's UX.
+	meta, hasMeta, _ := readInstallMetadata(opts.DestDir)
+	if hasMeta && meta.Kind == KindPinned {
+		if opts.Force {
+			return true, nil
+		}
+		return false, fmt.Errorf("libds4 at %s is pinned to %s; run 'ds4go uninstall' first or pass --force", libPath, meta.Source)
+	}
+	if opts.Force {
+		return true, nil
+	}
+	if isTerminalFunc(opts.In) {
+		result, err := tui.Confirm(fmt.Sprintf("Replace %s with pinned file?", libPath), false, opts.In, opts.Out)
+		if err != nil {
+			return false, fmt.Errorf("read prompt response: %w", err)
+		}
+		if result != tui.ConfirmYes {
+			return false, fmt.Errorf("install cancelled")
+		}
+		fmt.Fprintln(opts.Out)
+		return true, nil
+	}
+	return false, fmt.Errorf("%s already exists; pass --force to replace it", libPath)
+}
+
+// copyFile copies src to dst with 0o600 permissions. If overwrite is true the
+// existing dst is truncated; otherwise dst must not exist.
+func copyFile(src, dst string, overwrite bool) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open pin source: %w", err)
+	}
+	defer in.Close()
+	return writeFile(dst, in, overwrite)
 }
 
 // writeLibraryChecksum writes a "<libPath>.sha256" sidecar with the SHA256 of
@@ -261,6 +416,26 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// readInstallMetadata reads ds4go-install.json from destDir.
+//
+// Returns (zero, false, nil) when the file does not exist (no install
+// recorded). Returns (zero, false, err) when the file exists but cannot be
+// parsed. Returns (meta, true, nil) on success.
+func readInstallMetadata(destDir string) (InstallMetadata, bool, error) {
+	var meta InstallMetadata
+	data, err := os.ReadFile(filepath.Join(destDir, MetadataFileName))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return InstallMetadata{}, false, nil
+		}
+		return InstallMetadata{}, false, fmt.Errorf("read install metadata: %w", err)
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return InstallMetadata{}, false, fmt.Errorf("parse install metadata: %w", err)
+	}
+	return meta, true, nil
+}
+
 func normalize(opts Options) Options {
 	if opts.Repo == "" {
 		opts.Repo = DefaultRepo
@@ -275,7 +450,11 @@ func normalize(opts Options) Options {
 		opts.GOARCH = runtime.GOARCH
 	}
 	if opts.Backend == "" || opts.Backend == "auto" {
-		opts.Backend = defaultBackend(opts.GOOS, opts.GOARCH)
+		if opts.Pin != "" {
+			opts.Backend = "custom"
+		} else {
+			opts.Backend = defaultBackend(opts.GOOS, opts.GOARCH)
+		}
 	}
 	if opts.DestDir == "" {
 		opts.DestDir = filepath.Join(defaultDir(), "lib")
@@ -300,6 +479,18 @@ func defaultDir() string {
 		return filepath.Join(home, ".ds4")
 	}
 	return ".ds4"
+}
+
+// defaultModelsDir returns the directory of model files whose run-locks should
+// be cross-referenced when listing libds4 holders. Models live under
+// $DS4_DIR/models (or ~/.ds4/models) regardless of where libds4 itself is
+// installed, so this intentionally does not depend on opts.DestDir / --lib.
+// (Previously this was derived from --lib via filepath.Join(opts.DestDir,
+// "..", "models"), but normalize() always populates DestDir, making the
+// "no DestDir → default" fallback unreachable and giving the wrong directory
+// for a custom --lib.)
+func defaultModelsDir() string {
+	return filepath.Join(defaultDir(), "models")
 }
 
 func resolveAsset(ctx context.Context, opts Options) (asset, string, error) {
@@ -720,21 +911,18 @@ func Validate(ctx context.Context, opts Options) error {
 	}
 
 	// Verify metadata file
-	metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
-	var meta InstallMetadata
-	var hasMeta bool
-	if mData, err := os.ReadFile(metaPath); err == nil {
-		if err := json.Unmarshal(mData, &meta); err == nil {
-			hasMeta = true
-			if !strings.EqualFold(localSHA, meta.SHA256) {
-				return fmt.Errorf("checksum mismatch in install metadata %s: local is %s, metadata wants %s", metaPath, localSHA, meta.SHA256)
-			}
-			fmt.Fprintf(opts.Out, "✓ Install metadata matches local checksum\n")
-		} else {
-			fmt.Fprintf(opts.Out, "warning: install metadata file is corrupt: %v\n", err)
-		}
-	} else {
+	metaPath := filepath.Join(opts.DestDir, MetadataFileName)
+	meta, hasMeta, metaErr := readInstallMetadata(opts.DestDir)
+	switch {
+	case metaErr != nil:
+		fmt.Fprintf(opts.Out, "warning: install metadata file is corrupt: %v\n", metaErr)
+	case !hasMeta:
 		fmt.Fprintf(opts.Out, "warning: no install metadata file found at %s\n", metaPath)
+	default:
+		if !strings.EqualFold(localSHA, meta.SHA256) {
+			return fmt.Errorf("checksum mismatch in install metadata %s: local is %s, metadata wants %s", metaPath, localSHA, meta.SHA256)
+		}
+		fmt.Fprintf(opts.Out, "✓ Install metadata matches local checksum\n")
 	}
 
 	// 4. Dynamic Loading verification
@@ -743,6 +931,10 @@ func Validate(ctx context.Context, opts Options) error {
 		return fmt.Errorf("failed to load dynamic library: %w", err)
 	}
 	fmt.Fprintf(opts.Out, "✓ Dynamically loaded library and registered symbols\n")
+
+	// 4b. Print a short git-style fingerprint so users can eyeball the
+	// installed library against a release's published checksum.
+	fmt.Fprintf(opts.Out, "\nFingerprint: %s\n", localSHA[:8])
 
 	// 5. Active process verification (excluding the current process)
 	if holders, err := FindLibraryHolders(libPath); err == nil {
@@ -754,11 +946,7 @@ func Validate(ctx context.Context, opts Options) error {
 			}
 		}
 		if len(otherHolders) > 0 {
-			modelsDir := filepath.Join(opts.DestDir, "..", "models")
-			if opts.DestDir == "" {
-				modelsDir = filepath.Join(defaultDir(), "models")
-			}
-			modelHolders, _ := FindDirHolders(modelsDir)
+			modelHolders, _ := FindDirHolders(defaultModelsDir())
 
 			fmt.Fprintf(opts.Out, "\nwarning: The following other active processes are holding onto the library:\n")
 			for _, p := range otherHolders {
@@ -779,16 +967,35 @@ func Validate(ctx context.Context, opts Options) error {
 	// Print metadata info
 	if hasMeta {
 		fmt.Fprintln(opts.Out, "\n[Metadata]")
-		fmt.Fprintf(opts.Out, "  Version:     %s\n", meta.Version)
+		switch meta.Kind {
+		case KindPinned:
+			fmt.Fprintf(opts.Out, "  Kind:        pinned (source: %s)\n", meta.Source)
+		default:
+			// KindRelease or legacy ""
+			fmt.Fprintf(opts.Out, "  Kind:        release (%s %s)\n", meta.Repo, meta.Version)
+		}
 		fmt.Fprintf(opts.Out, "  Backend:     %s\n", meta.Backend)
 		fmt.Fprintf(opts.Out, "  Installed:   %s\n", meta.InstalledAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(opts.Out, "  Source Repo: %s\n", meta.Repo)
+		if meta.Kind != KindPinned {
+			fmt.Fprintf(opts.Out, "  Version:     %s\n", meta.Version)
+			fmt.Fprintf(opts.Out, "  Source Repo: %s\n", meta.Repo)
+		}
 	}
 
 	// Make the loaded library the default one for future calls in the CLI lifecycle
 	ds4api.SetDefaultLibrary(lib)
 
 	return nil
+}
+
+// uninstallPrompt returns the confirmation prompt to show the user when
+// uninstalling libds4. Pinned installs get a stronger prompt naming the
+// source path so the user knows what they're about to delete.
+func uninstallPrompt(destDir string) string {
+	if meta, ok, _ := readInstallMetadata(destDir); ok && meta.Kind == KindPinned {
+		return fmt.Sprintf("This libds4 is pinned to %s. Really uninstall it from %s?", meta.Source, destDir)
+	}
+	return fmt.Sprintf("Uninstall libds4 and metadata files from %s?", destDir)
 }
 
 // Uninstall removes the installed libds4 shared library, sidecar, and metadata files from opts.DestDir.
@@ -798,7 +1005,7 @@ func Uninstall(ctx context.Context, opts Options) error {
 	libName := libraryFileName(opts.GOOS)
 	libPath := filepath.Join(opts.DestDir, libName)
 	sidecarPath := libPath + ".sha256"
-	metaPath := filepath.Join(opts.DestDir, "ds4go-install.json")
+	metaPath := filepath.Join(opts.DestDir, MetadataFileName)
 
 	// 1. Check if any file exists
 	libExists := false
@@ -822,7 +1029,7 @@ func Uninstall(ctx context.Context, opts Options) error {
 	// 2. Prompt for confirmation if not forced
 	if !opts.Force {
 		if isTerminalFunc(opts.In) {
-			result, err := tui.Confirm(fmt.Sprintf("Uninstall libds4 and metadata files from %s?", opts.DestDir), false, opts.In, opts.Out)
+			result, err := tui.Confirm(uninstallPrompt(opts.DestDir), false, opts.In, opts.Out)
 			if err != nil {
 				return fmt.Errorf("read prompt response: %w", err)
 			}
@@ -1246,11 +1453,7 @@ func Status(ctx context.Context, opts Options) error {
 		return fmt.Errorf("failed to query library holders: %w", err)
 	}
 
-	modelsDir := filepath.Join(opts.DestDir, "..", "models")
-	if opts.DestDir == "" {
-		modelsDir = filepath.Join(defaultDir(), "models")
-	}
-	modelHolders, _ := FindDirHolders(modelsDir)
+	modelHolders, _ := FindDirHolders(defaultModelsDir())
 
 	if len(libHolders) == 0 {
 		fmt.Fprintf(opts.Out, "No active processes are holding onto the library at: %s\n", libPath)
