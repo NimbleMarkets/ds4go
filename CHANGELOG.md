@@ -5,6 +5,8 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 ## Unreleased
 
  * **Quick install script**: `curl -fsSL https://nimblemarkets.github.io/ds4go/install.sh | sh` lands the CLI in `/usr/local/bin` with checksum verification
+ * Added `ds4go install --pin` to use custom `ds4` dynamic libraries.
+ * Rearraged CLI with `ds4go validate` and `ds4go status`
 
 ## v0.3.0 (2026-05-20)
 

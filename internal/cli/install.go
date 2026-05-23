@@ -32,15 +32,15 @@ func newInstallCommand() *cobra.Command {
 	fs.StringVar(&opts.GOARCH, "arch", "", "target architecture (default current)")
 	fs.StringVar(&opts.Asset, "asset", "", "exact release asset name to download")
 	fs.StringVar(&opts.URL, "url", "", "direct archive URL instead of GitHub release lookup")
+	fs.StringVar(&opts.Pin, "pin", "", "install a developer-supplied libds4 from this local file and mark it pinned")
 	fs.StringVar(&opts.Token, "token", "", "GitHub token for private repos or higher rate limits (defaults to GITHUB_TOKEN)")
 	fs.BoolVar(&opts.Force, "force", false, "replace an existing libds4 file")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the selected asset without downloading it")
 	fs.BoolVar(&opts.SkipChecksum, "skip-checksum", false, "skip GitHub API digest verification of the download")
-	cmd.AddCommand(newInstallValidateCommand(), newInstallStatusCommand())
 	return cmd
 }
 
-func newInstallValidateCommand() *cobra.Command {
+func newValidateCommand() *cobra.Command {
 	var opts install.Options
 	cmd := &cobra.Command{
 		Use:   "validate",
@@ -59,7 +59,7 @@ func newInstallValidateCommand() *cobra.Command {
 	return cmd
 }
 
-func newInstallStatusCommand() *cobra.Command {
+func newStatusCommand() *cobra.Command {
 	var opts install.Options
 	cmd := &cobra.Command{
 		Use:     "status",
