@@ -423,3 +423,23 @@ func (s *Session) LoadSnapshot(data []byte) error {
 	runtime.KeepAlive(data)
 	return errorFromBuffer("ds4_session_load_snapshot", code, buf)
 }
+
+// SetDirectionalSteering dynamically updates the directional steering configurations for this session.
+// If the underlying libds4 shared library does not support dynamic steering, this returns an error.
+func (s *Session) SetDirectionalSteering(file string, mode SteeringMode, ffn float32, attn float32, threshold float32, scope SteeringScope) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	if s.lib.raw.ds4SessionSetDirectionalSteering == nil {
+		return fmt.Errorf("ds4: session directional steering is not supported by the loaded library (missing symbol)")
+	}
+
+	buf, errPtr, n := errorBuffer()
+	b, filePtr := cStringPointer(file)
+	code := s.lib.raw.ds4SessionSetDirectionalSteering(s.ptr, filePtr, int32(mode), ffn, attn, threshold, int32(scope), errPtr, n)
+	runtime.KeepAlive(b)
+	return errorFromBuffer("ds4_session_set_directional_steering", code, buf)
+}

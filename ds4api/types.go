@@ -182,3 +182,27 @@ func ds4Error(op string, code int32) error {
 	}
 	return fmt.Errorf("%s failed with ds4 status %d", op, code)
 }
+
+// SteeringMode defines the formula used to steer session activations.
+type SteeringMode int32
+
+const (
+	// SteeringAblation projects out activations along the steering direction.
+	SteeringAblation SteeringMode = 0
+	// SteeringThreshold applies activation steering only above a projection threshold (CAST).
+	SteeringThreshold SteeringMode = 1
+	// SteeringAdditive projects activations along the steering direction (Golden Gate).
+	SteeringAdditive SteeringMode = 2
+)
+
+// SteeringScope defines the lifetime/scope of the dynamic steering settings.
+type SteeringScope int32
+
+const (
+	// SteeringScopeNextMessage reverts the steering setting automatically after one message.
+	SteeringScopeNextMessage SteeringScope = 0
+	// SteeringScopeUntilRevert keeps the steering setting active until explicitly reverted or changed.
+	SteeringScopeUntilRevert SteeringScope = 1
+	// SteeringScopeOff disables dynamic steering.
+	SteeringScopeOff SteeringScope = 2
+)

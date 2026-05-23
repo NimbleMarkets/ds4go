@@ -6,6 +6,7 @@
 package ds4api
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -99,8 +100,35 @@ func NewMockLibrary() *Library {
 	r.ds4SessionArgmax = mockSessionArgmax
 	r.ds4SessionArgmaxExcluding = func(s uintptr, excludedID int32) int32 { return mockSessionArgmax(s) }
 	r.ds4SessionSample = mockSessionSample
-	r.ds4SessionTopLogprobs = func(s uintptr, out *cTokenScore, k int32) int32 { return 0 }
-	r.ds4SessionTokenLogprob = func(s uintptr, token int32, out *cTokenScore) int32 { return 0 }
+	r.ds4SessionTopLogprobs = func(s uintptr, out *cTokenScore, k int32) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return 0
+		}
+		if k <= 0 {
+			return 0
+		}
+		scores := unsafe.Slice(out, int(k))
+		for i := 0; i < int(k); i++ {
+			tokenID := sess.engine.nextToken + sess.pos + int32(i)
+			scores[i] = cTokenScore{
+				ID:      tokenID,
+				Logit:   12.0 - float32(i)*0.8,
+				Logprob: -float32(i) * 0.15,
+			}
+		}
+		return k
+	}
+	r.ds4SessionTokenLogprob = func(s uintptr, token int32, out *cTokenScore) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return -1
+		}
+		out.ID = token
+		out.Logit = 8.5
+		out.Logprob = -0.5
+		return 0
+	}
 	r.ds4SessionEval = mockSessionEval
 	r.ds4SessionEvalSpeculativeArgmax = mockSessionEvalSpeculativeArgmax
 	r.ds4SessionInvalidate = func(s uintptr) {}
@@ -123,9 +151,58 @@ func NewMockLibrary() *Library {
 	r.ds4SessionPayloadBytes = func(s uintptr) uint64 { return 0 }
 	r.ds4SessionSavePayload = func(s uintptr, fp uintptr, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
 	r.ds4SessionLoadPayload = func(s uintptr, fp uintptr, payloadBytes uint64, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
-	r.ds4SessionSaveSnapshot = func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
-	r.ds4SessionLoadSnapshot = func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
-	r.ds4SessionSnapshotFree = func(snap *cSessionSnapshot) {}
+	r.ds4SessionSaveSnapshot = func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return -1
+		}
+		// Convert evaluated slice to bytes as a dummy snapshot representation
+		var data []byte
+		var jsonErr error
+		if len(sess.evaluated) > 0 {
+			data, jsonErr = json.Marshal(sess.evaluated)
+			if jsonErr != nil {
+				return -1
+			}
+		}
+		if len(data) > 0 {
+			snap.Len = uint64(len(data))
+			snap.Cap = uint64(len(data))
+			snap.Ptr = cMalloc(uintptr(len(data)))
+			copy(unsafe.Slice((*byte)(snap.Ptr), len(data)), data)
+		} else {
+			snap.Len = 0
+			snap.Cap = 0
+			snap.Ptr = nil
+		}
+		return 0
+	}
+	r.ds4SessionLoadSnapshot = func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return -1
+		}
+		if snap.Ptr == nil || snap.Len == 0 {
+			sess.evaluated = nil
+			sess.pos = 0
+			return 0
+		}
+		data := unsafe.Slice((*byte)(snap.Ptr), int(snap.Len))
+		var ev []int32
+		if err := json.Unmarshal(data, &ev); err != nil {
+			return -1
+		}
+		sess.evaluated = ev
+		sess.pos = int32(len(ev))
+		return 0
+	}
+	r.ds4SessionSnapshotFree = func(snap *cSessionSnapshot) {
+		if snap.Ptr != nil {
+			cFree(snap.Ptr)
+			snap.Ptr = nil
+		}
+	}
+	r.ds4SessionSetDirectionalSteering = func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
 
 	return lib
 }

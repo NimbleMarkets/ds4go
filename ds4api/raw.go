@@ -111,4 +111,5 @@ type rawSymbols struct {
 	ds4SessionSaveSnapshot           func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionLoadSnapshot           func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionSnapshotFree           func(snap *cSessionSnapshot)
+	ds4SessionSetDirectionalSteering func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32
 }
