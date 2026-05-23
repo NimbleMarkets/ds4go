@@ -169,6 +169,11 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4SessionSaveSnapshot, "ds4_session_save_snapshot")
 	mustRegister(&r.ds4SessionLoadSnapshot, "ds4_session_load_snapshot")
 	mustRegister(&r.ds4SessionSnapshotFree, "ds4_session_snapshot_free")
+
+	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering"); err == nil {
+		mustRegister(&r.ds4SessionSetDirectionalSteering, "ds4_session_set_directional_steering")
+	}
+
 	return nil
 }
 
