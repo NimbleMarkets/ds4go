@@ -14,6 +14,11 @@ import (
 	"unsafe"
 )
 
+// mockVocabSize is the canonical vocab size returned by the mock library.
+// Must stay in sync between ds4_engine_vocab_size and ds4_session_copy_logits
+// mocks: TestSessionCopyLogits asserts the two agree.
+const mockVocabSize int32 = 129280
+
 // NewMockLibrary returns a Library whose C symbols are backed by trivial
 // in-memory state.  The mock supports engine/session lifecycle, tokenization,
 // deterministic generation, and optional MTP metadata.
@@ -90,7 +95,26 @@ func NewMockLibrary() *Library {
 	// Session.
 	r.ds4SessionCreate = mockSessionCreate
 	r.ds4SessionFree = mockSessionFree
+	r.ds4SessionPower = func(s uintptr) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.engine == nil {
+			return 100
+		}
+		return sess.engine.powerPercent
+	}
+	r.ds4SessionSetPower = func(s uintptr, powerPercent int32) int32 {
+		if powerPercent < 1 || powerPercent > 100 {
+			return 1
+		}
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.engine == nil {
+			return 1
+		}
+		sess.engine.powerPercent = powerPercent
+		return 0
+	}
 	r.ds4SessionSetProgress = func(s uintptr, fn uintptr, ud uintptr) {}
+	r.ds4SessionSetDisplayProgress = func(s uintptr, fn uintptr, ud uintptr) {}
 	r.ds4SessionSync = mockSessionSync
 	r.ds4SessionRewriteRequiresRebuild = func(liveLen int32, canonicalLen int32, common int32) bool { return true }
 	r.ds4SessionRewriteFromCommon = func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult {
@@ -119,6 +143,17 @@ func NewMockLibrary() *Library {
 		}
 		return k
 	}
+	r.ds4SessionCopyLogits = func(s uintptr, out unsafe.Pointer, capacity int32) int32 {
+		if capacity < mockVocabSize {
+			return -1
+		}
+		// Fill with zeros; mock doesn't carry real logits.
+		buf := unsafe.Slice((*float32)(out), int(capacity))
+		for i := range buf[:mockVocabSize] {
+			buf[i] = 0
+		}
+		return mockVocabSize
+	}
 	r.ds4SessionTokenLogprob = func(s uintptr, token int32, out *cTokenScore) int32 {
 		sess := mockSessionPtr(s)
 		if sess == nil {
@@ -140,6 +175,41 @@ func NewMockLibrary() *Library {
 	r.ds4EngineRoutedQuantBits = func(e uintptr) int32 { return 4 }
 	r.ds4EngineHasMTP = mockEngineHasMTP
 	r.ds4EngineMTPDraftTokens = mockEngineMTPDraftTokens
+	r.ds4EnginePower = func(e uintptr) int32 {
+		if eng := mockEnginePtr(e); eng != nil {
+			return eng.powerPercent
+		}
+		return 100
+	}
+	r.ds4EngineSetPower = func(e uintptr, powerPercent int32) int32 {
+		if powerPercent < 1 || powerPercent > 100 {
+			return 1
+		}
+		eng := mockEnginePtr(e)
+		if eng == nil {
+			return 1
+		}
+		eng.powerPercent = powerPercent
+		return 0
+	}
+	r.ds4EngineVocabSize = func(e uintptr) int32 {
+		if mockEnginePtr(e) == nil {
+			return 0
+		}
+		return mockVocabSize
+	}
+	r.ds4EngineModelName = func(e uintptr) string {
+		if mockEnginePtr(e) == nil {
+			return ""
+		}
+		return "Mock"
+	}
+	r.ds4EngineModelID = func(e uintptr) int32 {
+		if mockEnginePtr(e) == nil {
+			return 0
+		}
+		return 0
+	}
 
 	// Session persistence.
 	r.ds4SessionTokens = func(s uintptr) *cTokens {
@@ -290,10 +360,11 @@ func mockTokensStartsWith(tokens *cTokens, prefix *cTokens) bool {
 // ---------------------------------------------------------------------------
 
 type mockEngine struct {
-	eosToken  int32
-	hasMTP    bool
-	mtpDraft  int32
-	nextToken int32
+	eosToken     int32
+	hasMTP       bool
+	mtpDraft     int32
+	nextToken    int32
+	powerPercent int32
 }
 
 type mockSession struct {
@@ -357,6 +428,12 @@ func mockFreeSession(p uintptr) {
 
 func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
 	eng := &mockEngine{eosToken: 1, hasMTP: false, mtpDraft: 1, nextToken: 42}
+	if opt != nil {
+		eng.powerPercent = opt.PowerPercent
+		if eng.powerPercent == 0 {
+			eng.powerPercent = 100
+		}
+	}
 	*out = mockAlloc(eng)
 	return 0
 }

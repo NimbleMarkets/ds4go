@@ -469,6 +469,14 @@ func (m *Manager) downloadFile(ctx context.Context, url, out, token string, expe
 	return m.downloadFileAttempt(ctx, url, out, token, expectedSHA, true)
 }
 
+// downloadChunkSize bounds each GET to the largest range the HF Xet CDN will
+// satisfy in a single response. Single ranges spanning more than ~200 GiB get
+// rejected with HTTP 400, and an open-ended `bytes=N-` request behaves the
+// same way for files larger than that cap. 16 GiB keeps us well below the
+// ceiling while still amortising redirect/handshake overhead across ~27
+// chunks for the 432 GiB Pro model.
+const downloadChunkSize int64 = 16 * 1024 * 1024 * 1024
+
 func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token string, expectedSHA string, allowRestart bool) (string, error) {
 	part := out + ".part"
 	var start int64
@@ -494,54 +502,7 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 		}
 		return sha, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "ds4go model downloader")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	if start > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
-	}
-	resp, err := m.httpClient().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("download %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-	if start > 0 && resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-		sha, err := m.promoteCompletePart(part, out, meta, expectedSHA)
-		if err != nil {
-			if allowRestart && isHashMismatch(err) {
-				if qerr := quarantineBadPartial(part, err); qerr != nil {
-					return "", qerr
-				}
-				fmt.Fprintln(m.Out, "Restarting download from byte 0 after hash mismatch")
-				return m.downloadFileAttempt(ctx, url, out, token, expectedSHA, false)
-			}
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			return "", fmt.Errorf("download %s: %s: %s; %w", url, resp.Status, strings.TrimSpace(string(body)), err)
-		}
-		return sha, nil
-	}
-	if start > 0 && resp.StatusCode == http.StatusOK {
-		start = 0
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("download %s: %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
-	}
-	if expectedSHA == "" {
-		expectedSHA = meta.SHA256
-	}
-	if expectedSHA == "" {
-		expectedSHA = sha256FromHeaders(resp.Header)
-	} else {
-		if err := ensureRemoteHashMatchesPinned(sha256FromHeaders(resp.Header), expectedSHA, filepath.Base(out)); err != nil {
-			return "", err
-		}
-	}
+
 	flags := os.O_CREATE | os.O_WRONLY
 	if start > 0 {
 		flags |= os.O_APPEND
@@ -556,19 +517,110 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 	}
 	defer f.Close()
 
-	total := resp.ContentLength
-	if total > 0 {
-		total += start
-	}
-	reader := resp.Body
+	var pr *progressReader
 	if m.ProgressOut != nil {
-		reader = newProgressReader(m.ProgressOut, filepath.Base(out), start, total, resp.Body)
+		pr = newProgressReader(m.ProgressOut, filepath.Base(out), start, meta.Size, http.NoBody)
 	}
-	if _, err := io.Copy(f, reader); err != nil {
-		return "", err
+
+	first := true
+	for {
+		end := int64(-1)
+		if meta.Size > 0 {
+			end = start + downloadChunkSize - 1
+			if end >= meta.Size {
+				end = meta.Size - 1
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", "ds4go model downloader")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if end >= 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+		} else if start > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
+		}
+
+		resp, err := m.httpClient().Do(req)
+		if err != nil {
+			return "", fmt.Errorf("download %s: %w", url, err)
+		}
+
+		if start > 0 && resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			resp.Body.Close()
+			sha, err := m.promoteCompletePart(part, out, meta, expectedSHA)
+			if err != nil {
+				if allowRestart && isHashMismatch(err) {
+					if qerr := quarantineBadPartial(part, err); qerr != nil {
+						return "", qerr
+					}
+					fmt.Fprintln(m.Out, "Restarting download from byte 0 after hash mismatch")
+					return m.downloadFileAttempt(ctx, url, out, token, expectedSHA, false)
+				}
+				return "", fmt.Errorf("download %s: %s; %w", url, resp.Status, err)
+			}
+			return sha, nil
+		}
+		if first && start > 0 && resp.StatusCode == http.StatusOK {
+			// Server ignored our Range (treated as a full-body GET). Rewind
+			// the .part file and stream from byte 0.
+			resp.Body.Close()
+			if err := f.Truncate(0); err != nil {
+				return "", err
+			}
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return "", err
+			}
+			start = 0
+			continue
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			return "", fmt.Errorf("download %s: %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
+		}
+
+		if first {
+			if expectedSHA == "" {
+				expectedSHA = meta.SHA256
+			}
+			if expectedSHA == "" {
+				expectedSHA = sha256FromHeaders(resp.Header)
+			} else {
+				if err := ensureRemoteHashMatchesPinned(sha256FromHeaders(resp.Header), expectedSHA, filepath.Base(out)); err != nil {
+					resp.Body.Close()
+					return "", err
+				}
+			}
+			first = false
+		}
+
+		var src io.Reader = resp.Body
+		if pr != nil {
+			pr.SwapReader(resp.Body)
+			src = pr
+		}
+		n, copyErr := io.Copy(f, src)
+		resp.Body.Close()
+		if copyErr != nil {
+			return "", copyErr
+		}
+		start += n
+
+		// If we don't know the size, one open-ended GET fetched the whole
+		// file in a single response, so we're done.
+		if meta.Size <= 0 || start >= meta.Size {
+			break
+		}
 	}
-	if closer, ok := reader.(interface{ Done(error) }); ok {
-		closer.Done(nil)
+
+	if pr != nil {
+		pr.Done(nil)
 	}
 	if err := f.Close(); err != nil {
 		return "", err
@@ -643,6 +695,10 @@ func defaultHTTPClient() *http.Client {
 	tr.ResponseHeaderTimeout = 30 * time.Second
 	tr.ExpectContinueTimeout = 1 * time.Second
 	tr.IdleConnTimeout = 90 * time.Second
+	// Model files are already content-compressed (GGUF), so transparent gzip
+	// adds nothing and only obscures the byte counts our progress reader
+	// expects to match Content-Length.
+	tr.DisableCompression = true
 	return &http.Client{Transport: tr}
 }
 

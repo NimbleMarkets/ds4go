@@ -58,6 +58,13 @@ func (p *progressReader) Close() error {
 	return p.reader.Close()
 }
 
+// SwapReader replaces the underlying source. Used by the chunked downloader
+// to stream multiple Range responses through one progress display so the
+// rendered progress bar reflects whole-file completion rather than per-chunk.
+func (p *progressReader) SwapReader(r io.ReadCloser) {
+	p.reader = r
+}
+
 func (p *progressReader) Done(err error) {
 	if err == nil && p.total > 0 {
 		p.current = p.total

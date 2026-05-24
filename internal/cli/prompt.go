@@ -58,7 +58,13 @@ func run(cfg *cliopts.CLIConfig) error {
 	// --inspect and imatrix collection run without a session timeline.
 	switch {
 	case cfg.Inspect:
-		return engine.Summary()
+		if err := engine.Summary(); err != nil {
+			return err
+		}
+		if name := engine.ModelName(); name != "" {
+			fmt.Printf("Model: %s (id=%d)\n", name, engine.ModelID())
+		}
+		return nil
 	case cfg.IMatrixOut != "":
 		return engine.CollectIMatrix(cfg.IMatrixDataset, cfg.IMatrixOut, cfg.Ctx, cfg.IMatrixMaxPrompts, cfg.IMatrixMaxTokens)
 	}
