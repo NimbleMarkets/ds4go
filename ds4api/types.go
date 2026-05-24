@@ -119,10 +119,16 @@ type EngineOptions struct {
 	DirectionalSteeringAttn float32
 	// DirectionalSteeringFFN scales directional steering in FFN blocks.
 	DirectionalSteeringFFN float32
+	// PowerPercent throttles GPU work to roughly this duty cycle (1..100).
+	// 0 or 100 disables throttling. Maps to ds4_engine_options.power_percent.
+	PowerPercent int
 	// WarmWeights asks ds4 to warm model weights after load.
 	WarmWeights bool
 	// Quality requests ds4's quality-oriented execution path where supported.
 	Quality bool
+	// InspectOnly opens the model for inspection without preparing the engine
+	// for generation. Maps to ds4_engine_options.inspect_only.
+	InspectOnly bool
 }
 
 // ContextMemory is ds4_context_memory.

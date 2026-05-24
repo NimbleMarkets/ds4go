@@ -55,8 +55,10 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 		DirectionalSteeringFile: steerPtr,
 		DirectionalSteeringAttn: opts.DirectionalSteeringAttn,
 		DirectionalSteeringFFN:  opts.DirectionalSteeringFFN,
+		PowerPercent:            int32(opts.PowerPercent),
 		WarmWeights:             opts.WarmWeights,
 		Quality:                 opts.Quality,
+		InspectOnly:             opts.InspectOnly,
 	}
 	var out uintptr
 	code := l.raw.ds4EngineOpen(&out, &copts)
@@ -201,7 +203,11 @@ func ThinkModeForContext(mode ThinkMode, ctxSize int) ThinkMode {
 	return lib.raw.ds4ThinkModeForContext(mode, int32(ctxSize))
 }
 
-// ContextMemoryEstimate estimates ds4 context memory for a backend and context size.
+// ContextMemoryEstimate estimates ds4 context memory for a backend and context
+// size. libds4 derives the estimate from the active model shape selected by
+// ds4_engine_open, so the result is only meaningful while at least one engine
+// is open. Prefer [Engine.ContextMemoryEstimate] when you have an engine
+// handle.
 func ContextMemoryEstimate(backend Backend, ctxSize int) ContextMemory {
 	lib, err := DefaultLibrary()
 	if err != nil {
@@ -629,4 +635,79 @@ func (e *Engine) MTPDraftTokens() int {
 		return 0
 	}
 	return int(e.lib.raw.ds4EngineMTPDraftTokens(e.ptr))
+}
+
+// Power returns ds4_engine_power: the current power-throttle duty cycle
+// percentage (1..100). 100 means no throttling.
+func (e *Engine) Power() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return 0
+	}
+	return int(e.lib.raw.ds4EnginePower(e.ptr))
+}
+
+// SetPower calls ds4_engine_set_power. powerPercent must be in 1..100.
+func (e *Engine) SetPower(powerPercent int) error {
+	unlock, err := e.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return ds4Error("ds4_engine_set_power", e.lib.raw.ds4EngineSetPower(e.ptr, int32(powerPercent)))
+}
+
+// VocabSize returns ds4_engine_vocab_size: the model vocabulary size.
+func (e *Engine) VocabSize() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return 0
+	}
+	return int(e.lib.raw.ds4EngineVocabSize(e.ptr))
+}
+
+// ModelName returns ds4_engine_model_name: the printable name of the opened
+// model shape (e.g. "Flash", "Pro").
+func (e *Engine) ModelName() string {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return ""
+	}
+	return e.lib.raw.ds4EngineModelName(e.ptr)
+}
+
+// ModelID returns ds4_engine_model_id: a stable id for cache compatibility.
+// 0 is the original Flash shape; Pro and later shapes use nonzero ids.
+func (e *Engine) ModelID() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return 0
+	}
+	return int(e.lib.raw.ds4EngineModelID(e.ptr))
+}
+
+// ContextMemoryEstimate calls ds4_context_memory_estimate using the active
+// model shape selected by the underlying ds4_engine_open. Prefer this over
+// the package-level [ContextMemoryEstimate] when an engine is open, since the
+// libds4 estimate now depends on Flash-vs-Pro dimensions.
+func (e *Engine) ContextMemoryEstimate(backend Backend, ctxSize int) ContextMemory {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return ContextMemory{}
+	}
+	cm := e.lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	return ContextMemory{
+		TotalBytes:      cm.TotalBytes,
+		RawBytes:        cm.RawBytes,
+		CompressedBytes: cm.CompressedBytes,
+		ScratchBytes:    cm.ScratchBytes,
+		PrefillCap:      cm.PrefillCap,
+		RawCap:          cm.RawCap,
+		CompCap:         cm.CompCap,
+	}
 }

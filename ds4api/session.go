@@ -18,7 +18,8 @@ type Session struct {
 }
 
 type sessionCleanupState struct {
-	progressID uintptr
+	progressID        uintptr
+	displayProgressID uintptr
 }
 
 type sessionCleanupArg struct {
@@ -32,7 +33,9 @@ func cleanSession(arg sessionCleanupArg) {
 	defer libCallMu.Unlock()
 	if arg.ptr != 0 {
 		arg.lib.raw.ds4SessionSetProgress(arg.ptr, 0, 0)
+		arg.lib.raw.ds4SessionSetDisplayProgress(arg.ptr, 0, 0)
 		unregisterProgressCallback(arg.state.progressID)
+		unregisterProgressCallback(arg.state.displayProgressID)
 		arg.lib.raw.ds4SessionFree(arg.ptr)
 	}
 }
@@ -72,7 +75,9 @@ func (s *Session) Close() {
 		defer libCallMu.Unlock()
 		if s.ptr != 0 {
 			s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
+			s.lib.raw.ds4SessionSetDisplayProgress(s.ptr, 0, 0)
 			unregisterProgressCallback(s.state.progressID)
+			unregisterProgressCallback(s.state.displayProgressID)
 			s.lib.raw.ds4SessionFree(s.ptr)
 			s.ptr = 0
 		}
@@ -106,6 +111,30 @@ func (s *Session) SetProgress(fn ProgressFunc) error {
 	id := registerProgressCallback(fn)
 	s.state.progressID = id
 	s.lib.raw.ds4SessionSetProgress(s.ptr, progressCallback, id)
+	return nil
+}
+
+// SetDisplayProgress sets a persistent UI-only progress callback for
+// ds4_session_set_display_progress. It may report fine-grained progress
+// inside a prefill chunk; callers must not treat it as a durable KV
+// checkpoint boundary. Use SetProgress for checkpoint-anchored events.
+func (s *Session) SetDisplayProgress(fn ProgressFunc) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.state.displayProgressID != 0 {
+		s.lib.raw.ds4SessionSetDisplayProgress(s.ptr, 0, 0)
+		unregisterProgressCallback(s.state.displayProgressID)
+		s.state.displayProgressID = 0
+	}
+	if fn == nil {
+		return nil
+	}
+	id := registerProgressCallback(fn)
+	s.state.displayProgressID = id
+	s.lib.raw.ds4SessionSetDisplayProgress(s.ptr, progressCallback, id)
 	return nil
 }
 
@@ -236,6 +265,30 @@ func (s *Session) TokenLogprob(token int) (TokenScore, error) {
 	return TokenScore{ID: int(raw.ID), Logit: raw.Logit, Logprob: raw.Logprob}, nil
 }
 
+// CopyLogits returns a copy of the current logits vector for the session.
+// The slice length equals the engine vocabulary size.
+func (s *Session) CopyLogits() ([]float32, error) {
+	unlock, err := s.require()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	vocab := int(s.lib.raw.ds4EngineVocabSize(s.engine.ptr))
+	if vocab <= 0 {
+		return nil, fmt.Errorf("ds4_session_copy_logits: engine vocab size unavailable")
+	}
+	out := make([]float32, vocab)
+	n := s.lib.raw.ds4SessionCopyLogits(s.ptr, unsafe.Pointer(&out[0]), int32(vocab))
+	runtime.KeepAlive(out)
+	if n < 0 {
+		return nil, ds4Error("ds4_session_copy_logits", n)
+	}
+	if int(n) != vocab {
+		return out[:int(n)], nil
+	}
+	return out, nil
+}
+
 // Eval evaluates one token and advances the session.
 func (s *Session) Eval(token int) error {
 	unlock, err := s.require()
@@ -307,6 +360,29 @@ func (s *Session) Pos() int {
 		return 0
 	}
 	return int(s.lib.raw.ds4SessionPos(s.ptr))
+}
+
+// Power returns ds4_session_power. Sessions share the engine power setting,
+// so this returns the engine's current duty-cycle percentage.
+func (s *Session) Power() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 {
+		return 0
+	}
+	return int(s.lib.raw.ds4SessionPower(s.ptr))
+}
+
+// SetPower calls ds4_session_set_power. powerPercent must be in 1..100.
+// This updates the engine-wide setting as well as the session's GPU graph,
+// so concurrent sessions sharing the same engine see the new value.
+func (s *Session) SetPower(powerPercent int) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return ds4Error("ds4_session_set_power", s.lib.raw.ds4SessionSetPower(s.ptr, int32(powerPercent)))
 }
 
 // Ctx returns the session context size.

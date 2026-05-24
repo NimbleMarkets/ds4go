@@ -163,6 +163,9 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		DirectionalSteeringFFN:  c.DirSteeringFFN,
 		WarmWeights:             c.WarmWeights,
 		Quality:                 c.Quality,
+		// --inspect prints the engine summary and exits; tell libds4 to skip
+		// the generation-path prep so the open is fast.
+		InspectOnly: c.Inspect,
 	}
 }
 

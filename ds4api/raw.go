@@ -24,8 +24,10 @@ type cEngineOptions struct {
 	DirectionalSteeringFile unsafe.Pointer
 	DirectionalSteeringAttn float32
 	DirectionalSteeringFFN  float32
+	PowerPercent            int32
 	WarmWeights             bool
 	Quality                 bool
+	InspectOnly             bool
 }
 
 type cContextMemory struct {
@@ -48,6 +50,11 @@ type rawSymbols struct {
 	ds4EngineOpen                    func(out *uintptr, opt *cEngineOptions) int32
 	ds4EngineClose                   func(e uintptr)
 	ds4EngineSummary                 func(e uintptr)
+	ds4EnginePower                   func(e uintptr) int32
+	ds4EngineSetPower                func(e uintptr, powerPercent int32) int32
+	ds4EngineVocabSize               func(e uintptr) int32
+	ds4EngineModelName               func(e uintptr) string
+	ds4EngineModelID                 func(e uintptr) int32
 	ds4BackendName                   func(backend Backend) string
 	ds4ThinkModeEnabled              func(mode ThinkMode) bool
 	ds4ThinkModeName                 func(mode ThinkMode) string
@@ -85,7 +92,10 @@ type rawSymbols struct {
 	ds4TokenAssistant                func(e uintptr) int32
 	ds4SessionCreate                 func(out *uintptr, e uintptr, ctxSize int32) int32
 	ds4SessionFree                   func(s uintptr)
+	ds4SessionPower                  func(s uintptr) int32
+	ds4SessionSetPower               func(s uintptr, powerPercent int32) int32
 	ds4SessionSetProgress            func(s uintptr, fn uintptr, ud uintptr)
+	ds4SessionSetDisplayProgress     func(s uintptr, fn uintptr, ud uintptr)
 	ds4SessionSync                   func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionRewriteRequiresRebuild func(liveLen int32, canonicalLen int32, common int32) bool
 	ds4SessionRewriteFromCommon      func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult
@@ -95,6 +105,7 @@ type rawSymbols struct {
 	ds4SessionSample                 func(s uintptr, temperature float32, topK int32, topP float32, minP float32, rng *uint64) int32
 	ds4SessionTopLogprobs            func(s uintptr, out *cTokenScore, k int32) int32
 	ds4SessionTokenLogprob           func(s uintptr, token int32, out *cTokenScore) int32
+	ds4SessionCopyLogits             func(s uintptr, out unsafe.Pointer, cap int32) int32
 	ds4SessionEval                   func(s uintptr, token int32, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionEvalSpeculativeArgmax  func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionInvalidate             func(s uintptr)

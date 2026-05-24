@@ -48,6 +48,15 @@ var curated = []Model{
 		Notes:          "preferred imatrix-tuned default",
 	},
 	{
+		Alias:          "q2-q4-imatrix",
+		FileName:       "DeepSeek-V4-Flash-Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-fixed.gguf",
+		SizeGB:         98,
+		RecommendedRAM: "128-192 GB",
+		SHA256:         "edabc92af63ad8b139f00087fbfc10a4072f37b7597f4fd9ad1dfa6f83002396",
+		Imatrix:        true,
+		Notes:          "mixed q2/q4 imatrix: q2 routed experts with last 6 layers q4",
+	},
+	{
 		Alias:          "q4-imatrix",
 		FileName:       "DeepSeek-V4-Flash-Q4KExperts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out-chat-v2-imatrix.gguf",
 		SizeGB:         153,
@@ -55,6 +64,15 @@ var curated = []Model{
 		SHA256:         "a2a3b31eca06344b93d32b2095511c4d36f92739a68a599b22047b4b2335d859",
 		Imatrix:        true,
 		Notes:          "higher quality, much larger memory footprint",
+	},
+	{
+		Alias:          "pro-imatrix",
+		FileName:       "DeepSeek-V4-Pro-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-Instruct-imatrix.gguf",
+		SizeGB:         430,
+		RecommendedRAM: ">=512 GB",
+		SHA256:         "a0314d9c0e16122cd60071079124a2d17185d317c55a8f95ecb3ed3506278a96",
+		Imatrix:        true,
+		Notes:          "DeepSeek V4 Pro imatrix quant; 512 GB RAM machines",
 	},
 	{
 		Alias:          "q2",
@@ -73,6 +91,15 @@ var curated = []Model{
 		SHA256:         "39e5de72ac544fdd5ffaf83ec28e36aaf3341b145235488e67d59400bbb3af55",
 		Legacy:         true,
 		Notes:          "legacy non-imatrix q4",
+	},
+	{
+		Alias:          "pro",
+		FileName:       "DeepSeek-V4-Pro-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-Instruct.gguf",
+		SizeGB:         430,
+		RecommendedRAM: ">=512 GB",
+		SHA256:         "0e481c300b52414d9e415e42097eb69847616e8a02f8f457d97203e8d0ed60a5",
+		Legacy:         true,
+		Notes:          "legacy non-imatrix DeepSeek V4 Pro quant",
 	},
 	{
 		Alias:          "mtp",
