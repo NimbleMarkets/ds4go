@@ -18,7 +18,7 @@ builds:
     main: ./cmd/ds4go
     binary: ds4go
     env: [CGO_ENABLED=0]
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags:
       - -s -w

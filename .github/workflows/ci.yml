@@ -47,9 +47,6 @@ jobs:
       - name: Cross-compile (linux/amd64)
         run: GOOS=linux GOARCH=amd64 go build ./...
 
-      - name: Cross-compile (windows/amd64)
-        run: GOOS=windows GOARCH=amd64 go build ./...
-
   # Validate the release config so a broken .goreleaser.yaml is caught on PRs
   # rather than at tag time.
   goreleaser:
