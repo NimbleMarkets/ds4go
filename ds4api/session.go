@@ -1,11 +1,18 @@
 package ds4api
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
 	"unsafe"
 )
+
+// ErrSteeringNotSupported is returned by Session.SetDirectionalSteering when
+// the loaded libds4 build does not export ds4_session_set_directional_steering.
+// Callers can check with errors.Is and downgrade to a warning so the rest of
+// the program can continue without dynamic steering.
+var ErrSteeringNotSupported = errors.New("ds4: session directional steering is not supported by the loaded library (missing symbol)")
 
 // Session wraps a ds4_session.
 type Session struct {
@@ -510,7 +517,7 @@ func (s *Session) SetDirectionalSteering(file string, mode SteeringMode, ffn flo
 	defer unlock()
 
 	if s.lib.raw.ds4SessionSetDirectionalSteering == nil {
-		return fmt.Errorf("ds4: session directional steering is not supported by the loaded library (missing symbol)")
+		return ErrSteeringNotSupported
 	}
 
 	buf, errPtr, n := errorBuffer()

@@ -272,7 +272,9 @@ func NewMockLibrary() *Library {
 			snap.Ptr = nil
 		}
 	}
-	r.ds4SessionSetDirectionalSteering = func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
+	r.ds4SessionSetDirectionalSteering = func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
 
 	return lib
 }

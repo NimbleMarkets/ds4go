@@ -126,7 +126,6 @@ func (e *Engine) Close() {
 	})
 }
 
-
 // require locks the engine and verifies it is open. The returned unlock
 // function MUST be called (typically via defer) to release the lock.
 func (e *Engine) require() (unlock func(), err error) {
