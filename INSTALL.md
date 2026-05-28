@@ -36,12 +36,12 @@ The script accepts these environment variables:
 | `INSTALL_DIR`    | `/usr/local/bin` | Where to place the binary; `sudo` is used if the directory isn't writable. |
 | `DS4GO_FORCE`    | unset            | Set to `1` to override the "Homebrew-managed install detected" refusal.    |
 
-Install the prebuilt `ds4go` CLI with Homebrew, or build it with the Go
+Install the prebuilt `ds4go` CLI as a Homebrew Cask, or build it with the Go
 toolchain:
 
 ```sh
 # Homebrew (macOS/Linux)
-brew install nimblemarkets/tap/ds4go
+brew install --cask nimblemarkets/tap/ds4go
 
 # or with the Go toolchain
 go install github.com/NimbleMarkets/ds4go/cmd/ds4go@latest

@@ -23,7 +23,7 @@ jobs:
       - run: go vet ./...
 
   # Build cross-platform archives, publish the GitHub Release, and update the
-  # Homebrew formula in NimbleMarkets/homebrew-tap.
+  # Homebrew cask in NimbleMarkets/homebrew-tap.
   release:
     name: Release
     needs: check
