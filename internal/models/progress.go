@@ -21,7 +21,6 @@ var (
 	progressRest = lipgloss.NewStyle().Foreground(colorPrimary).Background(colorSurface)
 )
 
-
 type progressReader struct {
 	out        io.Writer
 	name       string

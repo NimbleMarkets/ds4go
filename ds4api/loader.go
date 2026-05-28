@@ -92,6 +92,13 @@ func (l *Library) Path() string {
 	return l.path
 }
 
+// SupportsDynamicSteering reports whether the loaded library exports
+// ds4_session_set_directional_steering. When false, callers should rely on
+// engine-level (static) steering via EngineOptions.DirectionalSteering* fields.
+func (l *Library) SupportsDynamicSteering() bool {
+	return l != nil && l.raw.ds4SessionSetDirectionalSteering != nil
+}
+
 func (l *Library) register() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
