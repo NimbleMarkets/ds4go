@@ -26,7 +26,7 @@ Install the `ds4go` CLI with the quick-install script, Homebrew, or the Go toolc
 curl -fsSL https://nimblemarkets.github.io/ds4go/install.sh | sh
 
 # Homebrew (macOS/Linux)
-brew install nimblemarkets/tap/ds4go
+brew install --cask nimblemarkets/tap/ds4go
 
 # or with the Go toolchain
 go install github.com/NimbleMarkets/ds4go/cmd/ds4go@latest
