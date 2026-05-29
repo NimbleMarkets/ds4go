@@ -161,7 +161,11 @@ ds4go — command cheat sheet
   │
   ├── uninstall  Uninstall the installed libds4 shared library
   │
-  └── validate  Validate the installed libds4 shared library
+  ├── validate  Validate the installed libds4 shared library
+  │
+  └── web         Test browser-backed web tools
+      ├── search  Execute Google search and print Markdown links
+      └── visit   Visit a web page and print extracted Markdown
 
 Run 'ds4go help <command>' for detailed usage.
 ```

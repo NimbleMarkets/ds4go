@@ -27,6 +27,7 @@ func newRootCommand() *cobra.Command {
 		newStatusCommand(),
 		newUninstallCommand(),
 		newModelCommand(),
+		newWebCommand(),
 	)
 	root.SetHelpCommand(newHelpCommand(root))
 	return root
