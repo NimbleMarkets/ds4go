@@ -2,6 +2,12 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/neomantra/ds4/tree/nm-shared
 
+## v0.5.0 (unreleased)
+
+ * Add [`lsp` package](./lsp/README.md) for Language Server Protocol (LSP) support
+ * Add [`webtool` package](./webtool/README.md) for searching and querying web pages using Google Chrome.
+ * Add `ds4go web search` and `ds4go web visit` CLI tools
+
 ## v0.4.0 (2026-05-27)
 
  * **Quick install script**: `curl -fsSL https://nimblemarkets.github.io/ds4go/install.sh | sh` lands the CLI in `/usr/local/bin` with checksum verification
