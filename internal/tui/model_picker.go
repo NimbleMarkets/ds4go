@@ -58,11 +58,24 @@ func (m modelPicker) View() tea.View {
 	active := ActiveStyle
 	primary := PrimaryStyle
 
-	// Fixed-width columns so aliases, sizes, RAM, and flags line up.
-	aliasStyle := lipgloss.NewStyle().Width(14)
+	// Size the alias, RAM, and flags columns to the widest value present so long
+	// names (e.g. distributed split aliases) line up instead of overflowing.
+	aliasW, ramW, flagsW := 14, 13, 18
+	for _, model := range m.models {
+		if w := lipgloss.Width(model.Alias); w > aliasW {
+			aliasW = w
+		}
+		if w := lipgloss.Width(model.RecommendedRAM); w > ramW {
+			ramW = w
+		}
+		if w := lipgloss.Width(ModelFlags(model)); w > flagsW {
+			flagsW = w
+		}
+	}
+	aliasStyle := lipgloss.NewStyle().Width(aliasW)
 	sizeStyle := lipgloss.NewStyle().Width(10).Align(lipgloss.Right)
-	ramStyle := lipgloss.NewStyle().Width(13)
-	flagsStyle := lipgloss.NewStyle().Width(18)
+	ramStyle := lipgloss.NewStyle().Width(ramW)
+	flagsStyle := lipgloss.NewStyle().Width(flagsW)
 
 	var b strings.Builder
 	b.WriteString(title)

@@ -158,6 +158,9 @@ func (m *Manager) setLocked(alias string) error {
 	if model.Optional {
 		return fmt.Errorf("%q is optional MTP support and cannot be the default chat model", alias)
 	}
+	if model.Distributed {
+		return fmt.Errorf("%q is a distributed split and cannot be the default chat model", alias)
+	}
 	if !m.installed(model) {
 		return fmt.Errorf("%s is not installed; run: ds4go model download %s", alias, alias)
 	}
@@ -231,9 +234,10 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 	defer stateLock.Close()
 
 	// The first inferenceable model becomes the default chat model. Adjunct
-	// models (Optional, e.g. mtp) are never eligible, and an existing default
+	// models (Optional, e.g. mtp) and distributed splits (which run
+	// across hosts via --layers) are never eligible, and an existing default
 	// is never overridden by a later download.
-	if !model.Optional && !m.hasActiveDefaultLocked() {
+	if !model.Optional && !model.Distributed && !m.hasActiveDefaultLocked() {
 		if err := m.setLocked(alias); err != nil {
 			return Model{}, err
 		}
