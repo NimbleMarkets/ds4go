@@ -14,6 +14,27 @@ type cTokenScore struct {
 	Logprob float32
 }
 
+type cDistributedLayers struct {
+	Start     uint32
+	End       uint32
+	HasOutput bool
+	Set       bool
+}
+
+type cDistributedOptions struct {
+	Role            int32
+	Layers          cDistributedLayers
+	ListenHost      unsafe.Pointer
+	ListenPort      int32
+	CoordinatorHost unsafe.Pointer
+	CoordinatorPort int32
+	PrefillChunk    uint32
+	PrefillWindow   uint32
+	ActivationBits  uint32
+	ReplayCheck     bool
+	Debug           bool
+}
+
 type cEngineOptions struct {
 	ModelPath               unsafe.Pointer
 	MTPPath                 unsafe.Pointer
@@ -28,6 +49,11 @@ type cEngineOptions struct {
 	WarmWeights             bool
 	Quality                 bool
 	InspectOnly             bool
+	LoadSlice               bool
+	LoadLayerStart          uint32
+	LoadLayerEnd            uint32
+	LoadOutput              bool
+	Distributed             cDistributedOptions
 }
 
 type cContextMemory struct {
@@ -113,6 +139,7 @@ type rawSymbols struct {
 	ds4SessionPos                    func(s uintptr) int32
 	ds4SessionCtx                    func(s uintptr) int32
 	ds4EngineRoutedQuantBits         func(e uintptr) int32
+	ds4EngineHasOutputHead           func(e uintptr) bool
 	ds4EngineHasMTP                  func(e uintptr) bool
 	ds4EngineMTPDraftTokens          func(e uintptr) int32
 	ds4SessionTokens                 func(s uintptr) *cTokens
@@ -123,4 +150,12 @@ type rawSymbols struct {
 	ds4SessionLoadSnapshot           func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionSnapshotFree           func(snap *cSessionSnapshot)
 	ds4SessionSetDirectionalSteering func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionIsDistributed          func(s uintptr) bool
+	ds4SessionDistributedRouteReady  func(s uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLayerSliceReset        func(s uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalLayerSlice         func(s uintptr, tokens *int32, nTokens uint32, pos0 uint32, layerStart uint32, layerEnd uint32, inputHC *float32, outputHC *float32, outputLogits bool, logits *float32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalOutputHeadFromHC   func(s uintptr, hiddenHC *float32, nTokens uint32, logits *float32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLayerPayloadBytes      func(s uintptr, layerStart uint32, layerEnd uint32) uint64
+	ds4SessionSaveLayerPayload       func(s uintptr, fp uintptr, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLoadLayerPayload       func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
 }

@@ -99,6 +99,14 @@ func (l *Library) SupportsDynamicSteering() bool {
 	return l != nil && l.raw.ds4SessionSetDirectionalSteering != nil
 }
 
+// SupportsDistributed reports whether the loaded library exports the distributed
+// inference and layer-slice entry points. When false, the distributed session
+// methods return ErrDistributedNotSupported and callers should fall back to
+// single-node execution.
+func (l *Library) SupportsDistributed() bool {
+	return l != nil && l.raw.ds4SessionIsDistributed != nil
+}
+
 func (l *Library) register() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -176,6 +184,7 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4SessionPos, "ds4_session_pos")
 	mustRegister(&r.ds4SessionCtx, "ds4_session_ctx")
 	mustRegister(&r.ds4EngineRoutedQuantBits, "ds4_engine_routed_quant_bits")
+	mustRegister(&r.ds4EngineHasOutputHead, "ds4_engine_has_output_head")
 	mustRegister(&r.ds4EngineHasMTP, "ds4_engine_has_mtp")
 	mustRegister(&r.ds4EngineMTPDraftTokens, "ds4_engine_mtp_draft_tokens")
 	mustRegister(&r.ds4SessionTokens, "ds4_session_tokens")
@@ -185,6 +194,19 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4SessionSaveSnapshot, "ds4_session_save_snapshot")
 	mustRegister(&r.ds4SessionLoadSnapshot, "ds4_session_load_snapshot")
 	mustRegister(&r.ds4SessionSnapshotFree, "ds4_session_snapshot_free")
+	// Distributed inference is an optional capability of newer libds4 builds.
+	// Older libraries do not export these symbols, so register them as a group
+	// only when present; callers gate on SupportsDistributed.
+	if _, err := purego.Dlsym(l.handle, "ds4_session_is_distributed"); err == nil {
+		mustRegister(&r.ds4SessionIsDistributed, "ds4_session_is_distributed")
+		mustRegister(&r.ds4SessionDistributedRouteReady, "ds4_session_distributed_route_ready")
+		mustRegister(&r.ds4SessionLayerSliceReset, "ds4_session_layer_slice_reset")
+		mustRegister(&r.ds4SessionEvalLayerSlice, "ds4_session_eval_layer_slice")
+		mustRegister(&r.ds4SessionEvalOutputHeadFromHC, "ds4_session_eval_output_head_from_hc")
+		mustRegister(&r.ds4SessionLayerPayloadBytes, "ds4_session_layer_payload_bytes")
+		mustRegister(&r.ds4SessionSaveLayerPayload, "ds4_session_save_layer_payload")
+		mustRegister(&r.ds4SessionLoadLayerPayload, "ds4_session_load_layer_payload")
+	}
 
 	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering"); err == nil {
 		mustRegister(&r.ds4SessionSetDirectionalSteering, "ds4_session_set_directional_steering")

@@ -99,6 +99,41 @@ const (
 	SessionRewriteRebuildNeeded SessionRewriteResult = 1
 )
 
+// DistributedRole defines the distributed execution mode of the engine.
+type DistributedRole int32
+
+const (
+	// DistributedRoleNone disables distributed execution.
+	DistributedRoleNone DistributedRole = 0
+	// DistributedRoleCoordinator acts as the entrypoint coordinator.
+	DistributedRoleCoordinator DistributedRole = 1
+	// DistributedRoleWorker executes a subset of layer computations.
+	DistributedRoleWorker DistributedRole = 2
+)
+
+// DistributedLayers defines the layer slice bounds for a distributed node.
+type DistributedLayers struct {
+	Start     uint32
+	End       uint32
+	HasOutput bool
+	Set       bool
+}
+
+// DistributedOptions configures the distributed inference data/control plane.
+type DistributedOptions struct {
+	Role            DistributedRole
+	Layers          DistributedLayers
+	ListenHost      string
+	ListenPort      int
+	CoordinatorHost string
+	CoordinatorPort int
+	PrefillChunk    uint32
+	PrefillWindow   uint32
+	ActivationBits  uint32
+	ReplayCheck     bool
+	Debug           bool
+}
+
 // EngineOptions configures ds4_engine_open.
 type EngineOptions struct {
 	// ModelPath is the path to the DeepSeek V4 Flash GGUF model.
@@ -129,6 +164,16 @@ type EngineOptions struct {
 	// InspectOnly opens the model for inspection without preparing the engine
 	// for generation. Maps to ds4_engine_options.inspect_only.
 	InspectOnly bool
+	// LoadSlice asks ds4 to load only a subset of the model's layers.
+	LoadSlice bool
+	// LoadLayerStart is the starting layer index to load (inclusive).
+	LoadLayerStart uint32
+	// LoadLayerEnd is the ending layer index to load (inclusive).
+	LoadLayerEnd uint32
+	// LoadOutput indicates whether the output vocab projection head should be loaded.
+	LoadOutput bool
+	// Distributed configures the distributed inference mesh network options.
+	Distributed DistributedOptions
 }
 
 // ContextMemory is ds4_context_memory.

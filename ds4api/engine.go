@@ -45,6 +45,8 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	modelBytes, modelPtr := cStringPointer(opts.ModelPath)
 	mtpBytes, mtpPtr := cStringPointer(opts.MTPPath)
 	steerBytes, steerPtr := cStringPointer(opts.DirectionalSteeringFile)
+	listenHostBytes, listenHostPtr := cStringPointer(opts.Distributed.ListenHost)
+	coordHostBytes, coordHostPtr := cStringPointer(opts.Distributed.CoordinatorHost)
 	copts := cEngineOptions{
 		ModelPath:               modelPtr,
 		MTPPath:                 mtpPtr,
@@ -59,12 +61,36 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 		WarmWeights:             opts.WarmWeights,
 		Quality:                 opts.Quality,
 		InspectOnly:             opts.InspectOnly,
+		LoadSlice:               opts.LoadSlice,
+		LoadLayerStart:          opts.LoadLayerStart,
+		LoadLayerEnd:            opts.LoadLayerEnd,
+		LoadOutput:              opts.LoadOutput,
+		Distributed: cDistributedOptions{
+			Role: int32(opts.Distributed.Role),
+			Layers: cDistributedLayers{
+				Start:     opts.Distributed.Layers.Start,
+				End:       opts.Distributed.Layers.End,
+				HasOutput: opts.Distributed.Layers.HasOutput,
+				Set:       opts.Distributed.Layers.Set,
+			},
+			ListenHost:      listenHostPtr,
+			ListenPort:      int32(opts.Distributed.ListenPort),
+			CoordinatorHost: coordHostPtr,
+			CoordinatorPort: int32(opts.Distributed.CoordinatorPort),
+			PrefillChunk:    opts.Distributed.PrefillChunk,
+			PrefillWindow:   opts.Distributed.PrefillWindow,
+			ActivationBits:  opts.Distributed.ActivationBits,
+			ReplayCheck:     opts.Distributed.ReplayCheck,
+			Debug:           opts.Distributed.Debug,
+		},
 	}
 	var out uintptr
 	code := l.raw.ds4EngineOpen(&out, &copts)
 	runtime.KeepAlive(modelBytes)
 	runtime.KeepAlive(mtpBytes)
 	runtime.KeepAlive(steerBytes)
+	runtime.KeepAlive(listenHostBytes)
+	runtime.KeepAlive(coordHostBytes)
 	if err := ds4Error("ds4_engine_open", code); err != nil {
 		if runLock != nil {
 			runLock.Close()
@@ -614,6 +640,18 @@ func (e *Engine) RoutedQuantBits() int {
 		return 0
 	}
 	return int(e.lib.raw.ds4EngineRoutedQuantBits(e.ptr))
+}
+
+// HasOutputHead reports whether the loaded GGUF includes the output head. For a
+// distributed split this is false on the coordinator half (e.g. layers 0:30) and
+// true on the worker half that owns the tail (e.g. 31:output).
+func (e *Engine) HasOutputHead() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return false
+	}
+	return e.lib.raw.ds4EngineHasOutputHead(e.ptr)
 }
 
 // HasMTP reports whether this engine has an MTP draft model.

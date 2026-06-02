@@ -14,6 +14,12 @@ import (
 // the program can continue without dynamic steering.
 var ErrSteeringNotSupported = errors.New("ds4: session directional steering is not supported by the loaded library (missing symbol)")
 
+// ErrDistributedNotSupported is returned by the distributed inference and
+// layer-slice session methods when the loaded libds4 build does not export the
+// ds4_session distributed symbols. Callers can check with errors.Is and fall
+// back to single-node execution.
+var ErrDistributedNotSupported = errors.New("ds4: distributed inference is not supported by the loaded library (missing symbols)")
+
 // Session wraps a ds4_session.
 type Session struct {
 	lib     *Library
@@ -525,4 +531,181 @@ func (s *Session) SetDirectionalSteering(file string, mode SteeringMode, ffn flo
 	code := s.lib.raw.ds4SessionSetDirectionalSteering(s.ptr, filePtr, int32(mode), ffn, attn, threshold, int32(scope), errPtr, n)
 	runtime.KeepAlive(b)
 	return errorFromBuffer("ds4_session_set_directional_steering", code, buf)
+}
+
+// IsDistributed returns whether the session is operating in distributed mode.
+func (s *Session) IsDistributed() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionIsDistributed == nil {
+		return false
+	}
+	return s.lib.raw.ds4SessionIsDistributed(s.ptr)
+}
+
+// DistributedRouteReady returns 1 when the coordinator has a complete worker route,
+// 0 when workers are still missing, and -1 for internal errors.
+func (s *Session) DistributedRouteReady() (bool, error) {
+	unlock, err := s.require()
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionDistributedRouteReady == nil {
+		return false, ErrDistributedNotSupported
+	}
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionDistributedRouteReady(s.ptr, ptr, n)
+	if code < 0 {
+		return false, errorFromBuffer("ds4_session_distributed_route_ready", code, buf)
+	}
+	return code == 1, nil
+}
+
+// LayerSliceReset resets the graph and KV cache state of a distributed layer slice.
+func (s *Session) LayerSliceReset() error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionLayerSliceReset == nil {
+		return ErrDistributedNotSupported
+	}
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionLayerSliceReset(s.ptr, ptr, n)
+	return errorFromBuffer("ds4_session_layer_slice_reset", code, buf)
+}
+
+// EvalLayerSlice runs forward pass computations for a contiguous subset of model layers.
+func (s *Session) EvalLayerSlice(
+	tokens []int32,
+	pos0 uint32,
+	layerStart uint32,
+	layerEnd uint32,
+	inputHC []float32,
+	outputHC []float32,
+	outputLogits bool,
+	logits []float32,
+) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionEvalLayerSlice == nil {
+		return ErrDistributedNotSupported
+	}
+
+	var tokensPtr *int32
+	if len(tokens) > 0 {
+		tokensPtr = &tokens[0]
+	}
+	var inputHCPtr *float32
+	if len(inputHC) > 0 {
+		inputHCPtr = &inputHC[0]
+	}
+	var outputHCPtr *float32
+	if len(outputHC) > 0 {
+		outputHCPtr = &outputHC[0]
+	}
+	var logitsPtr *float32
+	if len(logits) > 0 {
+		logitsPtr = &logits[0]
+	}
+
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionEvalLayerSlice(
+		s.ptr,
+		tokensPtr,
+		uint32(len(tokens)),
+		pos0,
+		layerStart,
+		layerEnd,
+		inputHCPtr,
+		outputHCPtr,
+		outputLogits,
+		logitsPtr,
+		ptr,
+		n,
+	)
+	runtime.KeepAlive(tokens)
+	runtime.KeepAlive(inputHC)
+	runtime.KeepAlive(outputHC)
+	runtime.KeepAlive(logits)
+	return errorFromBuffer("ds4_session_eval_layer_slice", code, buf)
+}
+
+// EvalOutputHeadFromHC computes vocabulary logits from final hidden activations.
+func (s *Session) EvalOutputHeadFromHC(hiddenHC []float32, nTokens uint32, logits []float32) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionEvalOutputHeadFromHC == nil {
+		return ErrDistributedNotSupported
+	}
+
+	var hiddenHCPtr *float32
+	if len(hiddenHC) > 0 {
+		hiddenHCPtr = &hiddenHC[0]
+	}
+	var logitsPtr *float32
+	if len(logits) > 0 {
+		logitsPtr = &logits[0]
+	}
+
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionEvalOutputHeadFromHC(s.ptr, hiddenHCPtr, nTokens, logitsPtr, ptr, n)
+	runtime.KeepAlive(hiddenHC)
+	runtime.KeepAlive(logits)
+	return errorFromBuffer("ds4_session_eval_output_head_from_hc", code, buf)
+}
+
+// LayerPayloadBytes returns the serialization size of a layer slice KV cache payload.
+func (s *Session) LayerPayloadBytes(layerStart uint32, layerEnd uint32) uint64 {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionLayerPayloadBytes == nil {
+		return 0
+	}
+	return s.lib.raw.ds4SessionLayerPayloadBytes(s.ptr, layerStart, layerEnd)
+}
+
+// SaveLayerPayload writes a layer slice KV cache payload to fp.
+func (s *Session) SaveLayerPayload(fp uintptr, layerStart uint32, layerEnd uint32) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionSaveLayerPayload == nil {
+		return ErrDistributedNotSupported
+	}
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionSaveLayerPayload(s.ptr, fp, layerStart, layerEnd, ptr, n)
+	return errorFromBuffer("ds4_session_save_layer_payload", code, buf)
+}
+
+// LoadLayerPayload reads a layer slice KV cache payload from fp.
+func (s *Session) LoadLayerPayload(fp uintptr, payloadBytes uint64, tokens []int32, layerStart uint32, layerEnd uint32) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionLoadLayerPayload == nil {
+		return ErrDistributedNotSupported
+	}
+
+	var tokensPtr *int32
+	if len(tokens) > 0 {
+		tokensPtr = &tokens[0]
+	}
+
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionLoadLayerPayload(s.ptr, fp, payloadBytes, tokensPtr, uint32(len(tokens)), layerStart, layerEnd, ptr, n)
+	runtime.KeepAlive(tokens)
+	return errorFromBuffer("ds4_session_load_layer_payload", code, buf)
 }
