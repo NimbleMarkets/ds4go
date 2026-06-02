@@ -46,5 +46,8 @@ func ModelFlags(model models.Model) string {
 	if model.Optional {
 		flags = append(flags, "mtp")
 	}
+	if model.Distributed {
+		flags = append(flags, "distributed")
+	}
 	return strings.Join(flags, ", ")
 }

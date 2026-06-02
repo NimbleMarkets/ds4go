@@ -143,9 +143,20 @@ func runModelList(args []string) error {
 	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout)
-	printModelGroup("Installed", list, true)
+	// Size the alias and RAM columns to the widest value present so long names
+	// (e.g. distributed split aliases) don't overflow and misalign the table.
+	aliasW, ramW := 14, 12
+	for _, mdl := range list {
+		if w := lipgloss.Width(mdl.Alias); w > aliasW {
+			aliasW = w
+		}
+		if w := lipgloss.Width(mdl.RecommendedRAM); w > ramW {
+			ramW = w
+		}
+	}
+	printModelGroup("Installed", list, true, aliasW, ramW)
 	fmt.Fprintln(os.Stdout)
-	printModelGroup("Available to download", list, false)
+	printModelGroup("Available to download", list, false, aliasW, ramW)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Use: ds4go model set q4-imatrix")
@@ -366,13 +377,13 @@ func activeDefault(list []models.Model) string {
 func filterDefaultableInstalled(list []models.Model) []models.Model {
 	var out []models.Model
 	for _, model := range list {
-		if model.Installed && !model.Optional {
+		if model.Installed && !model.Optional && !model.Distributed {
 			out = append(out, model)
 		}
 	}
 	if len(out) == 0 {
 		for _, model := range list {
-			if !model.Optional {
+			if !model.Optional && !model.Distributed {
 				out = append(out, model)
 			}
 		}
@@ -380,13 +391,13 @@ func filterDefaultableInstalled(list []models.Model) []models.Model {
 	return out
 }
 
-func printModelGroup(title string, list []models.Model, installed bool) {
+func printModelGroup(title string, list []models.Model, installed bool, aliasW, ramW int) {
 	fmt.Fprintf(os.Stdout, "%s:\n", title)
 	any := false
 
-	aliasStyle := lipgloss.NewStyle().Width(14)
+	aliasStyle := lipgloss.NewStyle().Width(aliasW)
 	sizeStyle := lipgloss.NewStyle().Width(10).Align(lipgloss.Right)
-	ramStyle := lipgloss.NewStyle().Width(12)
+	ramStyle := lipgloss.NewStyle().Width(ramW)
 	muted := tui.MutedStyle
 	success := tui.ActiveStyle
 

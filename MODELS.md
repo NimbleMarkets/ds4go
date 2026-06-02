@@ -32,10 +32,20 @@ Curated aliases:
 | Alias | Recommended For | Size | Notes |
 | --- | --- | ---: | --- |
 | `q2-imatrix` | 96-128 GB RAM | 81.2 GB | Preferred imatrix-tuned default |
+| `q2-q4-imatrix` | 128-192 GB RAM | 98 GB | Mixed q2/q4 imatrix: q2 routed experts, last 6 layers q4 |
 | `q4-imatrix` | >=256 GB RAM | 153 GB | Higher quality |
-| `q2` | 96-128 GB RAM | 87 GB | Legacy non-imatrix q2 |
-| `q4` | >=256 GB RAM | 165 GB | Legacy non-imatrix q4 |
+| `pro-q2-imatrix` | >=512 GB RAM | 430 GB | DeepSeek V4 Pro q2 imatrix quant |
+| `pro-q4-layers00-30` | Distributed, 2 hosts | 426 GB | Pro Q4 split: coordinator half (`--layers 0:30`) |
+| `pro-q4-layers31-output` | Distributed, 2 hosts | 412 GB | Pro Q4 split: worker half (`--layers 31:output`) |
 | `mtp` | Optional | 3.6 GB | Speculative decoding companion model |
+
+The `pro-q4-layers*` halves form a single DeepSeek V4 Pro Q4 model split across two
+hosts; download both (≈838 GB total). Each entry carries its `distributedRole`
+(`coordinator`/`worker`) and `layerRange` (in upstream `--layers` form, `0:30` and
+`31:output`) as catalog data so external tooling can construct the run directly.
+ds4go manages download, listing, and file availability for these halves but does
+not drive the distributed run itself; they are not auto-linked as the active
+`ds4flash.gguf` and cannot be set as the default chat model.
 
 Typical local layout:
 
