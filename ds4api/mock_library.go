@@ -173,6 +173,7 @@ func NewMockLibrary() *Library {
 
 	// Engine metadata.
 	r.ds4EngineRoutedQuantBits = func(e uintptr) int32 { return 4 }
+	r.ds4EngineHasOutputHead = mockEngineHasOutputHead
 	r.ds4EngineHasMTP = mockEngineHasMTP
 	r.ds4EngineMTPDraftTokens = mockEngineMTPDraftTokens
 	r.ds4EnginePower = func(e uintptr) int32 {
@@ -275,6 +276,30 @@ func NewMockLibrary() *Library {
 	r.ds4SessionSetDirectionalSteering = func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32 {
 		return 0
 	}
+	r.ds4SessionIsDistributed = func(s uintptr) bool {
+		return false
+	}
+	r.ds4SessionDistributedRouteReady = func(s uintptr, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
+	r.ds4SessionLayerSliceReset = func(s uintptr, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
+	r.ds4SessionEvalLayerSlice = func(s uintptr, tokens *int32, nTokens uint32, pos0 uint32, layerStart uint32, layerEnd uint32, inputHC *float32, outputHC *float32, outputLogits bool, logits *float32, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
+	r.ds4SessionEvalOutputHeadFromHC = func(s uintptr, hiddenHC *float32, nTokens uint32, logits *float32, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
+	r.ds4SessionLayerPayloadBytes = func(s uintptr, layerStart uint32, layerEnd uint32) uint64 {
+		return 0
+	}
+	r.ds4SessionSaveLayerPayload = func(s uintptr, fp uintptr, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
+	r.ds4SessionLoadLayerPayload = func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32 {
+		return 0
+	}
 
 	return lib
 }
@@ -362,11 +387,12 @@ func mockTokensStartsWith(tokens *cTokens, prefix *cTokens) bool {
 // ---------------------------------------------------------------------------
 
 type mockEngine struct {
-	eosToken     int32
-	hasMTP       bool
-	mtpDraft     int32
-	nextToken    int32
-	powerPercent int32
+	eosToken      int32
+	hasMTP        bool
+	hasOutputHead bool
+	mtpDraft      int32
+	nextToken     int32
+	powerPercent  int32
 }
 
 type mockSession struct {
@@ -429,7 +455,7 @@ func mockFreeSession(p uintptr) {
 // ---------------------------------------------------------------------------
 
 func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
-	eng := &mockEngine{eosToken: 1, hasMTP: false, mtpDraft: 1, nextToken: 42}
+	eng := &mockEngine{eosToken: 1, hasMTP: false, hasOutputHead: true, mtpDraft: 1, nextToken: 42}
 	if opt != nil {
 		eng.powerPercent = opt.PowerPercent
 		if eng.powerPercent == 0 {
@@ -460,6 +486,13 @@ func mockTokenText(e uintptr, token int32, length *uintptr) unsafe.Pointer {
 	copy(b, text)
 	b[len(text)] = 0
 	return ptr
+}
+
+func mockEngineHasOutputHead(e uintptr) bool {
+	if eng := mockEnginePtr(e); eng != nil {
+		return eng.hasOutputHead
+	}
+	return false
 }
 
 func mockEngineHasMTP(e uintptr) bool {

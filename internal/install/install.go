@@ -855,6 +855,16 @@ func defaultBackend(goos, goarch string) string {
 
 // Validate checks the installation of libds4 in opts.DestDir.
 // It verifies existence, permissions, checksums, and dynamic loading.
+// featureGateStatus renders an optional libds4 capability for `ds4go validate`.
+// A missing capability is informational, not an error: older libds4 builds load
+// fine but do not export the Dlsym-guarded symbol group.
+func featureGateStatus(ok bool) string {
+	if ok {
+		return "✓ supported"
+	}
+	return "✗ not supported by this build"
+}
+
 func Validate(ctx context.Context, opts Options) error {
 	opts = normalize(opts)
 
@@ -935,6 +945,13 @@ func Validate(ctx context.Context, opts Options) error {
 	// 4b. Print a short git-style fingerprint so users can eyeball the
 	// installed library against a release's published checksum.
 	fmt.Fprintf(opts.Out, "\nFingerprint: %s\n", localSHA[:8])
+
+	// 4c. Report optional feature gates so users can see which capabilities the
+	// loaded build exports. These are Dlsym-guarded symbol groups, so older
+	// libraries load fine but report the capability as unsupported.
+	fmt.Fprintln(opts.Out, "\n[Capabilities]")
+	fmt.Fprintf(opts.Out, "  Dynamic steering:      %s\n", featureGateStatus(lib.SupportsDynamicSteering()))
+	fmt.Fprintf(opts.Out, "  Distributed inference: %s\n", featureGateStatus(lib.SupportsDistributed()))
 
 	// 5. Active process verification (excluding the current process)
 	if holders, err := FindLibraryHolders(libPath); err == nil {

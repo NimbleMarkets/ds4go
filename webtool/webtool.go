@@ -146,7 +146,6 @@ func (w *WebHelper) getSearchConfig(provider string, query string) (string, stri
 	return searchURL, js
 }
 
-
 // VisitPage navigates to a URL, optionally scrolls, and extracts its text layout.
 func (w *WebHelper) VisitPage(ctx context.Context, targetURL string) (string, error) {
 	if targetURL == "" {
@@ -953,6 +952,7 @@ func (ws *wsConn) call(ctx context.Context, method string, params any) (json.Raw
 		}
 	}
 }
+
 const webExtractSearchTemplateJS = `(() => {
 	const clean = s => (s || '').replace(/\s+/g, ' ').trim();
 	const esc = s => clean(s).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]').replace(/\n/g, ' ');
@@ -1000,7 +1000,6 @@ for (const el of els){const t=clean(el.innerText||el.value||el.textContent);
 if(!t)continue; if(pats.some(p=>p.test(t))){el.click(); return 'clicked '+t;}}
 return '';
 })()`
-
 
 const webExtractPageJS = `(() => {
 const clean=s=>(s||'').replace(/\s+/g,' ').trim();
