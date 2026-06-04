@@ -1,9 +1,12 @@
 package ds4
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/NimbleMarkets/ds4go/internal/models"
 )
@@ -102,4 +105,51 @@ func libraryFileName() string {
 	default:
 		return "libds4.so"
 	}
+}
+
+// DetectDefaultBackend probes the environment and installation metadata to determine
+// the preferred backend for the shared library at libPath.
+//
+// Passing an empty string probes using the default library path.
+func DetectDefaultBackend(libPath string) Backend {
+	resolvedPath := libPath
+	if resolvedPath == "" {
+		resolvedPath = DefaultLibraryPath()
+	}
+	if resolvedPath != "" {
+		dir := filepath.Dir(resolvedPath)
+		metaPath := filepath.Join(dir, "ds4go-install.json")
+		if data, err := os.ReadFile(metaPath); err == nil {
+			var meta struct {
+				Backend string `json:"backend"`
+			}
+			if err := json.Unmarshal(data, &meta); err == nil {
+				switch strings.ToLower(meta.Backend) {
+				case "metal":
+					return BackendMetal
+				case "cuda":
+					return BackendCUDA
+				case "cpu":
+					return BackendCPU
+				}
+			}
+		}
+	}
+
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return BackendMetal
+	}
+	if runtime.GOOS == "linux" {
+		if _, err := os.Stat("/dev/nvidiactl"); err == nil {
+			return BackendCUDA
+		}
+		if _, err := os.Stat("/dev/nvidia0"); err == nil {
+			return BackendCUDA
+		}
+		if _, err := exec.LookPath("nvidia-smi"); err == nil {
+			return BackendCUDA
+		}
+		return BackendCPU
+	}
+	return BackendCPU
 }

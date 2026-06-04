@@ -132,9 +132,9 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 }
 
 // SelectBackend resolves the backend from --metal/--cuda/--cpu/--backend,
-// defaulting to Metal.
+// falling back to metadata detection or host capabilities.
 func (c *CLIConfig) SelectBackend() ds4.Backend {
-	return selectBackend(c.Metal, c.CUDA, c.CPU, c.Backend)
+	return selectBackend(c.Metal, c.CUDA, c.CPU, c.Backend, c.Lib)
 }
 
 // ThinkMode resolves the thinking mode from --think/--think-max/--nothink.
@@ -291,9 +291,9 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 }
 
 // SelectBackend resolves the backend from --metal/--cuda/--cpu/--backend,
-// defaulting to Metal.
+// falling back to metadata detection or host capabilities.
 func (c *ServerConfig) SelectBackend() ds4.Backend {
-	return selectBackend(c.Metal, c.CUDA, c.CPU, c.Backend)
+	return selectBackend(c.Metal, c.CUDA, c.CPU, c.Backend, c.Lib)
 }
 
 // EngineOptions builds ds4.EngineOptions from the parsed flags.
@@ -316,7 +316,7 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 // Addr returns the host:port listen address.
 func (c *ServerConfig) Addr() string { return fmt.Sprintf("%s:%d", c.Host, c.Port) }
 
-func selectBackend(metal, cuda, cpu bool, name string) ds4.Backend {
+func selectBackend(metal, cuda, cpu bool, name string, libPath string) ds4.Backend {
 	switch {
 	case cpu:
 		return ds4.BackendCPU
@@ -330,9 +330,10 @@ func selectBackend(metal, cuda, cpu bool, name string) ds4.Backend {
 		return ds4.BackendCPU
 	case "cuda":
 		return ds4.BackendCUDA
-	default:
+	case "metal":
 		return ds4.BackendMetal
 	}
+	return ds4.DetectDefaultBackend(libPath)
 }
 
 // Parse parses args with fs, handling --help by printing usage and exiting 0.
