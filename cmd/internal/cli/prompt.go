@@ -23,10 +23,12 @@ func newPromptCommand() *cobra.Command {
 	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
 	cfg := cliopts.RegisterCLI(fs)
 	cmd := &cobra.Command{
-		Use:   "prompt [(-p PROMPT | --prompt-file FILE)] [options]",
+		Use:   "prompt [options]",
 		Short: "Run prompt or interactive chat inference",
 		Long:  "Run ds4 inference. With no prompt, starts an interactive chat (ds4>).",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return run(cfg)
 		},
 	}

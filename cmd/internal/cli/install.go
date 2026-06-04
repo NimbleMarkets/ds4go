@@ -11,9 +11,11 @@ import (
 func newInstallCommand() *cobra.Command {
 	var opts install.Options
 	cmd := &cobra.Command{
-		Use:   "install",
+		Use:   "install [options]",
 		Short: "Download a prebuilt libds4 shared library",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			if opts.Token == "" {
 				opts.Token = os.Getenv("GITHUB_TOKEN")
 			}
@@ -48,9 +50,11 @@ func newInstallCommand() *cobra.Command {
 func newValidateCommand() *cobra.Command {
 	var opts install.Options
 	cmd := &cobra.Command{
-		Use:   "validate",
+		Use:   "validate [options]",
 		Short: "Validate the installed libds4 shared library",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			opts.Out = os.Stdout
 			opts.ProgressOut = os.Stderr
 			opts.In = os.Stdin
@@ -67,10 +71,12 @@ func newValidateCommand() *cobra.Command {
 func newStatusCommand() *cobra.Command {
 	var opts install.Options
 	cmd := &cobra.Command{
-		Use:     "status",
+		Use:     "status [options]",
 		Aliases: []string{"usage", "processes", "locks", "holders"},
 		Short:   "Find processes holding or using the libds4 shared library",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			opts.Out = os.Stdout
 			opts.ProgressOut = os.Stderr
 			opts.In = os.Stdin
@@ -87,9 +93,11 @@ func newStatusCommand() *cobra.Command {
 func newUninstallCommand() *cobra.Command {
 	var opts install.Options
 	cmd := &cobra.Command{
-		Use:   "uninstall",
+		Use:   "uninstall [options]",
 		Short: "Uninstall the installed libds4 shared library",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			opts.Out = os.Stdout
 			opts.ProgressOut = os.Stderr
 			opts.In = os.Stdin
