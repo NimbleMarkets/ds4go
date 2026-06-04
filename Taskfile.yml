@@ -10,7 +10,8 @@ tasks:
     desc: 'Go tidy all the things'
     run: once
     cmds:
-      - go mod tidy
+      - GOWORK=off go mod tidy
+      - cd cmd && go mod tidy
 
   build:
     desc: Build all packages
@@ -43,6 +44,8 @@ tasks:
       - "**/*.go"
       - go.mod
       - go.sum
+      - cmd/go.mod
+      - cmd/go.sum
     generates:
       - bin/ds4go
     cmds:
@@ -52,17 +55,18 @@ tasks:
     desc: Run Go tests
     deps: [tidy]
     cmds:
-      - go test ./...
+      - go test ./... ./cmd/...
 
   vet:
     desc: Run Go vet
     cmds:
-      - go vet ./...
+      - go vet ./... ./cmd/...
 
   pre-push:
     desc: Verify formatting, build, and vet — run this before pushing
     cmds:
-      - go mod tidy
+      - GOWORK=off go mod tidy
+      - cd cmd && go mod tidy
       - cmd: |
           files=$(gofmt -l .)
           if [ -n "$files" ]; then
@@ -70,8 +74,8 @@ tasks:
             echo "$files"
             exit 1
           fi
-      - go build ./...
-      - go vet ./...
+      - go build ./... ./cmd/...
+      - go vet ./... ./cmd/...
 
   hooks:install:
     desc: Install git pre-push hook that runs 'task pre-push'

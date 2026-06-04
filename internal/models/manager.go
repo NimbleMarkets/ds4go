@@ -27,14 +27,22 @@ type Config struct {
 	Models       map[string]Model `json:"models"`
 }
 
+// ProgressTracker wraps an io.ReadCloser to track and display download progress.
+type ProgressTracker interface {
+	io.ReadCloser
+	SwapReader(r io.ReadCloser)
+	Done(err error)
+}
+
 // Manager manages the local ds4 model directory and config.
 type Manager struct {
-	DS4Dir      string
-	ModelsDir   string
-	ConfigPath  string
-	HTTPClient  *http.Client
-	Out         io.Writer
-	ProgressOut io.Writer
+	DS4Dir             string
+	ModelsDir          string
+	ConfigPath         string
+	HTTPClient         *http.Client
+	Out                io.Writer
+	ProgressOut        io.Writer
+	NewProgressTracker func(out io.Writer, name string, start, total int64) ProgressTracker
 }
 
 // NewManager returns a manager rooted at DS4_DIR or ~/.ds4.
@@ -521,9 +529,9 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 	}
 	defer f.Close()
 
-	var pr *progressReader
-	if m.ProgressOut != nil {
-		pr = newProgressReader(m.ProgressOut, filepath.Base(out), start, meta.Size, http.NoBody)
+	var tracker ProgressTracker
+	if m.NewProgressTracker != nil {
+		tracker = m.NewProgressTracker(m.ProgressOut, filepath.Base(out), start, meta.Size)
 	}
 
 	first := true
@@ -605,9 +613,9 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 		}
 
 		var src io.Reader = resp.Body
-		if pr != nil {
-			pr.SwapReader(resp.Body)
-			src = pr
+		if tracker != nil {
+			tracker.SwapReader(resp.Body)
+			src = tracker
 		}
 		n, copyErr := io.Copy(f, src)
 		resp.Body.Close()
@@ -623,8 +631,8 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 		}
 	}
 
-	if pr != nil {
-		pr.Done(nil)
+	if tracker != nil {
+		tracker.Done(nil)
 	}
 	if err := f.Close(); err != nil {
 		return "", err
@@ -874,4 +882,17 @@ func huggingFaceToken() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for next := div * unit; n >= next && exp < 4; next *= unit {
+		div = next
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

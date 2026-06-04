@@ -8,7 +8,7 @@ package main
 import (
 	"os"
 
-	"github.com/NimbleMarkets/ds4go/internal/cli"
+	"github.com/NimbleMarkets/ds4go/cmd/internal/cli"
 )
 
 func main() {

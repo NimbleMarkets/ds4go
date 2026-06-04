@@ -25,7 +25,6 @@ import (
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/models"
-	"github.com/NimbleMarkets/ds4go/internal/tui"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -72,6 +71,7 @@ type Options struct {
 	ProgressOut  io.Writer
 	HTTPClient   *http.Client
 	In           io.Reader
+	Confirm      func(prompt string, defaultYes bool) (bool, error)
 }
 
 // Result describes the installed release asset.
@@ -197,11 +197,16 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			}
 
 			if isTerminalFunc(opts.In) {
-				result, err := tui.Confirm(fmt.Sprintf("Replace %s?", res.Library), false, opts.In, opts.Out)
+				var confirmed bool
+				if opts.Confirm != nil {
+					confirmed, err = opts.Confirm(fmt.Sprintf("Replace %s?", res.Library), false)
+				} else {
+					confirmed, err = defaultConfirm(fmt.Sprintf("Replace %s?", res.Library), false, opts.In, opts.Out)
+				}
 				if err != nil {
 					return nil, fmt.Errorf("read prompt response: %w", err)
 				}
-				if result != tui.ConfirmYes {
+				if !confirmed {
 					return nil, fmt.Errorf("install cancelled")
 				}
 				fmt.Fprintln(opts.Out)
@@ -369,11 +374,17 @@ func decidePinOverwrite(opts Options, libPath string) (bool, error) {
 		return true, nil
 	}
 	if isTerminalFunc(opts.In) {
-		result, err := tui.Confirm(fmt.Sprintf("Replace %s with pinned file?", libPath), false, opts.In, opts.Out)
+		var confirmed bool
+		var err error
+		if opts.Confirm != nil {
+			confirmed, err = opts.Confirm(fmt.Sprintf("Replace %s with pinned file?", libPath), false)
+		} else {
+			confirmed, err = defaultConfirm(fmt.Sprintf("Replace %s with pinned file?", libPath), false, opts.In, opts.Out)
+		}
 		if err != nil {
 			return false, fmt.Errorf("read prompt response: %w", err)
 		}
-		if result != tui.ConfirmYes {
+		if !confirmed {
 			return false, fmt.Errorf("install cancelled")
 		}
 		fmt.Fprintln(opts.Out)
@@ -1065,11 +1076,17 @@ func Uninstall(ctx context.Context, opts Options) error {
 	// 2. Prompt for confirmation if not forced
 	if !opts.Force {
 		if isTerminalFunc(opts.In) {
-			result, err := tui.Confirm(uninstallPrompt(opts.DestDir), false, opts.In, opts.Out)
+			var confirmed bool
+			var err error
+			if opts.Confirm != nil {
+				confirmed, err = opts.Confirm(uninstallPrompt(opts.DestDir), false)
+			} else {
+				confirmed, err = defaultConfirm(uninstallPrompt(opts.DestDir), false, opts.In, opts.Out)
+			}
 			if err != nil {
 				return fmt.Errorf("read prompt response: %w", err)
 			}
-			if result != tui.ConfirmYes {
+			if !confirmed {
 				return fmt.Errorf("uninstall cancelled")
 			}
 			fmt.Fprintln(opts.Out)
@@ -1559,4 +1576,27 @@ func checkSignatureStatus(path string) string {
 		}
 	}
 	return "verified (official Apple Developer ID)"
+}
+
+func defaultConfirm(prompt string, defaultYes bool, in io.Reader, out io.Writer) (bool, error) {
+	if defaultYes {
+		fmt.Fprintf(out, "%s [Y/n]: ", prompt)
+	} else {
+		fmt.Fprintf(out, "%s [y/N]: ", prompt)
+	}
+	var input string
+	if _, err := fmt.Fscanln(in, &input); err != nil {
+		if err.Error() == "unexpected newline" {
+			return defaultYes, nil
+		}
+		return false, err
+	}
+	input = strings.ToLower(strings.TrimSpace(input))
+	if input == "y" || input == "yes" {
+		return true, nil
+	}
+	if input == "n" || input == "no" {
+		return false, nil
+	}
+	return defaultYes, nil
 }
