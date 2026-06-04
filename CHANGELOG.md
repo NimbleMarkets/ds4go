@@ -1,6 +1,6 @@
 # `ds4go` CHANGELOG
 
-NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/neomantra/ds4/tree/nm-shared
+NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
 ## v0.5.0 (unreleased)
 
