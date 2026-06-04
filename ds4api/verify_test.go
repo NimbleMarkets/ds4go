@@ -10,6 +10,9 @@ import (
 // writeLib writes a fake libds4 with an exact permission mode (bypassing umask).
 func writeLib(t *testing.T, dir, name string, mode os.FileMode) string {
 	t.Helper()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("fake libds4"), mode); err != nil {
 		t.Fatal(err)
