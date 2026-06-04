@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 
+	"github.com/NimbleMarkets/ds4go/cmd/internal/tui"
 	"github.com/NimbleMarkets/ds4go/internal/install"
 	"github.com/spf13/cobra"
 )
@@ -19,6 +20,10 @@ func newInstallCommand() *cobra.Command {
 			opts.Out = os.Stdout
 			opts.ProgressOut = os.Stderr
 			opts.In = os.Stdin
+			opts.Confirm = func(prompt string, defaultYes bool) (bool, error) {
+				res, err := tui.Confirm(prompt, defaultYes, opts.In, opts.Out)
+				return res == tui.ConfirmYes, err
+			}
 			_, err := install.Run(cmd.Context(), opts)
 			return err
 		},
@@ -88,6 +93,10 @@ func newUninstallCommand() *cobra.Command {
 			opts.Out = os.Stdout
 			opts.ProgressOut = os.Stderr
 			opts.In = os.Stdin
+			opts.Confirm = func(prompt string, defaultYes bool) (bool, error) {
+				res, err := tui.Confirm(prompt, defaultYes, opts.In, opts.Out)
+				return res == tui.ConfirmYes, err
+			}
 			return install.Uninstall(cmd.Context(), opts)
 		},
 	}

@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"charm.land/lipgloss/v2"
 	ds4 "github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/cmd/internal/tui"
 	"github.com/NimbleMarkets/ds4go/internal/models"
-	"github.com/NimbleMarkets/ds4go/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -117,6 +118,9 @@ func modelManager() *models.Manager {
 	m := models.NewManager()
 	m.Out = os.Stdout
 	m.ProgressOut = os.Stderr
+	m.NewProgressTracker = func(out io.Writer, name string, start, total int64) models.ProgressTracker {
+		return tui.NewProgressTracker(out, name, start, total)
+	}
 	return m
 }
 

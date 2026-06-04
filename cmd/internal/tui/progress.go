@@ -1,15 +1,22 @@
-package models
+package tui
 
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
+
+// NewProgressTracker returns a reader wrapper that tracks progress.
+func NewProgressTracker(out io.Writer, name string, start, total int64) models.ProgressTracker {
+	return newProgressReader(out, name, start, total, http.NoBody)
+}
 
 var (
 	colorAccent  = lipgloss.Color("#5FBE9E")
