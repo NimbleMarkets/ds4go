@@ -188,44 +188,48 @@ Most users should import the root package `ds4` from `github.com/NimbleMarkets/d
 
 The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 
-`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetLogFunc` redirects libds4 diagnostics that flow through `ds4_log_set` into a Go callback, including Metal/CUDA backend messages routed through `ds4_gpu_log`. `SetAbortFunc` exposes libds4's fatal-invariant hook, which fires immediately before libds4 aborts the process.
+`ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetStderr`/`SetStderrFd` redirect libds4's diagnostic stream to a file or descriptor (see below). `SetAbortFunc` exposes libds4's fatal-invariant hook, which fires immediately before libds4 aborts the process.
 
 ## Native stderr
 
-Recent `libds4` builds expose `ds4_log_set`, and ds4go wraps it as
-`SetLogFunc`. The root package also provides `SetLogOutput` for the common
-`io.Writer` case and `DiscardLogs` for quiet embedders. Use them to route libds4
-diagnostics, including Metal/CUDA backend diagnostics, into your application's
-logger or to discard them:
+`libds4` writes its diagnostics — including Metal/CUDA backend messages — to its
+own `stderr` stream. ds4go redirects that stream to a file or descriptor with
+`SetStderr`, `SetStderrFd`, and `DiscardLogs`:
 
 ```go
-err := ds4.SetLogOutput(log.Writer())
-err = ds4.DiscardLogs()
+f, _ := os.Create("ds4.log")
+err := ds4.SetStderr(f)   // redirect libds4 diagnostics to f
+err = ds4.DiscardLogs()   // or send them to the null device
+err = ds4.SetStderr(nil)  // restore the native stderr
 ```
 
-The logger is process-global inside libds4, not per engine, so install it once
-during startup. The callback may be invoked from native worker threads; keep it
-concurrency-safe and quick. Install it before `NewEngine`, or immediately after
-an explicit `Load` and before `Library.NewEngine`, if you want to capture
-structured model-load and metadata-validation failures from libds4.
+libds4 dups the descriptor internally and writes unbuffered, so you may close
+your file once it is no longer the active target. The redirect target is
+process-global inside libds4, not per engine, so install it once during startup,
+before `NewEngine`. It is targeted at libds4's own output — not a process-wide
+`dup2` — so anything other libraries write directly to file descriptor 2 is
+unaffected. Diagnostics are redirected as plain text; libds4 uses log levels only
+to colorize TTY output, so no per-message level is surfaced to Go.
 
-Most engine and GPU backend diagnostics now route through the callback. Some
-native code paths may still write directly to `stderr` until upstream ds4
-converts them to `ds4_log` or `ds4_gpu_log`. For CLI use, redirect stderr with
-your shell:
+To capture diagnostics into an in-process `io.Writer` — a TUI log overlay, a ring
+buffer, or an `slog` adapter — use `CaptureStderr`, which bridges the descriptor
+redirect to a writer with an internal pipe and pump goroutine:
+
+```go
+cap, err := ds4.CaptureStderr(myWriter) // libds4 diagnostics stream into myWriter
+defer cap.Close()                       // restore native stderr and drain on exit
+```
+
+Redirection is **not supported on Windows**: `os.File.Fd` returns a Win32
+`HANDLE`, which libds4's CRT-based `ds4_set_stderr_fd` cannot accept, so these
+calls return `ErrStderrUnsupportedOnWindows` there.
+
+For CLI use, you can also redirect stderr with your shell:
 
 ```sh
 ds4go prompt ... 2>ds4.log
 ds4go prompt ... 2>/dev/null
 ```
-
-For Go applications, assigning `os.Stderr` only affects Go code that writes
-through `os.Stderr`; it does not reliably capture C `fprintf(stderr, ...)` from
-the loaded shared library. Capturing direct native stderr inside one process
-requires process-wide file-descriptor redirection, which can interfere with
-other goroutines, libraries, and concurrent engines. Prefer `SetLogFunc` for
-routed libds4 diagnostics, shell redirection for CLI runs, or running the model
-worker as a subprocess with `exec.Cmd.Stderr`.
 
 ## Fatal abort hook
 

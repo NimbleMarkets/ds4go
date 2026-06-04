@@ -20,8 +20,6 @@ type Library struct {
 	path    string
 	handle  uintptr
 	raw     rawSymbols
-	logMu   sync.Mutex
-	logID   uintptr
 	abortMu sync.Mutex
 	abortID uintptr
 }
@@ -135,7 +133,7 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4ContextMemoryEstimate, "ds4_context_memory_estimate")
 	mustRegister(&r.ds4LogIsTTY, "ds4_log_is_tty")
 	mustRegister(&r.ds4LogString, "ds4_log")
-	mustRegister(&r.ds4LogSet, "ds4_log_set")
+	mustRegister(&r.ds4SetStderrFd, "ds4_set_stderr_fd")
 	mustRegister(&r.ds4AbortSet, "ds4_abort_set")
 	mustRegister(&r.ds4EngineGenerateArgmax, "ds4_engine_generate_argmax")
 	mustRegister(&r.ds4EngineCollectIMatrix, "ds4_engine_collect_imatrix")
@@ -210,6 +208,13 @@ func (l *Library) register() (err error) {
 
 	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering"); err == nil {
 		mustRegister(&r.ds4SessionSetDirectionalSteering, "ds4_session_set_directional_steering")
+	}
+
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_layer_count"); err == nil {
+		mustRegister(&r.ds4EngineLayerCount, "ds4_engine_layer_count")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_layer_compress_ratio"); err == nil {
+		mustRegister(&r.ds4EngineLayerCompressRatio, "ds4_engine_layer_compress_ratio")
 	}
 
 	return nil

@@ -268,47 +268,36 @@ func LogString(fp File, typ LogType, msg string) {
 	lib.raw.ds4LogString(uintptr(fp), typ, "%s", msg)
 }
 
-// SetLogFunc redirects libds4 diagnostics for the default library.
+// SetStderrFd redirects libds4's diagnostic stream to fd for the default
+// library. Pass -1 to restore the native stderr.
 //
-// This includes Metal/CUDA backend diagnostics routed through ds4_gpu_log.
-// Passing nil restores libds4's default logger, which writes diagnostics to
-// native stderr. The setting is process-global inside libds4; avoid changing
-// it while generation is active.
-func SetLogFunc(fn LogFunc) error {
+// libds4 dups fd internally and writes its diagnostics there unbuffered, so the
+// caller may close its own descriptor after this call. The redirect target is a
+// process-global inside libds4; install it once during application startup,
+// before generation is active.
+func SetStderrFd(fd int) error {
 	lib, err := DefaultLibrary()
 	if err != nil {
 		return err
 	}
-	return lib.SetLogFunc(fn)
+	return lib.SetStderrFd(fd)
 }
 
-// SetLogFunc redirects libds4 diagnostics for this loaded library.
+// SetStderrFd redirects this library's diagnostic stream to fd. Pass -1 to
+// restore the native stderr.
 //
-// This includes Metal/CUDA backend diagnostics routed through ds4_gpu_log.
-// Passing nil restores libds4's default logger, which writes diagnostics to
-// native stderr. libds4 exposes this as a process-global logger, not a
-// per-engine setting, so install it once during application startup. The
-// callback may be invoked from native worker threads and must be
-// concurrency-safe.
-func (l *Library) SetLogFunc(fn LogFunc) error {
+// libds4 dups fd internally (taking ownership of the dup) and writes its
+// diagnostics there unbuffered, so the caller may close its own descriptor
+// afterward. The redirect target is a process-global inside libds4, not a
+// per-engine setting; install it once at startup, before generation, since it
+// is not synchronized against concurrent logging from native worker threads.
+func (l *Library) SetStderrFd(fd int) error {
 	if l == nil {
 		return errors.New("ds4: nil library")
 	}
-	id := registerLogCallback(fn)
-	fnPtr := uintptr(0)
-	if id != 0 {
-		fnPtr = logCallback
-	}
-
 	libCallMu.Lock()
-	l.raw.ds4LogSet(fnPtr, id)
+	l.raw.ds4SetStderrFd(int32(fd))
 	libCallMu.Unlock()
-
-	l.logMu.Lock()
-	old := l.logID
-	l.logID = id
-	l.logMu.Unlock()
-	unregisterLogCallback(old)
 	return nil
 }
 
@@ -640,6 +629,26 @@ func (e *Engine) RoutedQuantBits() int {
 		return 0
 	}
 	return int(e.lib.raw.ds4EngineRoutedQuantBits(e.ptr))
+}
+
+// LayerCount returns the total number of layers in the model, or 0 if not supported by the loaded library.
+func (e *Engine) LayerCount() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineLayerCount == nil {
+		return 0
+	}
+	return int(e.lib.raw.ds4EngineLayerCount(e.ptr))
+}
+
+// LayerCompressRatio returns the compression/quantization ratio of the specified layer, or 0 if not supported.
+func (e *Engine) LayerCompressRatio(layer int) int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineLayerCompressRatio == nil {
+		return 0
+	}
+	return int(e.lib.raw.ds4EngineLayerCompressRatio(e.ptr, uint32(layer)))
 }
 
 // HasOutputHead reports whether the loaded GGUF includes the output head. For a

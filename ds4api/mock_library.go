@@ -8,11 +8,46 @@ package ds4api
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
 )
+
+// mockStderr emulates libds4's redirectable diagnostic stream for the mock
+// library. set(fd) points it at a descriptor (-1 clears it); write(s) sends a
+// message there, or drops it when unset. It wraps the descriptor without taking
+// ownership: the finalizer is cleared so the wrapper never closes the caller's
+// fd, mirroring that callers retain their own descriptor after ds4_set_stderr_fd.
+var mockStderr mockStderrStream
+
+type mockStderrStream struct {
+	mu sync.Mutex
+	f  *os.File
+}
+
+func (m *mockStderrStream) set(fd int32) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if fd < 0 {
+		m.f = nil
+		return
+	}
+	f := os.NewFile(uintptr(fd), "ds4-mock-stderr")
+	runtime.SetFinalizer(f, nil)
+	m.f = f
+}
+
+func (m *mockStderrStream) write(msg string) {
+	m.mu.Lock()
+	f := m.f
+	m.mu.Unlock()
+	if f != nil {
+		_, _ = f.WriteString(msg)
+	}
+}
 
 // mockVocabSize is the canonical vocab size returned by the mock library.
 // Must stay in sync between ds4_engine_vocab_size and ds4_session_copy_logits
@@ -25,8 +60,7 @@ const mockVocabSize int32 = 129280
 func NewMockLibrary() *Library {
 	lib := &Library{path: "mock", handle: 0}
 	r := &lib.raw
-	var mockLogFn uintptr
-	var mockLogID uintptr
+	mockStderr.set(-1)
 
 	// Engine lifecycle.
 	r.ds4EngineOpen = mockEngineOpen
@@ -42,16 +76,13 @@ func NewMockLibrary() *Library {
 		return cContextMemory{TotalBytes: 1 << 30}
 	}
 	r.ds4LogIsTTY = func(fp uintptr) bool { return false }
+	// The mock mirrors the real engine's redirect semantics: ds4_log writes to
+	// the descriptor installed via ds4_set_stderr_fd (unbuffered), or is dropped
+	// when none is set (the real library would write to native stderr).
 	r.ds4LogString = func(fp uintptr, typ LogType, format string, msg string) {
-		if mockLogFn == 0 {
-			return
-		}
-		invokeLogCallback(mockLogID, typ, msg)
+		mockStderr.write(msg)
 	}
-	r.ds4LogSet = func(fn uintptr, ud uintptr) {
-		mockLogFn = fn
-		mockLogID = ud
-	}
+	r.ds4SetStderrFd = func(fd int32) { mockStderr.set(fd) }
 	r.ds4AbortSet = func(fn uintptr, ud uintptr) {}
 
 	// Engine tests & diagnostics.
@@ -299,6 +330,13 @@ func NewMockLibrary() *Library {
 	}
 	r.ds4SessionLoadLayerPayload = func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32 {
 		return 0
+	}
+
+	r.ds4EngineLayerCount = func(e uintptr) int32 {
+		return 61
+	}
+	r.ds4EngineLayerCompressRatio = func(e uintptr, layer uint32) uint32 {
+		return 100
 	}
 
 	return lib

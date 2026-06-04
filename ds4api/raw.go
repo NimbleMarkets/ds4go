@@ -90,7 +90,7 @@ type rawSymbols struct {
 	ds4ContextMemoryEstimate         func(backend Backend, ctxSize int32) cContextMemory
 	ds4LogIsTTY                      func(fp uintptr) bool
 	ds4LogString                     func(fp uintptr, typ LogType, format string, msg string)
-	ds4LogSet                        func(fn uintptr, ud uintptr)
+	ds4SetStderrFd                   func(fd int32)
 	ds4AbortSet                      func(fn uintptr, ud uintptr)
 	ds4EngineGenerateArgmax          func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32
 	ds4EngineCollectIMatrix          func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32) int32
@@ -158,4 +158,6 @@ type rawSymbols struct {
 	ds4SessionLayerPayloadBytes      func(s uintptr, layerStart uint32, layerEnd uint32) uint64
 	ds4SessionSaveLayerPayload       func(s uintptr, fp uintptr, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionLoadLayerPayload       func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
+	ds4EngineLayerCount              func(e uintptr) int32
+	ds4EngineLayerCompressRatio      func(e uintptr, layer uint32) uint32
 }
