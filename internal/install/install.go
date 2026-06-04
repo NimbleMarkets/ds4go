@@ -936,6 +936,22 @@ func Validate(ctx context.Context, opts Options) error {
 	}
 
 	// 4. Dynamic Loading verification
+	if opts.GOOS == "darwin" && runtime.GOOS == "darwin" {
+		fi, statErr := os.Stat(libPath)
+		if statErr == nil && fi.Size() >= 10240 {
+			sigStatus := checkSignatureStatus(libPath)
+			if sigStatus == "unsigned" && runtime.GOARCH == "arm64" {
+				return fmt.Errorf("refusing to load %s because it is unsigned. macOS on Apple Silicon requires binaries to be signed to load. Please sign it locally with: codesign -s - --force %s", libPath, libPath)
+			}
+			// We only refuse ad-hoc signed binaries if they are release builds (which are compiled
+			// on foreign CI runners and will trigger a SIGKILL on load). Pinned (developer-supplied)
+			// or unmanaged binaries are allowed.
+			isRelease := hasMeta && meta.Kind != KindPinned
+			if isRelease && (sigStatus == "invalid/untrusted" || sigStatus == "ad-hoc (foreign, untrusted)") {
+				return fmt.Errorf("refusing to load %s because it is ad-hoc signed by a foreign build system and is untrusted by macOS. Loading this will cause the kernel to terminate the process with SIGKILL. Please sign it locally with: codesign -s - --force %s", libPath, libPath)
+			}
+		}
+	}
 	lib, err := loadLibraryFunc(libPath)
 	if err != nil {
 		return fmt.Errorf("failed to load dynamic library: %w", err)
@@ -945,6 +961,9 @@ func Validate(ctx context.Context, opts Options) error {
 	// 4b. Print a short git-style fingerprint so users can eyeball the
 	// installed library against a release's published checksum.
 	fmt.Fprintf(opts.Out, "\nFingerprint: %s\n", localSHA[:8])
+	if runtime.GOOS == "darwin" {
+		fmt.Fprintf(opts.Out, "Signature:   %s\n", checkSignatureStatus(libPath))
+	}
 
 	// 4c. Report optional feature gates so users can see which capabilities the
 	// loaded build exports. These are Dlsym-guarded symbol groups, so older
@@ -1492,4 +1511,52 @@ func Status(ctx context.Context, opts Options) error {
 		fmt.Fprintf(opts.Out, "%-10d %-20s %s\n", p.PID, p.Name, status)
 	}
 	return nil
+}
+
+func isForeignBinary(path string) bool {
+	cmd := exec.Command("xattr", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	outStr := string(out)
+	return strings.Contains(outStr, "com.apple.provenance") || strings.Contains(outStr, "com.apple.quarantine")
+}
+
+func checkSignatureStatus(path string) string {
+	if runtime.GOOS != "darwin" {
+		return "not applicable (non-macOS)"
+	}
+	codesignPath := "codesign"
+	if _, err := exec.LookPath(codesignPath); err != nil {
+		if _, statErr := os.Stat("/usr/bin/codesign"); statErr == nil {
+			codesignPath = "/usr/bin/codesign"
+		} else {
+			return "not verified (codesign tool not found)"
+		}
+	}
+
+	cmd := exec.Command(codesignPath, "-d", "-vv", path)
+	out, err := cmd.CombinedOutput()
+	outStr := string(out)
+	if err != nil {
+		if strings.Contains(outStr, "code object is not signed at all") {
+			return "unsigned"
+		}
+		return "invalid/untrusted"
+	}
+	if strings.Contains(outStr, "Signature=adhoc") {
+		if isForeignBinary(path) {
+			return "ad-hoc (foreign, untrusted)"
+		}
+		return "ad-hoc (signed locally)"
+	}
+	for _, line := range strings.Split(outStr, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Authority=") {
+			auth := strings.TrimPrefix(line, "Authority=")
+			return fmt.Sprintf("verified (%s)", auth)
+		}
+	}
+	return "verified (official Apple Developer ID)"
 }
