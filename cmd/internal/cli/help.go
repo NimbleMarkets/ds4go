@@ -56,7 +56,9 @@ func newHelpCheatCommand(root *cobra.Command) *cobra.Command {
 		Use:   "cheat",
 		Short: "Quick-reference command tree",
 		Long:  "Print a compact cheat sheet showing every command and subcommand.\n\nDepth flags control how many levels to show (default: 3).",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			depth := cheatDepth(depth1, depth2, depth3)
 			switch {
 			case asJSON:

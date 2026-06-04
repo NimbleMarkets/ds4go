@@ -40,6 +40,7 @@ func newModelCommand() *cobra.Command {
 			Short:   "List installed and available models",
 			Args:    cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.SilenceUsage = true
 				return runModelList(args)
 			},
 		},
@@ -49,6 +50,7 @@ func newModelCommand() *cobra.Command {
 			Short: "Set the default chat model",
 			Args:  cobra.MaximumNArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
+				cmd.SilenceUsage = true
 				return runModelSet(args)
 			},
 		},
@@ -65,6 +67,7 @@ func newModelInfoCommand() *cobra.Command {
 		Short: "Show details for a curated model",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runModelInfo(args, all, asJSON)
 		},
 	}
@@ -82,6 +85,7 @@ func newModelDownloadCommand() *cobra.Command {
 		Short:   "Download a curated model from Hugging Face",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runModelDownloadWithToken(args, token, dryRun)
 		},
 	}
@@ -98,6 +102,7 @@ func newModelDeleteCommand() *cobra.Command {
 		Short:   "Delete a downloaded model from disk",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			return runModelDelete(args, assumeYes)
 		},
 	}

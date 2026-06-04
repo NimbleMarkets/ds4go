@@ -28,6 +28,7 @@ func newWebCommand() *cobra.Command {
 		Short: "Execute web search and print Markdown links",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			query := strings.Join(args, " ")
 			helper := webtool.NewWebHelper(webtool.Config{
 				Port:       port,
@@ -66,6 +67,7 @@ func newWebCommand() *cobra.Command {
 		Short: "Visit a web page and print extracted Markdown",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
 			targetURL := args[0]
 			helper := webtool.NewWebHelper(webtool.Config{
 				Port:       port,

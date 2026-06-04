@@ -19,7 +19,6 @@ func newRootCommand() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	root.SilenceUsage = true
 	root.AddCommand(
 		newPromptCommand(),
 		newInstallCommand(),
