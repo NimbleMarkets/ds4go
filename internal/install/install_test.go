@@ -528,6 +528,9 @@ func TestValidate(t *testing.T) {
 	}()
 
 	destDir := t.TempDir()
+	if err := os.Chmod(destDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	opts := Options{
 		DestDir: destDir,
 		GOOS:    "darwin",
@@ -1344,6 +1347,9 @@ func TestValidateReportsPinnedKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	destDir := t.TempDir()
+	if err := os.Chmod(destDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Run(context.Background(), Options{
 		Pin: srcPath, GOOS: "darwin", GOARCH: "arm64",
 		DestDir: destDir, Out: io.Discard,
