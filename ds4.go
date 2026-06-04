@@ -7,7 +7,6 @@ package ds4
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,8 +42,6 @@ type (
 	SessionRewriteResult = ds4api.SessionRewriteResult
 	// LogType is the category used by libds4 diagnostics.
 	LogType = ds4api.LogType
-	// LogFunc receives one complete libds4 diagnostic message.
-	LogFunc = ds4api.LogFunc
 	// AbortFunc receives a libds4 fatal-invariant message immediately before abort.
 	AbortFunc = ds4api.AbortFunc
 	// TokenEmitFunc is called when ds4 emits a generated token.
@@ -139,21 +136,22 @@ func SetDefaultLibrary(lib *ds4api.Library) {
 	ds4api.SetDefaultLibrary(lib)
 }
 
-// SetLogFunc redirects libds4 diagnostics for the default library.
+// SetStderr redirects libds4's diagnostic output to f for the default library.
+// Passing nil restores the native stderr.
 //
-// This includes engine diagnostics and Metal/CUDA backend diagnostics routed
-// through ds4_gpu_log. Passing nil restores libds4's native stderr logger. The
-// logger is global inside libds4, so install it once during application
-// startup.
-func SetLogFunc(fn LogFunc) error {
-	lib, err := defaultCallbackLibrary(fn != nil)
-	if err != nil {
-		return err
+// libds4 dups the descriptor internally and writes its diagnostics there
+// unbuffered, so f may be closed once it is no longer the active target. The
+// redirect target is process-global inside libds4; install it once at startup,
+// before generation is active. Calling Fd on f detaches it from the Go runtime
+// poller and puts it in blocking mode, so do not pass a file you also use for
+// asynchronous I/O.
+//
+// Not supported on Windows; see SetStderrFd.
+func SetStderr(f *os.File) error {
+	if f == nil {
+		return SetStderrFd(-1)
 	}
-	if lib == nil {
-		return nil
-	}
-	return lib.SetLogFunc(fn)
+	return SetStderrFd(int(f.Fd()))
 }
 
 // SetAbortFunc installs a last-chance libds4 fatal-invariant callback.
@@ -174,32 +172,17 @@ func SetAbortFunc(fn AbortFunc) error {
 	return lib.SetAbortFunc(fn)
 }
 
-// SetLogOutput redirects libds4 diagnostics to w.
+// DiscardLogs redirects libds4's diagnostic output to the null device for the
+// default library. The native stderr is restored by SetStderr(nil).
 //
-// This includes engine diagnostics and Metal/CUDA backend diagnostics routed
-// through ds4_gpu_log. Passing nil restores libds4's native stderr logger.
-// Non-nil writers receive the exact message emitted by libds4, including its
-// prefix and trailing newline. Writes are serialized because libds4 may call
-// the logger from native worker threads. Write errors are ignored because the
-// native callback cannot report them.
-func SetLogOutput(w io.Writer) error {
-	if w == nil {
-		return SetLogFunc(nil)
-	}
-	var mu sync.Mutex
-	return SetLogFunc(func(_ LogType, msg string) {
-		mu.Lock()
-		defer mu.Unlock()
-		_, _ = io.WriteString(w, msg)
-	})
-}
-
-// DiscardLogs discards libds4 diagnostics routed through ds4_log_set.
-//
-// This includes Metal/CUDA diagnostics routed through ds4_gpu_log. Native code
-// paths that still write directly to stderr are unaffected.
+// Not supported on Windows; see SetStderrFd.
 func DiscardLogs() error {
-	return SetLogOutput(io.Discard)
+	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return SetStderr(f)
 }
 
 // NewEngine loads the default libds4 shared library and opens a ds4 engine.
