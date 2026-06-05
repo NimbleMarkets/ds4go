@@ -98,3 +98,41 @@ func TestEngineVocabSize(t *testing.T) {
 		t.Fatalf("Engine.VocabSize() = %d, want 129280", got)
 	}
 }
+
+func TestContextMemoryEstimateWithPrefill(t *testing.T) {
+	lib := NewMockLibrary()
+	SetDefaultLibrary(lib)
+	cm := ContextMemoryEstimateWithPrefill(BackendCPU, 2048, 512)
+	if cm.TotalBytes != 1<<30 {
+		t.Fatalf("ContextMemoryEstimateWithPrefill total bytes = %d, want %d", cm.TotalBytes, 1<<30)
+	}
+
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+
+	cm2 := eng.ContextMemoryEstimateWithPrefill(BackendCPU, 2048, 512)
+	if cm2.TotalBytes != 1<<30 {
+		t.Fatalf("Engine.ContextMemoryEstimateWithPrefill total bytes = %d, want %d", cm2.TotalBytes, 1<<30)
+	}
+}
+
+func TestNewEngineOptions(t *testing.T) {
+	lib := NewMockLibrary()
+	eng, err := lib.NewEngine(EngineOptions{
+		PrefillChunk:               512,
+		ExpertProfilePath:          "some_profile",
+		SSDStreamingCacheExperts:   8,
+		SSDStreamingCacheBytes:     16 * 1024 * 1024 * 1024,
+		SSDStreamingPreloadExperts: 2,
+		SimulateUsedMemoryBytes:    32 * 1024 * 1024 * 1024,
+		SSDStreaming:               true,
+		SSDStreamingCold:           true,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine with new options failed: %v", err)
+	}
+	defer eng.Close()
+}

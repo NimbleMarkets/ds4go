@@ -2,6 +2,10 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## v0.5.1 (2026-06-05)
+
+ * Add `ds4` [SSD streaming support](https://github.com/antirez/ds4#pro-on-128gb-macbooks)
+
 ## v0.5.0 (2026-06-05)
 
  * **BREAKING** We changed how logging works in our `nm-shared` branch of `ds4`, so there is now `SetStderrFd` rather than `SetLogFunc`.

@@ -131,6 +131,9 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4ThinkMaxMinContext, "ds4_think_max_min_context")
 	mustRegister(&r.ds4ThinkModeForContext, "ds4_think_mode_for_context")
 	mustRegister(&r.ds4ContextMemoryEstimate, "ds4_context_memory_estimate")
+	if _, err := purego.Dlsym(l.handle, "ds4_context_memory_estimate_with_prefill"); err == nil {
+		mustRegister(&r.ds4ContextMemoryEstimateWithPrefill, "ds4_context_memory_estimate_with_prefill")
+	}
 	mustRegister(&r.ds4LogIsTTY, "ds4_log_is_tty")
 	mustRegister(&r.ds4LogString, "ds4_log")
 	mustRegister(&r.ds4SetStderrFd, "ds4_set_stderr_fd")

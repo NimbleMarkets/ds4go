@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	ds4 "github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/NimbleMarkets/ds4go/internal/models"
 	"github.com/spf13/cobra"
@@ -191,6 +193,15 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) error {
 	var history []cliMessage
 	in := bufio.NewScanner(os.Stdin)
+	thinkMode := cfg.ThinkMode()
+	ctxSize := cfg.Ctx
+
+	defer func() {
+		if session != nil {
+			session.Close()
+		}
+	}()
+
 	for {
 		fmt.Print("ds4> ")
 		if !in.Scan() {
@@ -200,30 +211,141 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 		if line == "" {
 			continue
 		}
-		if line == "/quit" || line == "/exit" {
-			return nil
-		}
-		history = append(history, cliMessage{role: "user", content: line})
-		prompt, err := buildChatPrompt(engine, cfg.System, history, cfg.ThinkMode())
-		if err != nil {
-			return err
-		}
-		opts := cfg.GenerateOptions()
-		var response strings.Builder
-		opts.OnToken = func(token int) {
-			if text, err := engine.TokenText(token); err == nil {
-				response.WriteString(text)
-				fmt.Print(text)
+
+		if strings.HasPrefix(line, "/") {
+			parts := strings.Fields(line)
+			cmd := parts[0]
+			switch cmd {
+			case "/quit", "/exit":
+				return nil
+			case "/help":
+				fmt.Println("Commands:")
+				fmt.Println("  /help          Show this help.")
+				fmt.Println("  /think         Use normal thinking mode.")
+				fmt.Println("  /think-max     Use Think Max only when context is at least 393216 tokens.")
+				fmt.Println("  /nothink       Disable thinking mode.")
+				fmt.Println("  /ctx N         Set context size for following prompts.")
+				fmt.Println("  /power N       Set GPU duty cycle percentage, 1..100.")
+				fmt.Println("  /read FILE     Read a prompt from FILE and run it.")
+				fmt.Println("  /quit, /exit   Leave the prompt.")
+				continue
+
+			case "/think":
+				thinkMode = ds4.ThinkHigh
+				fmt.Println("Thinking mode: high.")
+				continue
+
+			case "/think-max":
+				thinkMode = ds4.ThinkMax
+				active := ds4api.ThinkModeForContext(thinkMode, ctxSize) == ds4.ThinkMax
+				if active {
+					fmt.Println("Thinking mode: max.")
+				} else {
+					fmt.Println("Thinking mode: high (ctx below 393216). Warning: think-max was downgraded because --ctx is below 393216.")
+				}
+				continue
+
+			case "/nothink":
+				thinkMode = ds4.ThinkNone
+				fmt.Println("Thinking mode: none.")
+				continue
+
+			case "/power":
+				if len(parts) < 2 {
+					fmt.Printf("Power: %d%%.\n", session.Power())
+				} else {
+					power, err := strconv.Atoi(parts[1])
+					if err != nil || power < 1 || power > 100 {
+						fmt.Fprintln(os.Stderr, "ds4: /power must be between 1 and 100")
+					} else {
+						if err := session.SetPower(power); err != nil {
+							fmt.Fprintf(os.Stderr, "ds4: failed to set /power: %v\n", err)
+						} else {
+							fmt.Printf("Power: %d%%.\n", power)
+						}
+					}
+				}
+				continue
+
+			case "/ctx":
+				if len(parts) < 2 {
+					fmt.Fprintln(os.Stderr, "ds4: /ctx needs a positive integer")
+				} else {
+					newCtx, err := strconv.Atoi(parts[1])
+					if err != nil || newCtx <= 0 {
+						fmt.Fprintln(os.Stderr, "ds4: /ctx needs a positive integer")
+					} else {
+						ctxSize = newCtx
+						session.Close()
+						session = nil
+						newSess, err := engine.NewSession(ctxSize)
+						if err != nil {
+							return fmt.Errorf("ds4: failed to create new session: %w", err)
+						}
+						session = newSess
+						history = nil
+						fmt.Printf("Context size set to %d. Chat history reset.\n", ctxSize)
+					}
+				}
+				continue
+
+			case "/read":
+				if len(parts) < 2 {
+					fmt.Fprintln(os.Stderr, "ds4: /read needs a file path")
+				} else {
+					filePath := parts[1]
+					content, err := os.ReadFile(filePath)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "ds4: failed to read %s: %v\n", filePath, err)
+					} else {
+						promptText := string(content)
+						fmt.Printf("[Reading prompt from %s...]\n", filePath)
+						err := runChatTurn(engine, session, cfg, &history, promptText, thinkMode)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Generation error: %v\n", err)
+						}
+					}
+				}
+				continue
+
+			default:
+				fmt.Fprintf(os.Stderr, "ds4: unknown option: %s\n", cmd)
+				continue
 			}
 		}
-		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
-		prompt.Free()
-		fmt.Println()
+
+		err := runChatTurn(engine, session, cfg, &history, line, thinkMode)
 		if err != nil {
 			return err
 		}
-		history = append(history, cliMessage{role: "assistant", content: response.String()})
 	}
+}
+
+func runChatTurn(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig, history *[]cliMessage, promptText string, thinkMode ds4.ThinkMode) error {
+	*history = append(*history, cliMessage{role: "user", content: promptText})
+	prompt, err := buildChatPrompt(engine, cfg.System, *history, thinkMode)
+	if err != nil {
+		*history = (*history)[:len(*history)-1]
+		return err
+	}
+	defer prompt.Free()
+
+	opts := cfg.GenerateOptions()
+	var response strings.Builder
+	opts.OnToken = func(token int) {
+		if text, err := engine.TokenText(token); err == nil {
+			response.WriteString(text)
+			fmt.Print(text)
+		}
+	}
+	_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
+	fmt.Println()
+	if err != nil {
+		*history = (*history)[:len(*history)-1]
+		return err
+	}
+	*history = append(*history, cliMessage{role: "assistant", content: response.String()})
+	return nil
 }
 
 func buildChatPrompt(engine *ds4.Engine, system string, history []cliMessage, think ds4.ThinkMode) (*ds4.Tokens, error) {

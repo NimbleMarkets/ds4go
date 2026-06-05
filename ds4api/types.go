@@ -148,10 +148,26 @@ type EngineOptions struct {
 	// PowerPercent throttles GPU work to roughly this duty cycle (1..100).
 	// 0 or 100 disables throttling. Maps to ds4_engine_options.power_percent.
 	PowerPercent int
+	// PrefillChunk controls the prefill chunk size.
+	PrefillChunk uint32
+	// ExpertProfilePath is the path to the optional expert profile.
+	ExpertProfilePath string
+	// SSDStreamingCacheExperts is the number of routed experts to keep in VRAM.
+	SSDStreamingCacheExperts uint32
+	// SSDStreamingCacheBytes is the byte budget for the SSD streaming expert cache.
+	SSDStreamingCacheBytes uint64
+	// SSDStreamingPreloadExperts is the number of experts to preload during startup.
+	SSDStreamingPreloadExperts uint32
+	// SimulateUsedMemoryBytes simulates a specific amount of used GPU memory in bytes.
+	SimulateUsedMemoryBytes uint64
 	// WarmWeights asks ds4 to warm model weights after load.
 	WarmWeights bool
 	// Quality requests ds4's quality-oriented execution path where supported.
 	Quality bool
+	// SSDStreaming enables SSD streaming of experts.
+	SSDStreaming bool
+	// SSDStreamingCold enables SSD streaming of experts with cold cache.
+	SSDStreamingCold bool
 	// InspectOnly opens the model for inspection without preparing the engine
 	// for generation. Maps to ds4_engine_options.inspect_only.
 	InspectOnly bool

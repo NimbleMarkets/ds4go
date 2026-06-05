@@ -45,26 +45,35 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	modelBytes, modelPtr := cStringPointer(opts.ModelPath)
 	mtpBytes, mtpPtr := cStringPointer(opts.MTPPath)
 	steerBytes, steerPtr := cStringPointer(opts.DirectionalSteeringFile)
+	expertProfileBytes, expertProfilePtr := cStringPointer(opts.ExpertProfilePath)
 	listenHostBytes, listenHostPtr := cStringPointer(opts.Distributed.ListenHost)
 	coordHostBytes, coordHostPtr := cStringPointer(opts.Distributed.CoordinatorHost)
 	copts := cEngineOptions{
-		ModelPath:               modelPtr,
-		MTPPath:                 mtpPtr,
-		Backend:                 opts.Backend,
-		NThreads:                int32(opts.NThreads),
-		MTPDraftTokens:          int32(opts.MTPDraftTokens),
-		MTPMargin:               opts.MTPMargin,
-		DirectionalSteeringFile: steerPtr,
-		DirectionalSteeringAttn: opts.DirectionalSteeringAttn,
-		DirectionalSteeringFFN:  opts.DirectionalSteeringFFN,
-		PowerPercent:            int32(opts.PowerPercent),
-		WarmWeights:             opts.WarmWeights,
-		Quality:                 opts.Quality,
-		InspectOnly:             opts.InspectOnly,
-		LoadSlice:               opts.LoadSlice,
-		LoadLayerStart:          opts.LoadLayerStart,
-		LoadLayerEnd:            opts.LoadLayerEnd,
-		LoadOutput:              opts.LoadOutput,
+		ModelPath:                  modelPtr,
+		MTPPath:                    mtpPtr,
+		Backend:                    opts.Backend,
+		NThreads:                   int32(opts.NThreads),
+		PrefillChunk:               opts.PrefillChunk,
+		MTPDraftTokens:             int32(opts.MTPDraftTokens),
+		MTPMargin:                  opts.MTPMargin,
+		DirectionalSteeringFile:    steerPtr,
+		ExpertProfilePath:          expertProfilePtr,
+		DirectionalSteeringAttn:    opts.DirectionalSteeringAttn,
+		DirectionalSteeringFFN:     opts.DirectionalSteeringFFN,
+		PowerPercent:               int32(opts.PowerPercent),
+		SSDStreamingCacheExperts:   opts.SSDStreamingCacheExperts,
+		SSDStreamingCacheBytes:     opts.SSDStreamingCacheBytes,
+		SSDStreamingPreloadExperts: opts.SSDStreamingPreloadExperts,
+		SimulateUsedMemoryBytes:    opts.SimulateUsedMemoryBytes,
+		WarmWeights:                opts.WarmWeights,
+		Quality:                    opts.Quality,
+		SSDStreaming:               opts.SSDStreaming,
+		SSDStreamingCold:           opts.SSDStreamingCold,
+		InspectOnly:                opts.InspectOnly,
+		LoadSlice:                  opts.LoadSlice,
+		LoadLayerStart:             opts.LoadLayerStart,
+		LoadLayerEnd:               opts.LoadLayerEnd,
+		LoadOutput:                 opts.LoadOutput,
 		Distributed: cDistributedOptions{
 			Role: int32(opts.Distributed.Role),
 			Layers: cDistributedLayers{
@@ -89,6 +98,7 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	runtime.KeepAlive(modelBytes)
 	runtime.KeepAlive(mtpBytes)
 	runtime.KeepAlive(steerBytes)
+	runtime.KeepAlive(expertProfileBytes)
 	runtime.KeepAlive(listenHostBytes)
 	runtime.KeepAlive(coordHostBytes)
 	if err := ds4Error("ds4_engine_open", code); err != nil {
@@ -239,6 +249,30 @@ func ContextMemoryEstimate(backend Backend, ctxSize int) ContextMemory {
 		return ContextMemory{}
 	}
 	cm := lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	return ContextMemory{
+		TotalBytes:      cm.TotalBytes,
+		RawBytes:        cm.RawBytes,
+		CompressedBytes: cm.CompressedBytes,
+		ScratchBytes:    cm.ScratchBytes,
+		PrefillCap:      cm.PrefillCap,
+		RawCap:          cm.RawCap,
+		CompCap:         cm.CompCap,
+	}
+}
+
+// ContextMemoryEstimateWithPrefill estimates ds4 context memory for a backend, context
+// size, and prefill chunk size.
+func ContextMemoryEstimateWithPrefill(backend Backend, ctxSize int, prefillChunk uint32) ContextMemory {
+	lib, err := DefaultLibrary()
+	if err != nil {
+		return ContextMemory{}
+	}
+	var cm cContextMemory
+	if lib.raw.ds4ContextMemoryEstimateWithPrefill != nil {
+		cm = lib.raw.ds4ContextMemoryEstimateWithPrefill(backend, int32(ctxSize), prefillChunk)
+	} else {
+		cm = lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	}
 	return ContextMemory{
 		TotalBytes:      cm.TotalBytes,
 		RawBytes:        cm.RawBytes,
@@ -747,6 +781,31 @@ func (e *Engine) ContextMemoryEstimate(backend Backend, ctxSize int) ContextMemo
 		return ContextMemory{}
 	}
 	cm := e.lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	return ContextMemory{
+		TotalBytes:      cm.TotalBytes,
+		RawBytes:        cm.RawBytes,
+		CompressedBytes: cm.CompressedBytes,
+		ScratchBytes:    cm.ScratchBytes,
+		PrefillCap:      cm.PrefillCap,
+		RawCap:          cm.RawCap,
+		CompCap:         cm.CompCap,
+	}
+}
+
+// ContextMemoryEstimateWithPrefill calls ds4_context_memory_estimate_with_prefill
+// using the active model shape and prefill chunk size.
+func (e *Engine) ContextMemoryEstimateWithPrefill(backend Backend, ctxSize int, prefillChunk uint32) ContextMemory {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return ContextMemory{}
+	}
+	var cm cContextMemory
+	if e.lib.raw.ds4ContextMemoryEstimateWithPrefill != nil {
+		cm = e.lib.raw.ds4ContextMemoryEstimateWithPrefill(backend, int32(ctxSize), prefillChunk)
+	} else {
+		cm = e.lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	}
 	return ContextMemory{
 		TotalBytes:      cm.TotalBytes,
 		RawBytes:        cm.RawBytes,

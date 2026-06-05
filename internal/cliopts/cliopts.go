@@ -15,7 +15,9 @@ package cliopts
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,21 +33,28 @@ type CLIConfig struct {
 	Lib string
 
 	// Model and runtime.
-	Model           string
-	MTP             string
-	MTPDraft        int
-	MTPMargin       float32
-	Ctx             int
-	Metal           bool
-	CUDA            bool
-	CPU             bool
-	Backend         string
-	Threads         int
-	Quality         bool
-	DirSteeringFile string
-	DirSteeringFFN  float32
-	DirSteeringAttn float32
-	WarmWeights     bool
+	Model                      string
+	MTP                        string
+	MTPDraft                   int
+	MTPMargin                  float32
+	Ctx                        int
+	Metal                      bool
+	CUDA                       bool
+	CPU                        bool
+	Backend                    string
+	Threads                    int
+	Quality                    bool
+	DirSteeringFile            string
+	DirSteeringFFN             float32
+	DirSteeringAttn            float32
+	WarmWeights                bool
+	SSDStreaming               bool
+	SSDStreamingCold           bool
+	SSDStreamingCacheExperts   string
+	SSDStreamingPreloadExperts uint32
+	SimulateUsedMemory         string
+	PrefillChunk               uint32
+	ExpertProfile              string
 
 	// Prompt and generation.
 	Prompt     string
@@ -99,6 +108,13 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.Float32Var(&c.DirSteeringFFN, "dir-steering-ffn", 0, "apply steering after FFN outputs (default 1 with file)")
 	fs.Float32Var(&c.DirSteeringAttn, "dir-steering-attn", 0, "apply steering after attention outputs")
 	fs.BoolVar(&c.WarmWeights, "warm-weights", false, "touch mapped tensor pages before generation")
+	fs.BoolVar(&c.SSDStreaming, "ssd-streaming", false, "enable SSD streaming of experts")
+	fs.BoolVar(&c.SSDStreamingCold, "ssd-streaming-cold", false, "enable SSD streaming of experts with cold cache")
+	fs.StringVar(&c.SSDStreamingCacheExperts, "ssd-streaming-cache-experts", "", "routed experts to keep in VRAM (count or <N>GB)")
+	fs.Uint32Var(&c.SSDStreamingPreloadExperts, "ssd-streaming-preload-experts", 0, "experts to preload during startup")
+	fs.StringVar(&c.SimulateUsedMemory, "simulate-used-memory", "", "simulate a specific amount of used GPU memory (e.g. 64GB)")
+	fs.Uint32Var(&c.PrefillChunk, "prefill-chunk", 0, "prefill chunk size")
+	fs.StringVar(&c.ExpertProfile, "expert-profile", "", "load one f32 expert profile from FILE")
 
 	// Prompt and generation.
 	fs.StringVarP(&c.Prompt, "prompt", "p", "", "prompt to generate from")
@@ -151,21 +167,49 @@ func (c *CLIConfig) ThinkMode() ds4.ThinkMode {
 
 // EngineOptions builds ds4.EngineOptions from the parsed flags.
 func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
+	var ssdExperts uint32
+	var ssdBytes uint64
+	if c.SSDStreamingCacheExperts != "" {
+		exp, b, err := parseStreamingCacheExpertsArg(c.SSDStreamingCacheExperts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ds4: --ssd-streaming-cache-experts must be a positive count or <number>GB\n")
+			os.Exit(2)
+		}
+		ssdExperts = exp
+		ssdBytes = b
+	}
+
+	var simUsedBytes uint64
+	if c.SimulateUsedMemory != "" {
+		b, err := parseGibArg(c.SimulateUsedMemory)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ds4: --simulate-used-memory must be a positive GiB value, e.g. 64GB\n")
+			os.Exit(2)
+		}
+		simUsedBytes = b
+	}
+
 	return ds4.EngineOptions{
-		ModelPath:               c.Model,
-		MTPPath:                 c.MTP,
-		Backend:                 c.SelectBackend(),
-		NThreads:                c.Threads,
-		MTPDraftTokens:          c.MTPDraft,
-		MTPMargin:               c.MTPMargin,
-		DirectionalSteeringFile: c.DirSteeringFile,
-		DirectionalSteeringAttn: c.DirSteeringAttn,
-		DirectionalSteeringFFN:  c.DirSteeringFFN,
-		WarmWeights:             c.WarmWeights,
-		Quality:                 c.Quality,
-		// --inspect prints the engine summary and exits; tell libds4 to skip
-		// the generation-path prep so the open is fast.
-		InspectOnly: c.Inspect,
+		ModelPath:                  c.Model,
+		MTPPath:                    c.MTP,
+		Backend:                    c.SelectBackend(),
+		NThreads:                   c.Threads,
+		PrefillChunk:               c.PrefillChunk,
+		MTPDraftTokens:             c.MTPDraft,
+		MTPMargin:                  c.MTPMargin,
+		DirectionalSteeringFile:    c.DirSteeringFile,
+		ExpertProfilePath:          c.ExpertProfile,
+		DirectionalSteeringAttn:    c.DirSteeringAttn,
+		DirectionalSteeringFFN:     c.DirSteeringFFN,
+		SSDStreamingCacheExperts:   ssdExperts,
+		SSDStreamingCacheBytes:     ssdBytes,
+		SSDStreamingPreloadExperts: c.SSDStreamingPreloadExperts,
+		SimulateUsedMemoryBytes:    simUsedBytes,
+		WarmWeights:                c.WarmWeights,
+		Quality:                    c.Quality,
+		SSDStreaming:               c.SSDStreaming,
+		SSDStreamingCold:           c.SSDStreamingCold,
+		InspectOnly:                c.Inspect,
 	}
 }
 
@@ -208,22 +252,28 @@ type ServerConfig struct {
 	Lib string
 
 	// Model and runtime.
-	Model           string
-	MTP             string
-	MTPDraft        int
-	MTPMargin       float32
-	Ctx             int
-	Tokens          int
-	Threads         int
-	Quality         bool
-	DirSteeringFile string
-	DirSteeringFFN  float32
-	DirSteeringAttn float32
-	WarmWeights     bool
-	Metal           bool
-	CUDA            bool
-	CPU             bool
-	Backend         string
+	Model                      string
+	MTP                        string
+	MTPDraft                   int
+	MTPMargin                  float32
+	Ctx                        int
+	Tokens                     int
+	Threads                    int
+	Quality                    bool
+	DirSteeringFile            string
+	DirSteeringFFN             float32
+	DirSteeringAttn            float32
+	WarmWeights                bool
+	Metal                      bool
+	CUDA                       bool
+	CPU                        bool
+	Backend                    string
+	SSDStreaming               bool
+	SSDStreamingCold           bool
+	SSDStreamingCacheExperts   string
+	SSDStreamingPreloadExperts uint32
+	SimulateUsedMemory         string
+	PrefillChunk               uint32
 
 	// HTTP API.
 	Host  string
@@ -268,6 +318,12 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.BoolVar(&c.CUDA, "cuda", false, "use the CUDA graph backend")
 	fs.BoolVar(&c.CPU, "cpu", false, "use the CPU reference/debug backend")
 	fs.StringVar(&c.Backend, "backend", "", "select backend explicitly: metal, cuda, or cpu")
+	fs.BoolVar(&c.SSDStreaming, "ssd-streaming", false, "enable SSD streaming of experts")
+	fs.BoolVar(&c.SSDStreamingCold, "ssd-streaming-cold", false, "enable SSD streaming of experts with cold cache")
+	fs.StringVar(&c.SSDStreamingCacheExperts, "ssd-streaming-cache-experts", "", "routed experts to keep in VRAM (count or <N>GB)")
+	fs.Uint32Var(&c.SSDStreamingPreloadExperts, "ssd-streaming-preload-experts", 0, "experts to preload during startup")
+	fs.StringVar(&c.SimulateUsedMemory, "simulate-used-memory", "", "simulate a specific amount of used GPU memory (e.g. 64GB)")
+	fs.Uint32Var(&c.PrefillChunk, "prefill-chunk", 0, "prefill chunk size")
 
 	// HTTP API.
 	fs.StringVar(&c.Host, "host", "127.0.0.1", "bind address")
@@ -298,19 +354,99 @@ func (c *ServerConfig) SelectBackend() ds4.Backend {
 
 // EngineOptions builds ds4.EngineOptions from the parsed flags.
 func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
-	return ds4.EngineOptions{
-		ModelPath:               c.Model,
-		MTPPath:                 c.MTP,
-		Backend:                 c.SelectBackend(),
-		NThreads:                c.Threads,
-		MTPDraftTokens:          c.MTPDraft,
-		MTPMargin:               c.MTPMargin,
-		DirectionalSteeringFile: c.DirSteeringFile,
-		DirectionalSteeringAttn: c.DirSteeringAttn,
-		DirectionalSteeringFFN:  c.DirSteeringFFN,
-		WarmWeights:             c.WarmWeights,
-		Quality:                 c.Quality,
+	var ssdExperts uint32
+	var ssdBytes uint64
+	if c.SSDStreamingCacheExperts != "" {
+		exp, b, err := parseStreamingCacheExpertsArg(c.SSDStreamingCacheExperts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ds4-server: --ssd-streaming-cache-experts must be a positive count or <number>GB\n")
+			os.Exit(2)
+		}
+		ssdExperts = exp
+		ssdBytes = b
 	}
+
+	var simUsedBytes uint64
+	if c.SimulateUsedMemory != "" {
+		b, err := parseGibArg(c.SimulateUsedMemory)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ds4-server: --simulate-used-memory must be a positive GiB value, e.g. 64GB\n")
+			os.Exit(2)
+		}
+		simUsedBytes = b
+	}
+
+	return ds4.EngineOptions{
+		ModelPath:                  c.Model,
+		MTPPath:                    c.MTP,
+		Backend:                    c.SelectBackend(),
+		NThreads:                   c.Threads,
+		PrefillChunk:               c.PrefillChunk,
+		MTPDraftTokens:             c.MTPDraft,
+		MTPMargin:                  c.MTPMargin,
+		DirectionalSteeringFile:    c.DirSteeringFile,
+		DirectionalSteeringAttn:    c.DirSteeringAttn,
+		DirectionalSteeringFFN:     c.DirSteeringFFN,
+		SSDStreamingCacheExperts:   ssdExperts,
+		SSDStreamingCacheBytes:     ssdBytes,
+		SSDStreamingPreloadExperts: c.SSDStreamingPreloadExperts,
+		SimulateUsedMemoryBytes:    simUsedBytes,
+		WarmWeights:                c.WarmWeights,
+		Quality:                    c.Quality,
+		SSDStreaming:               c.SSDStreaming,
+		SSDStreamingCold:           c.SSDStreamingCold,
+	}
+}
+
+func parseGibArg(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty argument")
+	}
+	if len(s) > 2 && strings.HasSuffix(strings.ToLower(s), "gb") {
+		s = s[:len(s)-2]
+	}
+	if s == "" {
+		return 0, fmt.Errorf("invalid GB argument")
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, fmt.Errorf("invalid characters: %q", s)
+		}
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	const gib = 1024 * 1024 * 1024
+	if v > math.MaxUint64/gib {
+		return 0, fmt.Errorf("value too large")
+	}
+	return v * gib, nil
+}
+
+func parseStreamingCacheExpertsArg(s string) (uint32, uint64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, fmt.Errorf("empty argument")
+	}
+	if len(s) > 2 && strings.HasSuffix(strings.ToLower(s), "gb") {
+		bytes, err := parseGibArg(s)
+		if err != nil {
+			return 0, 0, err
+		}
+		return 0, bytes, nil
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, 0, fmt.Errorf("invalid characters: %q", s)
+		}
+	}
+	v, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 0, 0, err
+	}
+	return uint32(v), 0, nil
 }
 
 // Addr returns the host:port listen address.

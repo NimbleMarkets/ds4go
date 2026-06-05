@@ -75,6 +75,9 @@ func NewMockLibrary() *Library {
 	r.ds4ContextMemoryEstimate = func(backend Backend, ctxSize int32) cContextMemory {
 		return cContextMemory{TotalBytes: 1 << 30}
 	}
+	r.ds4ContextMemoryEstimateWithPrefill = func(backend Backend, ctxSize int32, prefillChunk uint32) cContextMemory {
+		return cContextMemory{TotalBytes: 1 << 30}
+	}
 	r.ds4LogIsTTY = func(fp uintptr) bool { return false }
 	// The mock mirrors the real engine's redirect semantics: ds4_log writes to
 	// the descriptor installed via ds4_set_stderr_fd (unbuffered), or is dropped
