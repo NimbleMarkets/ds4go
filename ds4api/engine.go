@@ -33,7 +33,7 @@ func NewEngine(opts EngineOptions) (*Engine, error) {
 func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	var runLock *models.FileLock
 	var lockPath string
-	if opts.ModelPath != "" {
+	if opts.ModelPath != "" && !opts.InspectOnly {
 		lockPath = opts.ModelPath + ".run.lock"
 		var err error
 		runLock, err = models.AcquireEngineRunLock(opts.ModelPath)
