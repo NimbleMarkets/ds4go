@@ -184,7 +184,7 @@ The `toolloop` example registers a Go `add` tool and exercises DSML tool-call pa
 
 ## API Coverage
 
-Most users should import the root package `ds4` from `github.com/NimbleMarkets/ds4go`. It provides Go-native runtime policy and convenience helpers on top of the raw API.
+Most users should import the root package `ds4` from `github.com/NimbleMarkets/ds4go`. It provides Go-native runtime policy and convenience helpers on top of the raw API. This includes `DetectDefaultBackend(libPath)`, which queries backend preferences from installation metadata (`ds4go-install.json`) or falls back to system checks (probes for `/dev/nvidia0` or `nvidia-smi` on Linux to select CUDA; defaults to Metal on macOS arm64, and CPU reference otherwise).
 
 The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
 

@@ -2,7 +2,7 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
-## v0.5.0 (unreleased)
+## v0.5.0 (2026-06-05)
 
  * **BREAKING** We changed how logging works in our `nm-shared` branch of `ds4`, so there is now `SetStderrFd` rather than `SetLogFunc`.
  * Add [`lsp` package](./lsp/README.md) for Language Server Protocol (LSP) support
