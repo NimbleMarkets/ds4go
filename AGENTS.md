@@ -16,8 +16,9 @@ compiler.
   behavior.
 - `dsml/` is pure text processing for DeepSeek DSML tool-calling markup. It must
   stay independent of FFI and engine state.
-- `cmd/ds4go/`, `examples/`, and `internal/` may use the higher-level root
-  package where appropriate.
+- `cmd/ds4go/` and `cmd/internal/` (CLI/TUI components: `cli`, `tui`) live in the nested `cmd` module.
+- `internal/` (core library-internal packages: `install`, `models`, `cliopts`) live in the root module.
+- `examples/` and root packages may use the library packages where appropriate.
 
 ## Runtime Paths
 
@@ -41,12 +42,16 @@ to avoid binary planting.
   points between tokens.
 - Prefer focused tests near the package being changed. For cross-package prompt,
   generation, or tool behavior, add root package tests.
+- **macOS Code Signing**: macOS on Apple Silicon (arm64) requires all binaries to be signed. Foreign ad-hoc signed libraries (built on remote CI runners) will trigger a kernel `SIGKILL` on load. The validator and installer must verify code signature status and refuse loading invalid or foreign ad-hoc signed libraries, directing users to sign locally via `codesign -s - --force <libPath>`.
+- **Stderr Logging Redirection**: Logging is redirected via process-global file descriptors using `SetStderr`, `SetStderrFd`, `DiscardLogs`, and `CaptureStderr`. Do not use or reintroduce callback-based logging (`SetLogFunc`). Redirection is not supported on Windows.
+- **Backend Detection**: Use `DetectDefaultBackend(libPath)` to query preferred backends from the `ds4go-install.json` metadata sidecar file or fall back to system capability checks (e.g. checking `/dev/nvidiactl` or `nvidia-smi` on Linux).
 - Before committing or handing off substantial code changes, run:
 
 ```sh
-go test ./...
-go vet ./...
+go test ./... ./cmd/...
+go vet ./... ./cmd/...
 ```
 
-Use `go test ./... -race` for changes that touch shared state, callbacks,
+Use `go test ./... ./cmd/... -race` for changes that touch shared state, callbacks,
 streaming, sessions, or prompt/tool orchestration.
+
