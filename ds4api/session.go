@@ -20,6 +20,16 @@ var ErrSteeringNotSupported = errors.New("ds4: session directional steering is n
 // back to single-node execution.
 var ErrDistributedNotSupported = errors.New("ds4: distributed inference is not supported by the loaded library (missing symbols)")
 
+// ErrCancelNotSupported is returned by Session.SetCancel when the loaded
+// libds4 build does not export ds4_session_set_cancel.
+var ErrCancelNotSupported = errors.New("ds4: session cancellation is not supported by the loaded library (missing symbol)")
+
+// ErrSessionSyncInterrupted is returned when ds4_session_sync stops because
+// the installed cancel callback requested cooperative cancellation.
+var ErrSessionSyncInterrupted = errors.New("ds4: session sync interrupted")
+
+const sessionSyncInterruptedCode int32 = 2
+
 // Session wraps a ds4_session.
 type Session struct {
 	lib     *Library
@@ -33,6 +43,7 @@ type Session struct {
 type sessionCleanupState struct {
 	progressID        uintptr
 	displayProgressID uintptr
+	cancelID          uintptr
 }
 
 type sessionCleanupArg struct {
@@ -47,8 +58,12 @@ func cleanSession(arg sessionCleanupArg) {
 	if arg.ptr != 0 {
 		arg.lib.raw.ds4SessionSetProgress(arg.ptr, 0, 0)
 		arg.lib.raw.ds4SessionSetDisplayProgress(arg.ptr, 0, 0)
+		if arg.lib.raw.ds4SessionSetCancel != nil {
+			arg.lib.raw.ds4SessionSetCancel(arg.ptr, 0, 0)
+		}
 		unregisterProgressCallback(arg.state.progressID)
 		unregisterProgressCallback(arg.state.displayProgressID)
+		unregisterCancelCallback(arg.state.cancelID)
 		arg.lib.raw.ds4SessionFree(arg.ptr)
 	}
 }
@@ -89,8 +104,12 @@ func (s *Session) Close() {
 		if s.ptr != 0 {
 			s.lib.raw.ds4SessionSetProgress(s.ptr, 0, 0)
 			s.lib.raw.ds4SessionSetDisplayProgress(s.ptr, 0, 0)
+			if s.lib.raw.ds4SessionSetCancel != nil {
+				s.lib.raw.ds4SessionSetCancel(s.ptr, 0, 0)
+			}
 			unregisterProgressCallback(s.state.progressID)
 			unregisterProgressCallback(s.state.displayProgressID)
+			unregisterCancelCallback(s.state.cancelID)
 			s.lib.raw.ds4SessionFree(s.ptr)
 			s.ptr = 0
 		}
@@ -151,6 +170,32 @@ func (s *Session) SetDisplayProgress(fn ProgressFunc) error {
 	return nil
 }
 
+// SetCancel sets a persistent cooperative cancellation callback for
+// ds4_session_set_cancel. ds4_session_sync polls this callback only at safe
+// boundaries where the live checkpoint remains valid.
+func (s *Session) SetCancel(fn CancelFunc) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionSetCancel == nil {
+		return ErrCancelNotSupported
+	}
+	if s.state.cancelID != 0 {
+		s.lib.raw.ds4SessionSetCancel(s.ptr, 0, 0)
+		unregisterCancelCallback(s.state.cancelID)
+		s.state.cancelID = 0
+	}
+	if fn == nil {
+		return nil
+	}
+	id := registerCancelCallback(fn)
+	s.state.cancelID = id
+	s.lib.raw.ds4SessionSetCancel(s.ptr, cancelCallback, id)
+	return nil
+}
+
 // Sync synchronizes the live session to a full prompt token prefix.
 func (s *Session) Sync(prompt []int) error {
 	tokens, err := newTokensWithLibrary(s.lib, prompt)
@@ -161,6 +206,18 @@ func (s *Session) Sync(prompt []int) error {
 	return s.SyncTokens(tokens)
 }
 
+// SyncWithCancel synchronizes the live session to a full prompt token prefix
+// while polling fn for cooperative cancellation. Any persistent SetCancel
+// callback is restored before SyncWithCancel returns.
+func (s *Session) SyncWithCancel(prompt []int, fn CancelFunc) error {
+	tokens, err := newTokensWithLibrary(s.lib, prompt)
+	if err != nil {
+		return err
+	}
+	defer tokens.Free()
+	return s.SyncTokensWithCancel(tokens, fn)
+}
+
 // SyncTokens synchronizes the live session to a full prompt token prefix.
 func (s *Session) SyncTokens(prompt *Tokens) error {
 	unlock, err := s.require()
@@ -168,8 +225,43 @@ func (s *Session) SyncTokens(prompt *Tokens) error {
 		return err
 	}
 	defer unlock()
+	return s.syncTokensLocked(prompt)
+}
+
+// SyncTokensWithCancel synchronizes the live session to a full prompt token
+// prefix while polling fn for cooperative cancellation. Any persistent
+// SetCancel callback is restored before SyncTokensWithCancel returns.
+func (s *Session) SyncTokensWithCancel(prompt *Tokens, fn CancelFunc) error {
+	if fn == nil {
+		return s.SyncTokens(prompt)
+	}
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionSetCancel == nil {
+		return ErrCancelNotSupported
+	}
+	tempID := registerCancelCallback(fn)
+	s.lib.raw.ds4SessionSetCancel(s.ptr, cancelCallback, tempID)
+	defer func() {
+		if s.state.cancelID != 0 {
+			s.lib.raw.ds4SessionSetCancel(s.ptr, cancelCallback, s.state.cancelID)
+		} else {
+			s.lib.raw.ds4SessionSetCancel(s.ptr, 0, 0)
+		}
+		unregisterCancelCallback(tempID)
+	}()
+	return s.syncTokensLocked(prompt)
+}
+
+func (s *Session) syncTokensLocked(prompt *Tokens) error {
 	buf, ptr, n := errorBuffer()
 	code := s.lib.raw.ds4SessionSync(s.ptr, prompt.cptr(), ptr, n)
+	if code == sessionSyncInterruptedCode {
+		return ErrSessionSyncInterrupted
+	}
 	return errorFromBuffer("ds4_session_sync", code, buf)
 }
 

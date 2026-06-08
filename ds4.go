@@ -50,6 +50,8 @@ type (
 	GenerationDoneFunc = ds4api.GenerationDoneFunc
 	// ProgressFunc receives ds4 progress events.
 	ProgressFunc = ds4api.ProgressFunc
+	// CancelFunc is polled by ds4 at cooperative cancellation points.
+	CancelFunc = ds4api.CancelFunc
 	// ArgmaxGenerateOptions controls ds4_engine_generate_argmax.
 	ArgmaxGenerateOptions = ds4api.ArgmaxGenerateOptions
 )
@@ -111,6 +113,13 @@ const (
 	// DefaultMTPMargin is the default minimum margin (in tokens) between the
 	// draft model's accepted sequence and the full target model output.
 	DefaultMTPMargin = 3
+)
+
+var (
+	// ErrCancelNotSupported is returned when session cancellation is unavailable.
+	ErrCancelNotSupported = ds4api.ErrCancelNotSupported
+	// ErrSessionSyncInterrupted is returned when session sync is cooperatively interrupted.
+	ErrSessionSyncInterrupted = ds4api.ErrSessionSyncInterrupted
 )
 
 // Load loads libds4 using ds4go's runtime path policy.

@@ -220,6 +220,10 @@ type GenerationDoneFunc func()
 // ProgressFunc receives ds4 progress events.
 type ProgressFunc func(event string, current, total int)
 
+// CancelFunc is polled by ds4 at cooperative cancellation points.
+// Returning true asks ds4_session_sync to stop at a valid checkpoint boundary.
+type CancelFunc func() bool
+
 // ArgmaxGenerateOptions controls ds4_engine_generate_argmax.
 type ArgmaxGenerateOptions struct {
 	// NPredict is the number of tokens to generate.

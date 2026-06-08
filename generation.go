@@ -49,7 +49,9 @@ func (g Generator) Generate(prompt []int, opts GenerateOptions) ([]int, error) {
 	if g.Session == nil {
 		return nil, errors.New("ds4go: nil session")
 	}
-	if err := g.Session.Sync(prompt); err != nil {
+	if err := syncWithContext(func() error { return g.Session.Sync(prompt) }, func(fn ds4api.CancelFunc) error {
+		return g.Session.SyncWithCancel(prompt, fn)
+	}, opts.Context); err != nil {
 		return nil, err
 	}
 	return g.Continue(opts)
@@ -60,10 +62,31 @@ func (g Generator) GenerateTokens(prompt *ds4api.Tokens, opts GenerateOptions) (
 	if g.Session == nil {
 		return nil, errors.New("ds4go: nil session")
 	}
-	if err := g.Session.SyncTokens(prompt); err != nil {
+	if err := syncWithContext(func() error { return g.Session.SyncTokens(prompt) }, func(fn ds4api.CancelFunc) error {
+		return g.Session.SyncTokensWithCancel(prompt, fn)
+	}, opts.Context); err != nil {
 		return nil, err
 	}
 	return g.Continue(opts)
+}
+
+func syncWithContext(sync func() error, syncCancel func(ds4api.CancelFunc) error, ctx context.Context) error {
+	if ctx == nil {
+		return sync()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := syncCancel(func() bool { return ctx.Err() != nil })
+	if errors.Is(err, ds4api.ErrSessionSyncInterrupted) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	if errors.Is(err, ds4api.ErrCancelNotSupported) {
+		return sync()
+	}
+	return err
 }
 
 // Continue generates tokens from the current session logits.

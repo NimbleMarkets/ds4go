@@ -131,6 +131,7 @@ type rawSymbols struct {
 	ds4SessionSetPower                  func(s uintptr, powerPercent int32) int32
 	ds4SessionSetProgress               func(s uintptr, fn uintptr, ud uintptr)
 	ds4SessionSetDisplayProgress        func(s uintptr, fn uintptr, ud uintptr)
+	ds4SessionSetCancel                 func(s uintptr, fn uintptr, ud uintptr)
 	ds4SessionSync                      func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionRewriteRequiresRebuild    func(liveLen int32, canonicalLen int32, common int32) bool
 	ds4SessionRewriteFromCommon         func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult

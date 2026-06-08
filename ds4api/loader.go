@@ -105,6 +105,13 @@ func (l *Library) SupportsDistributed() bool {
 	return l != nil && l.raw.ds4SessionIsDistributed != nil
 }
 
+// SupportsSessionCancel reports whether the loaded library exports
+// ds4_session_set_cancel. When false, Session.SetCancel returns
+// ErrCancelNotSupported.
+func (l *Library) SupportsSessionCancel() bool {
+	return l != nil && l.raw.ds4SessionSetCancel != nil
+}
+
 func (l *Library) register() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -168,6 +175,9 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4SessionSetPower, "ds4_session_set_power")
 	mustRegister(&r.ds4SessionSetProgress, "ds4_session_set_progress")
 	mustRegister(&r.ds4SessionSetDisplayProgress, "ds4_session_set_display_progress")
+	if _, err := purego.Dlsym(l.handle, "ds4_session_set_cancel"); err == nil {
+		mustRegister(&r.ds4SessionSetCancel, "ds4_session_set_cancel")
+	}
 	mustRegister(&r.ds4SessionSync, "ds4_session_sync")
 	mustRegister(&r.ds4SessionRewriteRequiresRebuild, "ds4_session_rewrite_requires_rebuild")
 	mustRegister(&r.ds4SessionRewriteFromCommon, "ds4_session_rewrite_from_common")

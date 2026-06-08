@@ -1,6 +1,7 @@
 package ds4api
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unsafe"
@@ -75,6 +76,65 @@ func TestSessionSetDisplayProgressInstallsAndClears(t *testing.T) {
 	}
 	if err := sess.SetDisplayProgress(cb); err != nil {
 		t.Fatalf("SetDisplayProgress(cb) with SetProgress active: %v", err)
+	}
+}
+
+func TestSessionCancelInterruptsSync(t *testing.T) {
+	lib := NewMockLibrary()
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	sess, err := eng.NewSession(4096)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+
+	if !lib.SupportsSessionCancel() {
+		t.Fatal("mock library should support session cancellation")
+	}
+	if err := sess.SetCancel(func() bool { return true }); err != nil {
+		t.Fatalf("SetCancel: %v", err)
+	}
+	if err := sess.Sync([]int{1, 2, 3}); !errors.Is(err, ErrSessionSyncInterrupted) {
+		t.Fatalf("Sync error = %v, want ErrSessionSyncInterrupted", err)
+	}
+	if err := sess.SetCancel(nil); err != nil {
+		t.Fatalf("SetCancel(nil): %v", err)
+	}
+	if err := sess.Sync([]int{1, 2, 3}); err != nil {
+		t.Fatalf("Sync after clearing cancel: %v", err)
+	}
+}
+
+func TestSyncTokensWithCancelRestoresPersistentCancel(t *testing.T) {
+	lib := NewMockLibrary()
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	sess, err := eng.NewSession(4096)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+	toks, err := eng.NewTokens([]int{1, 2, 3})
+	if err != nil {
+		t.Fatalf("NewTokens: %v", err)
+	}
+	defer toks.Free()
+
+	if err := sess.SetCancel(func() bool { return true }); err != nil {
+		t.Fatalf("SetCancel: %v", err)
+	}
+	if err := sess.SyncTokensWithCancel(toks, func() bool { return false }); err != nil {
+		t.Fatalf("SyncTokensWithCancel temporary false: %v", err)
+	}
+	if err := sess.SyncTokens(toks); !errors.Is(err, ErrSessionSyncInterrupted) {
+		t.Fatalf("SyncTokens after temporary cancel error = %v, want ErrSessionSyncInterrupted", err)
 	}
 }
 

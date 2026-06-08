@@ -149,6 +149,11 @@ func NewMockLibrary() *Library {
 	}
 	r.ds4SessionSetProgress = func(s uintptr, fn uintptr, ud uintptr) {}
 	r.ds4SessionSetDisplayProgress = func(s uintptr, fn uintptr, ud uintptr) {}
+	r.ds4SessionSetCancel = func(s uintptr, fn uintptr, ud uintptr) {
+		if sess := mockSessionPtr(s); sess != nil {
+			sess.cancelID = ud
+		}
+	}
 	r.ds4SessionSync = mockSessionSync
 	r.ds4SessionRewriteRequiresRebuild = func(liveLen int32, canonicalLen int32, common int32) bool { return true }
 	r.ds4SessionRewriteFromCommon = func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult {
@@ -442,6 +447,7 @@ type mockSession struct {
 	evaluated     []int32
 	ctxSize       int32
 	tokenSnapshot cTokens
+	cancelID      uintptr
 }
 
 var (
@@ -600,6 +606,9 @@ func mockSessionSync(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uint
 	sess := mockSessionPtr(s)
 	if sess == nil {
 		return -1
+	}
+	if invokeCancelCallback(sess.cancelID) {
+		return sessionSyncInterruptedCode
 	}
 	if prompt != nil && prompt.V != nil {
 		src := *mockTokensSlice(prompt.V)
