@@ -855,9 +855,7 @@ func defaultBackend(goos, goarch string) string {
 			return "cuda"
 		}
 		if isROCmPresentFunc() {
-			// Once ROCm is supported upstream, we will return "rocm" here.
-			// For now, fall back to "cpu".
-			// return "rocm"
+			return "rocm"
 		}
 		return "cpu"
 	}

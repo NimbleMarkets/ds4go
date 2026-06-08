@@ -83,12 +83,13 @@ $DS4_DIR/lib/      native shared libraries
 $DS4_DIR/models/   GGUF model files
 ```
 
-`--backend auto` selects `metal` on macOS arm64, `cuda` on Linux, and `cpu` elsewhere. Select a
+`--backend auto` selects `metal` on macOS arm64, `cuda` or `rocm` on Linux when detected, and `cpu` elsewhere. Select a
 specific build when needed:
 
 ```sh
 ds4go install --backend metal
 ds4go install --backend cuda
+ds4go install --backend rocm
 ds4go install --backend cpu
 ```
 

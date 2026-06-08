@@ -22,6 +22,11 @@ func TestSelectBackend_ExplicitFlags(t *testing.T) {
 			want: ds4.BackendCUDA,
 		},
 		{
+			name: "rocm flag",
+			cfg:  CLIConfig{ROCm: true},
+			want: ds4.BackendCUDA,
+		},
+		{
 			name: "cpu flag",
 			cfg:  CLIConfig{CPU: true},
 			want: ds4.BackendCPU,
@@ -34,6 +39,11 @@ func TestSelectBackend_ExplicitFlags(t *testing.T) {
 		{
 			name: "backend cuda",
 			cfg:  CLIConfig{Backend: "cuda"},
+			want: ds4.BackendCUDA,
+		},
+		{
+			name: "backend rocm",
+			cfg:  CLIConfig{Backend: "rocm"},
 			want: ds4.BackendCUDA,
 		},
 		{
@@ -73,7 +83,7 @@ func TestSelectBackend_MetadataFile(t *testing.T) {
 	meta := struct {
 		Backend string `json:"backend"`
 	}{
-		Backend: "cuda",
+		Backend: "rocm",
 	}
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
@@ -89,7 +99,7 @@ func TestSelectBackend_MetadataFile(t *testing.T) {
 
 	got := cfg.SelectBackend()
 	if got != ds4.BackendCUDA {
-		t.Errorf("expected backend CUDA from metadata, got %v", got)
+		t.Errorf("expected backend CUDA/ROCm from metadata, got %v", got)
 	}
 }
 

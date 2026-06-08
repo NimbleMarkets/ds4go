@@ -44,6 +44,14 @@ func TestCandidateAssetNamesAMD64Alias(t *testing.T) {
 	}
 }
 
+func TestCandidateAssetNamesROCm(t *testing.T) {
+	opts := Options{GOOS: "linux", GOARCH: "amd64", Backend: "rocm"}
+	got := candidateAssetNames("v0.1.0", opts)
+	if !contains(got, "libds4-v0.1.0-linux-x86_64-rocm.tar.gz") {
+		t.Fatalf("candidateAssetNames() = %#v, want x86_64 ROCm alias", got)
+	}
+}
+
 func TestNormalizeUsesDS4DirLib(t *testing.T) {
 	t.Setenv("DS4_DIR", "/tmp/custom-ds4")
 	opts := normalize(Options{})
@@ -272,8 +280,8 @@ func TestDefaultBackendLinux(t *testing.T) {
 	isROCmPresentFunc = func() bool { return true }
 
 	backend2 := defaultBackend("linux", "amd64")
-	if backend2 != "cpu" {
-		t.Errorf("defaultBackend(\"linux\", \"amd64\") with ROCm present = %q, want %q", backend2, "cpu")
+	if backend2 != "rocm" {
+		t.Errorf("defaultBackend(\"linux\", \"amd64\") with ROCm present = %q, want %q", backend2, "rocm")
 	}
 
 	// 3. Test case: Neither CUDA nor ROCm GPU present on Linux

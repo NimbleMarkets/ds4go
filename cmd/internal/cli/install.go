@@ -34,7 +34,7 @@ func newInstallCommand() *cobra.Command {
 	fs.StringVar(&opts.DestDir, "lib", "", "directory where libds4 will be installed (default $DS4_DIR/lib or ~/.ds4/lib)")
 	fs.StringVar(&opts.Repo, "repo", install.DefaultRepo, "GitHub repo that publishes libds4 releases")
 	fs.StringVar(&opts.Version, "version", "latest", "release tag to install, or latest")
-	fs.StringVar(&opts.Backend, "backend", "auto", "backend build to install: auto, metal, cuda, or cpu")
+	fs.StringVar(&opts.Backend, "backend", "auto", "backend build to install: auto, metal, cuda, rocm, or cpu")
 	fs.StringVar(&opts.GOOS, "os", "", "target operating system (default current)")
 	fs.StringVar(&opts.GOARCH, "arch", "", "target architecture (default current)")
 	fs.StringVar(&opts.Asset, "asset", "", "exact release asset name to download")

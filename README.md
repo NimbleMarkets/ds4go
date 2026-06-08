@@ -47,7 +47,7 @@ ds4go install --backend auto
 The installer downloads from `github.com/NimbleMarkets/ds4` by default. Use
 `--repo`, `--version`, `--backend`, or `--url` to select a fork, release, build,
 or direct archive. It installs into `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`.
-`--backend auto` selects `metal` on macOS arm64, `cuda` on Linux, and `cpu` elsewhere.
+`--backend auto` selects `metal` on macOS arm64, `cuda` or `rocm` on Linux when detected, and `cpu` elsewhere.
 If the library is already installed and up-to-date, the installer exits successfully
 without re-downloading. If a different version is present, it will prompt to replace it
 (or require `--force` in non-interactive environments).
@@ -88,6 +88,49 @@ Platform defaults are:
 | macOS | `libds4.dylib` |
 | Linux | `libds4.so` |
 | Windows | `libds4.dll` |
+
+### Side-by-side CUDA and ROCm libraries
+
+CUDA and ROCm are separate `libds4` build flavors, but upstream `ds4.h` uses the
+same backend enum value for both: `DS4_BACKEND_CUDA`. A ROCm-built library
+interprets that value as ROCm and reports `rocm` through `ds4_backend_name()`.
+For that reason, Go code should load distinct shared-library files explicitly
+and create engines from those `Library` handles:
+
+```go
+cudaLib, err := ds4.Load("/opt/ds4/cuda/libds4.so")
+if err != nil {
+    panic(err)
+}
+rocmLib, err := ds4.Load("/opt/ds4/rocm/libds4.so")
+if err != nil {
+    panic(err)
+}
+
+cudaEngine, err := cudaLib.NewEngine(ds4.EngineOptions{
+    ModelPath: "/models/ds4flash.gguf",
+    Backend:   ds4.BackendCUDA,
+})
+if err != nil {
+    panic(err)
+}
+defer cudaEngine.Close()
+
+rocmEngine, err := rocmLib.NewEngine(ds4.EngineOptions{
+    ModelPath: "/models/ds4flash.gguf",
+    Backend:   ds4.BackendCUDA, // ROCm uses the CUDA ABI backend slot.
+})
+if err != nil {
+    panic(err)
+}
+defer rocmEngine.Close()
+```
+
+Use explicit `Library` handles for side-by-side builds; package-level helpers
+such as `ds4.NewEngine` use the singleton default library. Keep engines,
+sessions, and token vectors with the library that created them. ds4go currently
+serializes calls into libds4 across the process, so multiple engines can be
+loaded independently but inference is not run concurrently by the Go binding.
 
 ## Usage
 

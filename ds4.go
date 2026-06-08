@@ -68,6 +68,8 @@ const (
 	BackendMetal = ds4api.BackendMetal
 	// BackendCUDA selects the CUDA backend.
 	BackendCUDA = ds4api.BackendCUDA
+	// BackendROCm selects ROCm builds, which use the CUDA ABI backend slot.
+	BackendROCm = ds4api.BackendCUDA
 	// BackendCPU selects the CPU reference backend.
 	BackendCPU = ds4api.BackendCPU
 

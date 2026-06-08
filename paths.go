@@ -129,6 +129,8 @@ func DetectDefaultBackend(libPath string) Backend {
 					return BackendMetal
 				case "cuda":
 					return BackendCUDA
+				case "rocm":
+					return BackendCUDA
 				case "cpu":
 					return BackendCPU
 				}
@@ -147,6 +149,12 @@ func DetectDefaultBackend(libPath string) Backend {
 			return BackendCUDA
 		}
 		if _, err := exec.LookPath("nvidia-smi"); err == nil {
+			return BackendCUDA
+		}
+		if _, err := os.Stat("/dev/kfd"); err == nil {
+			return BackendCUDA
+		}
+		if _, err := os.Stat("/opt/rocm"); err == nil {
 			return BackendCUDA
 		}
 		return BackendCPU
