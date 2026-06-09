@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
@@ -86,6 +87,26 @@ type Result struct {
 	Library    string
 	ChecksumOK bool
 	DryRun     bool
+}
+
+// CatalogResult describes the libds4 release assets available for installation.
+type CatalogResult struct {
+	Repo    string         `json:"repo"`
+	Version string         `json:"version"`
+	Assets  []CatalogAsset `json:"assets"`
+}
+
+// CatalogAsset describes one installable libds4 release asset.
+type CatalogAsset struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Digest   string `json:"digest,omitempty"`
+	GOOS     string `json:"goos,omitempty"`
+	GOARCH   string `json:"goarch,omitempty"`
+	Backend  string `json:"backend,omitempty"`
+	Archive  string `json:"archive,omitempty"`
+	Parsed   bool   `json:"parsed"`
+	Selected bool   `json:"selected"`
 }
 
 // InstallMetadata holds information about the installed libds4.
@@ -272,6 +293,85 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	fmt.Fprintf(opts.Out, "installed %s\n", res.Library)
 	return res, nil
+}
+
+// Catalog fetches the selected GitHub release and lists available libds4 assets.
+// Empty GOOS, GOARCH, and Backend fields mean no filter. Backend "auto" is also
+// treated as no filter because the catalog is informational.
+func Catalog(ctx context.Context, opts Options) (*CatalogResult, error) {
+	opts = normalizeCatalog(opts)
+	rel, err := fetchRelease(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	opts.Version = rel.TagName
+	res := &CatalogResult{
+		Repo:    opts.Repo,
+		Version: rel.TagName,
+	}
+	for _, a := range rel.Assets {
+		ca := catalogAssetFromReleaseAsset(a)
+		if !ca.Parsed {
+			continue
+		}
+		if !catalogAssetMatches(ca, opts) {
+			continue
+		}
+		ca.Selected = catalogAssetSelected(ca, opts)
+		res.Assets = append(res.Assets, ca)
+	}
+	slices.SortFunc(res.Assets, func(a, b CatalogAsset) int {
+		if a.GOOS != b.GOOS {
+			return strings.Compare(a.GOOS, b.GOOS)
+		}
+		if a.GOARCH != b.GOARCH {
+			return strings.Compare(a.GOARCH, b.GOARCH)
+		}
+		if a.Backend != b.Backend {
+			return strings.Compare(a.Backend, b.Backend)
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return res, nil
+}
+
+// PrintCatalog writes a human-readable install catalog.
+func PrintCatalog(out io.Writer, catalog *CatalogResult) {
+	if out == nil {
+		out = io.Discard
+	}
+	if catalog == nil {
+		return
+	}
+	style := defaultNimbleStyle()
+	fmt.Fprintf(out, "%s %s\n", style.Label("Repo:"), catalog.Repo)
+	fmt.Fprintf(out, "%s %s\n\n", style.Label("Release:"), catalog.Version)
+	if len(catalog.Assets) == 0 {
+		fmt.Fprintln(out, style.Label("No libds4 assets found."))
+		return
+	}
+	w := tabwriter.NewWriter(out, 2, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		style.Header("Backend"),
+		style.Header("OS"),
+		style.Header("Arch"),
+		style.Header("Match"),
+		style.Header("Asset"),
+	)
+	for _, a := range catalog.Assets {
+		selected := ""
+		if a.Selected {
+			selected = style.Selected("*")
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			a.Backend,
+			a.GOOS,
+			a.GOARCH,
+			selected,
+			style.Asset(a.Name),
+		)
+	}
+	w.Flush()
 }
 
 // runPin installs a developer-supplied libds4 by copying opts.Pin into
@@ -482,6 +582,28 @@ func normalize(opts Options) Options {
 	return opts
 }
 
+func normalizeCatalog(opts Options) Options {
+	if opts.Repo == "" {
+		opts.Repo = DefaultRepo
+	}
+	if opts.Version == "" {
+		opts.Version = "latest"
+	}
+	opts.Backend = strings.ToLower(strings.TrimSpace(opts.Backend))
+	opts.GOOS = strings.ToLower(strings.TrimSpace(opts.GOOS))
+	opts.GOARCH = strings.ToLower(strings.TrimSpace(opts.GOARCH))
+	if opts.Out == nil {
+		opts.Out = io.Discard
+	}
+	if opts.HTTPClient == nil {
+		opts.HTTPClient = &http.Client{Timeout: 5 * time.Minute}
+	}
+	if opts.In == nil {
+		opts.In = os.Stdin
+	}
+	return opts
+}
+
 func defaultDir() string {
 	if dir := os.Getenv("DS4_DIR"); dir != "" {
 		return dir
@@ -490,6 +612,108 @@ func defaultDir() string {
 		return filepath.Join(home, ".ds4")
 	}
 	return ".ds4"
+}
+
+func catalogAssetFromReleaseAsset(a asset) CatalogAsset {
+	ca := CatalogAsset{
+		Name:   a.Name,
+		URL:    a.BrowserDownloadURL,
+		Digest: a.Digest,
+	}
+	stem, archive, ok := catalogAssetStem(a.Name)
+	if !ok {
+		return ca
+	}
+	parts := strings.Split(stem, "-")
+	if len(parts) < 4 {
+		return ca
+	}
+	backend := strings.ToLower(parts[len(parts)-1])
+	goarch := normalizeCatalogArch(parts[len(parts)-2])
+	goos := normalizeCatalogOS(parts[len(parts)-3])
+	if !knownCatalogBackend(backend) || goos == "" || goarch == "" {
+		return ca
+	}
+	ca.GOOS = goos
+	ca.GOARCH = goarch
+	ca.Backend = backend
+	ca.Archive = archive
+	ca.Parsed = true
+	return ca
+}
+
+func catalogAssetStem(name string) (stem, archive string, ok bool) {
+	base := filepath.Base(name)
+	switch {
+	case strings.HasSuffix(base, ".tar.gz"):
+		return strings.TrimSuffix(base, ".tar.gz"), "tar.gz", true
+	case strings.HasSuffix(base, ".tgz"):
+		return strings.TrimSuffix(base, ".tgz"), "tgz", true
+	case strings.HasSuffix(base, ".zip"):
+		return strings.TrimSuffix(base, ".zip"), "zip", true
+	default:
+		return "", "", false
+	}
+}
+
+func normalizeCatalogOS(s string) string {
+	switch strings.ToLower(s) {
+	case "macos":
+		return "darwin"
+	case "darwin", "linux", "windows":
+		return strings.ToLower(s)
+	default:
+		return ""
+	}
+}
+
+func normalizeCatalogArch(s string) string {
+	switch strings.ToLower(s) {
+	case "x86_64":
+		return "amd64"
+	case "amd64", "arm64":
+		return strings.ToLower(s)
+	default:
+		return ""
+	}
+}
+
+func knownCatalogBackend(s string) bool {
+	switch s {
+	case "metal", "cuda", "rocm", "cpu":
+		return true
+	default:
+		return false
+	}
+}
+
+func catalogAssetMatches(a CatalogAsset, opts Options) bool {
+	if opts.GOOS != "" && a.GOOS != normalizeCatalogOS(opts.GOOS) {
+		return false
+	}
+	if opts.GOARCH != "" && a.GOARCH != normalizeCatalogArch(opts.GOARCH) {
+		return false
+	}
+	if opts.Backend != "" && opts.Backend != "auto" && a.Backend != opts.Backend {
+		return false
+	}
+	return true
+}
+
+func catalogAssetSelected(a CatalogAsset, opts Options) bool {
+	if opts.GOOS == "" || opts.GOARCH == "" || opts.Backend == "" || opts.Backend == "auto" {
+		return false
+	}
+	selectedOpts := opts
+	selectedOpts.GOOS = a.GOOS
+	selectedOpts.GOARCH = a.GOARCH
+	selectedOpts.Backend = a.Backend
+	for _, name := range candidateAssetNames(opts.Version, selectedOpts) {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultModelsDir returns the directory of model files whose run-locks should

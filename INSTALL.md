@@ -93,6 +93,14 @@ ds4go install --backend rocm
 ds4go install --backend cpu
 ```
 
+List available release assets before choosing a build:
+
+```sh
+ds4go install catalog
+ds4go install catalog --backend rocm --os linux --arch amd64
+ds4go install catalog --json
+```
+
 The installer downloads from `github.com/NimbleMarkets/ds4` by default. You can
 point it at another fork or a specific release:
 
@@ -108,6 +116,7 @@ Expected release asset names are:
 libds4-VERSION-macos-arm64-metal.tar.gz
 libds4-VERSION-linux-x86_64-cpu.tar.gz
 libds4-VERSION-linux-x86_64-cuda.tar.gz
+libds4-VERSION-linux-x86_64-rocm.tar.gz
 libds4-VERSION-windows-amd64-cpu.zip
 libds4-VERSION-windows-amd64-cuda.zip
 ```

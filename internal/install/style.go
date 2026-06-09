@@ -18,3 +18,15 @@ func (nimbleStyle) Action(s string) string {
 func (nimbleStyle) Asset(s string) string {
 	return s
 }
+
+func (nimbleStyle) Header(s string) string {
+	return s
+}
+
+func (nimbleStyle) Label(s string) string {
+	return s
+}
+
+func (nimbleStyle) Selected(s string) string {
+	return s
+}

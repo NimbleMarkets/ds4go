@@ -52,6 +52,86 @@ func TestCandidateAssetNamesROCm(t *testing.T) {
 	}
 }
 
+func TestCatalogAssetFromReleaseAsset(t *testing.T) {
+	got := catalogAssetFromReleaseAsset(asset{
+		Name:               "libds4-v0.1.0-linux-x86_64-rocm.tar.gz",
+		BrowserDownloadURL: "https://example.com/lib.tar.gz",
+		Digest:             "sha256:abc",
+	})
+	if !got.Parsed {
+		t.Fatal("Parsed = false, want true")
+	}
+	if got.GOOS != "linux" || got.GOARCH != "amd64" || got.Backend != "rocm" || got.Archive != "tar.gz" {
+		t.Fatalf("parsed asset = %+v, want linux/amd64/rocm tar.gz", got)
+	}
+}
+
+func TestCatalogFiltersReleaseAssets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/releases/") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+				"tag_name": "v0.1.0",
+				"assets": [
+					{
+						"name": "libds4-v0.1.0-linux-x86_64-rocm.tar.gz",
+						"browser_download_url": "https://example.com/rocm.tar.gz",
+						"digest": "sha256:rocm"
+					},
+					{
+						"name": "libds4-v0.1.0-linux-x86_64-cuda.tar.gz",
+						"browser_download_url": "https://example.com/cuda.tar.gz",
+						"digest": "sha256:cuda"
+					},
+					{
+						"name": "notes.txt",
+						"browser_download_url": "https://example.com/notes.txt"
+					}
+				]
+			}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	got, err := Catalog(context.Background(), Options{
+		Repo:    "NimbleMarkets/ds4",
+		Version: "v0.1.0",
+		Backend: "rocm",
+		GOOS:    "linux",
+		GOARCH:  "amd64",
+		Out:     io.Discard,
+		HTTPClient: &http.Client{
+			Transport: &mockTransport{
+				targetHost:   srv.Listener.Addr().String(),
+				targetScheme: "http",
+				underlying:   srv.Client().Transport,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Catalog: %v", err)
+	}
+	if got.Repo != "NimbleMarkets/ds4" || got.Version != "v0.1.0" {
+		t.Fatalf("catalog header = %+v, want repo/version", got)
+	}
+	if len(got.Assets) != 1 {
+		t.Fatalf("len(Assets) = %d, want 1: %+v", len(got.Assets), got.Assets)
+	}
+	a := got.Assets[0]
+	if a.Backend != "rocm" || a.GOOS != "linux" || a.GOARCH != "amd64" || !a.Selected {
+		t.Fatalf("asset = %+v, want selected linux/amd64/rocm", a)
+	}
+
+	var out bytes.Buffer
+	PrintCatalog(&out, got)
+	text := out.String()
+	if !strings.Contains(text, "Release: v0.1.0") || !strings.Contains(text, "rocm") || !strings.Contains(text, "*") {
+		t.Fatalf("PrintCatalog output missing expected fields:\n%s", text)
+	}
+}
+
 func TestNormalizeUsesDS4DirLib(t *testing.T) {
 	t.Setenv("DS4_DIR", "/tmp/custom-ds4")
 	opts := normalize(Options{})

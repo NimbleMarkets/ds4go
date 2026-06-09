@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 
 	"github.com/NimbleMarkets/ds4go/cmd/internal/tui"
@@ -44,6 +45,46 @@ func newInstallCommand() *cobra.Command {
 	fs.BoolVar(&opts.Force, "force", false, "replace an existing libds4 file")
 	fs.BoolVar(&opts.DryRun, "dry-run", false, "print the selected asset without downloading it")
 	fs.BoolVar(&opts.SkipChecksum, "skip-checksum", false, "skip GitHub API digest verification of the download")
+	cmd.AddCommand(newInstallCatalogCommand())
+	return cmd
+}
+
+func newInstallCatalogCommand() *cobra.Command {
+	var opts install.Options
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "catalog [options]",
+		Short: "List available libds4 release assets",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			if opts.Token == "" {
+				opts.Token = os.Getenv("GITHUB_TOKEN")
+			}
+			opts.Out = os.Stdout
+			opts.ProgressOut = os.Stderr
+			opts.In = os.Stdin
+			catalog, err := install.Catalog(cmd.Context(), opts)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(catalog)
+			}
+			install.PrintCatalog(os.Stdout, catalog)
+			return nil
+		},
+	}
+	fs := cmd.Flags()
+	fs.StringVar(&opts.Repo, "repo", install.DefaultRepo, "GitHub repo that publishes libds4 releases")
+	fs.StringVar(&opts.Version, "version", "latest", "release tag to inspect, or latest")
+	fs.StringVar(&opts.Backend, "backend", "", "filter by backend: metal, cuda, rocm, or cpu")
+	fs.StringVar(&opts.GOOS, "os", "", "filter by operating system")
+	fs.StringVar(&opts.GOARCH, "arch", "", "filter by architecture")
+	fs.StringVar(&opts.Token, "token", "", "GitHub token for private repos or higher rate limits (defaults to GITHUB_TOKEN)")
+	fs.BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
 }
 
