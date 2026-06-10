@@ -2,12 +2,14 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
-## v0.5.1 (2026-06-09)
+## v0.5.1 (2026-06-10)
 
  * Add `ds4go install catalog` command
  * Add AMD ROCm support
  * Add `ds4` [SSD streaming support](https://github.com/antirez/ds4#pro-on-128gb-macbooks)
  * Add session cancellation with `session.SetCancel`
+ * Tool loops now replay assistant reasoning across turns (preserving KV-cache reuse) and recover tool calls the model starts inside an
+  unclosed `<think>` block.
 
 ## v0.5.0 (2026-06-05)
 

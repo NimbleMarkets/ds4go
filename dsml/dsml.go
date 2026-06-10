@@ -25,6 +25,8 @@ const (
 	dsmlMarker         = "｜DSML｜"
 	dsmlMarkerShort    = "DSML｜"
 	eosToken           = "<｜end▁of▁sentence｜>"
+	assistantToken     = "<｜Assistant｜>"
+	thinkingStartToken = "<think>"
 	thinkingEndToken   = "</think>"
 	toolCallsBlockName = "tool_calls"
 

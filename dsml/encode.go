@@ -242,6 +242,34 @@ func RenderToolResult(content string) (string, error) {
 	return toolResultStart + escapeToolResultText(content) + toolResultEnd, nil
 }
 
+// RenderAssistantTurn renders one assistant history turn as raw chat-template
+// text — role marker, think block, visible content, rendered tool calls, and
+// the end-of-sentence terminator — for rendered-chat tokenization, which maps
+// the special markers (including ｜DSML｜) to their vocab token ids.
+//
+// Mirroring upstream ds4's render_chat_prompt_text: when thinking is enabled
+// and replayReasoning is true (the turn is in tool context or follows the last
+// user turn), the reasoning is re-rendered inside <think>...</think> — for
+// reasoning models, tool-call turns must keep their reasoning when replayed,
+// and dropping it also breaks KV prefix reuse against the live session.
+// Otherwise the think slot is rendered closed, the DeepSeek convention for
+// prior-turn reasoning.
+func RenderAssistantTurn(content, reasoning, toolCalls string, thinking, replayReasoning bool) string {
+	var b strings.Builder
+	b.WriteString(assistantToken)
+	if thinking && replayReasoning {
+		b.WriteString(thinkingStartToken)
+		b.WriteString(reasoning)
+		b.WriteString(thinkingEndToken)
+	} else {
+		b.WriteString(thinkingEndToken)
+	}
+	b.WriteString(content)
+	b.WriteString(toolCalls)
+	b.WriteString(eosToken)
+	return b.String()
+}
+
 // ToolSyntaxErrorMessage renders the tool-error payload sent back to the model
 // when its DSML tool call could not be parsed, mirroring upstream ds4's
 // invalid-DSML error suffix. detail is the parse failure (typically

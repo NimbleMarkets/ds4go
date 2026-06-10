@@ -104,7 +104,7 @@ func TestStreamCompletionStopsAtToolBlockClose(t *testing.T) {
 				fed++
 			}
 			return nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("streamCompletion: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestStreamCompletionPlainContent(t *testing.T) {
 			emit("hello ")
 			emit("world")
 			return nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("streamCompletion: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestStreamCompletionPropagatesUserCancellation(t *testing.T) {
 			emit("partial")
 			cancel()
 			return genCtx.Err()
-		})
+		}, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
@@ -180,7 +180,7 @@ func TestStreamCompletionPropagatesGenerationError(t *testing.T) {
 	_, err := streamCompletion(context.Background(), false, nil,
 		func(ctx context.Context, emit func(string)) error {
 			return boom
-		})
+		}, nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want boom", err)
 	}
@@ -389,5 +389,79 @@ func TestToolLoopRunMaxRounds(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected max-rounds error")
+	}
+}
+
+func TestStreamCompletionRecoversToolCallInUnclosedThink(t *testing.T) {
+	phase := 0
+	recovered := 0
+	thinkRecover := func() (string, error) {
+		recovered++
+		return "</think>\n\n", nil
+	}
+	gen := func(ctx context.Context, emit func(string)) error {
+		if phase == 0 {
+			phase = 1
+			for _, p := range []string{"<think>", "I will call the tool ", "\n\n<｜DSML｜tool_calls>", "never reached"} {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				emit(p)
+			}
+			return errors.New("generation was not cancelled for think recovery")
+		}
+		// Resumed after the forced close: the model restarts the call on the
+		// executable side.
+		for _, p := range []string{"\n\n<｜DSML｜tool_calls>\n", "<｜DSML｜invoke name=\"add\">\n", "</｜DSML｜invoke>\n", "</｜DSML｜tool_calls>"} {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			emit(p)
+		}
+		return nil
+	}
+
+	text, err := streamCompletion(context.Background(), true, nil, gen, thinkRecover)
+	if err != nil {
+		t.Fatalf("streamCompletion: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("recover called %d times, want 1", recovered)
+	}
+	msg, perr := dsml.ParseCompletion(text, true)
+	if perr != nil {
+		t.Fatalf("ParseCompletion: %v", perr)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Name != "add" {
+		t.Fatalf("recovered turn parsed to %+v, want one add call", msg.ToolCalls)
+	}
+	if !strings.Contains(msg.ReasoningContent, "<｜DSML｜tool_calls>") {
+		t.Fatalf("dangling stanza opening not kept inside reasoning: %q", msg.ReasoningContent)
+	}
+}
+
+func TestStreamCompletionNoRecoveryWithoutCallback(t *testing.T) {
+	gen := func(ctx context.Context, emit func(string)) error {
+		for _, p := range []string{"<think>", "thinking ", "\n\n<｜DSML｜tool_calls>", " more thinking"} {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			emit(p)
+		}
+		return nil
+	}
+	text, err := streamCompletion(context.Background(), true, nil, gen, nil)
+	if err != nil {
+		t.Fatalf("streamCompletion: %v", err)
+	}
+	msg, perr := dsml.ParseCompletion(text, true)
+	if perr != nil {
+		t.Fatalf("ParseCompletion: %v", perr)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("tool calls = %+v, want none without recovery", msg.ToolCalls)
+	}
+	if !strings.Contains(msg.ReasoningContent, "more thinking") {
+		t.Fatalf("generation was interrupted without a recovery callback: %q", msg.ReasoningContent)
 	}
 }

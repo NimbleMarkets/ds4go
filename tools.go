@@ -188,7 +188,21 @@ func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []Chat
 	return buildChatPrompt(engine, system, dsmlToolsFromSchemas(r.Schemas()), history, think, r.renderMessage)
 }
 
-type chatMessageRenderer func(ChatMessage) (string, string, error)
+// turnRenderInfo carries the per-turn rendering decisions computed from the
+// whole transcript: whether think markers are enabled for this prompt and
+// whether this assistant turn replays its reasoning.
+type turnRenderInfo struct {
+	thinking        bool
+	replayReasoning bool
+}
+
+// promptRenderOptions configures renderPromptMessages for one prompt build.
+type promptRenderOptions struct {
+	thinking    bool
+	toolContext bool
+}
+
+type chatMessageRenderer func(ChatMessage, turnRenderInfo) (renderedChatMessage, error)
 
 func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode, render chatMessageRenderer) (*Tokens, error) {
 	if engine == nil {
@@ -223,12 +237,27 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 			return nil, err
 		}
 	}
-	rendered, err := renderPromptMessages(history, render)
+	rendered, err := renderPromptMessages(history, render, promptRenderOptions{
+		thinking:    think == ThinkHigh || think == ThinkMax,
+		toolContext: len(tools) > 0 || historyUsesToolContext(history),
+	})
 	if err != nil {
 		tokens.Free()
 		return nil, err
 	}
 	for _, msg := range rendered {
+		if msg.prerendered {
+			turn, err := engine.TokenizeRenderedChat(msg.content)
+			if err != nil {
+				tokens.Free()
+				return nil, err
+			}
+			for _, id := range turn.Slice() {
+				tokens.Push(id)
+			}
+			turn.Free()
+			continue
+		}
 		if err := engine.ChatAppendMessage(tokens, msg.role, msg.content); err != nil {
 			tokens.Free()
 			return nil, err
@@ -310,41 +339,71 @@ func (r *ToolRegistry) ExecuteToolCalls(ctx context.Context, calls []ToolCall) (
 	return out, nil
 }
 
-func (r *ToolRegistry) renderMessage(msg ChatMessage) (string, string, error) {
+func (r *ToolRegistry) renderMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessage, error) {
 	if msg.Role != "assistant" {
-		return renderChatMessage(msg)
+		return renderChatMessage(msg, turn)
 	}
 	renderedCalls, err := r.renderAssistantToolCalls(msg.ToolCalls)
 	if err != nil {
-		return "", "", err
+		return renderedChatMessage{}, err
 	}
-	return "assistant", msg.Content + renderedCalls, nil
+	return assistantRendered(msg, renderedCalls, turn), nil
 }
 
-func renderChatMessage(msg ChatMessage) (string, string, error) {
+func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessage, error) {
 	switch msg.Role {
 	case "", "system", "user":
-		return msg.Role, msg.Content, nil
+		return renderedChatMessage{role: msg.Role, content: msg.Content}, nil
 	case "assistant":
 		renderedCalls, err := renderToolCalls(msg.ToolCalls)
 		if err != nil {
-			return "", "", err
+			return renderedChatMessage{}, err
 		}
-		return "assistant", msg.Content + renderedCalls, nil
+		return assistantRendered(msg, renderedCalls, turn), nil
 	case "tool":
 		result, err := dsml.RenderToolResult(msg.Content)
 		if err != nil {
-			return "", "", err
+			return renderedChatMessage{}, err
 		}
-		return "user", result, nil
+		return renderedChatMessage{role: "user", content: result}, nil
 	default:
-		return "", "", fmt.Errorf("ds4go: unsupported chat role %q", msg.Role)
+		return renderedChatMessage{}, fmt.Errorf("ds4go: unsupported chat role %q", msg.Role)
 	}
+}
+
+// assistantRendered renders an assistant history turn as raw chat-template
+// text for rendered-chat tokenization. Unlike ChatAppendMessage's plain BPE
+// path, this maps the template markers — and the ｜DSML｜ marker inside
+// replayed tool calls — to their special vocab tokens, matching what the
+// model actually sampled so the session's KV prefix stays reusable.
+func assistantRendered(msg ChatMessage, renderedCalls string, turn turnRenderInfo) renderedChatMessage {
+	return renderedChatMessage{
+		role:        "assistant",
+		content:     dsml.RenderAssistantTurn(msg.Content, msg.ReasoningContent, renderedCalls, turn.thinking, turn.replayReasoning),
+		prerendered: true,
+	}
+}
+
+// historyUsesToolContext mirrors upstream's chat_history_uses_tool_context:
+// any tool result or assistant tool call in the transcript puts the whole
+// prompt in tool context, where assistant reasoning is replayed.
+func historyUsesToolContext(history []ChatMessage) bool {
+	for _, msg := range history {
+		if msg.Role == "tool" || (msg.Role == "assistant" && len(msg.ToolCalls) > 0) {
+			return true
+		}
+	}
+	return false
 }
 
 type renderedChatMessage struct {
 	role    string
 	content string
+	// prerendered marks content as raw chat-template text (role markers
+	// included) that must be tokenized with the rendered-chat tokenizer so
+	// special markers map to their vocab token ids, instead of being passed
+	// to ChatAppendMessage.
+	prerendered bool
 }
 
 func toolAwareSystemContent(system string, toolsSection string) string {
@@ -357,42 +416,49 @@ func toolAwareSystemContent(system string, toolsSection string) string {
 	return toolsSection + "\n\n" + system
 }
 
-func (r *ToolRegistry) renderPromptMessages(history []ChatMessage) ([]renderedChatMessage, error) {
-	return renderPromptMessages(history, r.renderMessage)
-}
-
-func renderPromptMessages(history []ChatMessage, render chatMessageRenderer) ([]renderedChatMessage, error) {
+func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opts promptRenderOptions) ([]renderedChatMessage, error) {
 	if render == nil {
 		render = renderChatMessage
+	}
+	// Assistant turns after the last user-like turn replay their reasoning
+	// even outside tool context, mirroring upstream's last_user_idx rule.
+	lastUser := -1
+	for i, msg := range history {
+		if msg.Role == "user" || msg.Role == "tool" {
+			lastUser = i
+		}
 	}
 	out := make([]renderedChatMessage, 0, len(history))
 	for i := 0; i < len(history); {
 		if history[i].Role == "tool" {
 			var content strings.Builder
 			for i < len(history) && history[i].Role == "tool" {
-				role, part, err := render(history[i])
+				rendered, err := render(history[i], turnRenderInfo{})
 				if err != nil {
 					return nil, err
 				}
-				if role != "user" {
-					return nil, fmt.Errorf("ds4go: tool message rendered as %q", role)
+				if rendered.role != "user" {
+					return nil, fmt.Errorf("ds4go: tool message rendered as %q", rendered.role)
 				}
-				content.WriteString(part)
+				content.WriteString(rendered.content)
 				i++
 			}
 			out = append(out, renderedChatMessage{role: "user", content: content.String()})
 			continue
 		}
 
-		role, content, err := render(history[i])
+		rendered, err := render(history[i], turnRenderInfo{
+			thinking:        opts.thinking,
+			replayReasoning: opts.toolContext || i > lastUser,
+		})
 		if err != nil {
 			return nil, err
 		}
 		i++
-		if role == "" {
+		if rendered.role == "" {
 			continue
 		}
-		out = append(out, renderedChatMessage{role: role, content: content})
+		out = append(out, rendered)
 	}
 	return out, nil
 }

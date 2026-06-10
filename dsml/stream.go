@@ -72,7 +72,20 @@ type StreamDecoder struct {
 	// consumed and cleared if trailing text later degrades the block to raw
 	// content.
 	toolBlockClosed bool
+
+	// thinkScanFrom and thinkStanza implement stanza detection inside an
+	// unclosed <think> block (see ToolStanzaInThinking). thinkScanFrom is the
+	// fullText offset already scanned, held back far enough that an opening
+	// split across chunks is still seen from its first byte.
+	thinkScanFrom int
+	thinkStanza   bool
 }
+
+// thinkStanzaHoldback is how many trailing bytes of accumulated text stay
+// unscanned-but-rescannable so a stanza opening split across chunk boundaries
+// is still detected once it completes. Mirrors upstream ds4's hold of 80,
+// comfortably above the longest opening tag.
+const thinkStanzaHoldback = 80
 
 type decoderState int
 
@@ -113,6 +126,21 @@ func (d *StreamDecoder) ToolBlockClosed() bool {
 // consumed. Generation past this point produces no further usable output.
 func (d *StreamDecoder) Done() bool {
 	return d.state == stateDone
+}
+
+// ToolStanzaInThinking reports whether a complete tool-calls stanza opening
+// has appeared inside a still-unclosed <think> block. The decoder treats DSML
+// inside reasoning as non-executable, so without intervention such a turn
+// runs to the token limit and the call is dropped at parse time. A caller
+// driving generation can recover by force-feeding "</think>\n\n" into the
+// session (upstream ds4's think-tool recovery): measured on the real model,
+// that position predicts a fresh stanza opening strongly enough that the call
+// restarts cleanly on the executable side, while the dangling opening stays
+// harmlessly inside reasoning. Only a complete opening triggers — quoted
+// fragments and a lone "<" keep decoding untouched. The signal clears once
+// decoding leaves the thinking state.
+func (d *StreamDecoder) ToolStanzaInThinking() bool {
+	return d.state == stateThinking && d.thinkStanza
 }
 
 // Write feeds the next chunk of decoded model text and returns any events
@@ -198,6 +226,7 @@ func (d *StreamDecoder) process() []StreamEvent {
 // ----------------------------------------------------------------------
 
 func (d *StreamDecoder) processThinking(events *[]StreamEvent) {
+	d.scanThinkingForToolStanza()
 	if bytes.HasPrefix(d.buf, []byte("<think>")) {
 		d.buf = d.buf[len("<think>"):]
 	}
@@ -219,6 +248,30 @@ func (d *StreamDecoder) processThinking(events *[]StreamEvent) {
 	if len(d.buf) > holdBack {
 		d.emitReasoning(events, string(d.buf[:len(d.buf)-holdBack]))
 		d.buf = d.buf[len(d.buf)-holdBack:]
+	}
+}
+
+// scanThinkingForToolStanza looks for a complete stanza opening in the
+// accumulated text while thinking is still open. Detection works on
+// fullText, so marker tokenization and already-emitted reasoning deltas do
+// not matter; thinkScanFrom holds back far enough that an opening split
+// across future chunks is still seen from its first byte.
+func (d *StreamDecoder) scanThinkingForToolStanza() {
+	if d.thinkStanza {
+		return
+	}
+	if d.thinkScanFrom > len(d.fullText) {
+		d.thinkScanFrom = len(d.fullText)
+	}
+	region := string(d.fullText[d.thinkScanFrom:])
+	for _, syn := range dsmlSyntaxes {
+		if strings.Contains(region, syn.toolStart) {
+			d.thinkStanza = true
+			return
+		}
+	}
+	if hold := len(d.fullText) - thinkStanzaHoldback; hold > d.thinkScanFrom {
+		d.thinkScanFrom = hold
 	}
 }
 

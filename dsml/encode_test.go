@@ -213,3 +213,36 @@ func TestToolSyntaxErrorMessage(t *testing.T) {
 		t.Fatalf("bare message = %q, want no detail separator", bare)
 	}
 }
+
+func TestRenderAssistantTurnReplaysReasoning(t *testing.T) {
+	calls := "\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"add\">\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>"
+	turn := RenderAssistantTurn("checking", "need to add", calls, true, true)
+	want := "<｜Assistant｜><think>need to add</think>checking" + calls + "<｜end▁of▁sentence｜>"
+	if turn != want {
+		t.Fatalf("turn = %q, want %q", turn, want)
+	}
+}
+
+func TestRenderAssistantTurnDropsReasoningOutsideToolContext(t *testing.T) {
+	turn := RenderAssistantTurn("hello", "secret reasoning", "", true, false)
+	want := "<｜Assistant｜></think>hello<｜end▁of▁sentence｜>"
+	if turn != want {
+		t.Fatalf("turn = %q, want %q", turn, want)
+	}
+}
+
+func TestRenderAssistantTurnNoThinking(t *testing.T) {
+	turn := RenderAssistantTurn("hello", "", "", false, true)
+	want := "<｜Assistant｜></think>hello<｜end▁of▁sentence｜>"
+	if turn != want {
+		t.Fatalf("turn = %q, want %q", turn, want)
+	}
+}
+
+func TestRenderAssistantTurnEmptyReasoningStillReplays(t *testing.T) {
+	turn := RenderAssistantTurn("ok", "", "", true, true)
+	want := "<｜Assistant｜><think></think>ok<｜end▁of▁sentence｜>"
+	if turn != want {
+		t.Fatalf("turn = %q, want %q", turn, want)
+	}
+}

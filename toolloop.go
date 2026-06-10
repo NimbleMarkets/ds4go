@@ -13,6 +13,13 @@ import (
 // marker. It is interpreted as success, not cancellation.
 var errToolTurnComplete = errors.New("ds4go: tool turn complete")
 
+// errThinkToolRecovery cancels generation when a complete tool-calls stanza
+// opening appears inside a still-unclosed <think> block. The caller's
+// recovery callback force-feeds "</think>\n\n" into the session and
+// generation resumes, letting the model restart the call on the executable
+// side (upstream ds4's think-tool recovery).
+var errThinkToolRecovery = errors.New("ds4go: tool call inside unclosed thinking")
+
 // streamCompletion runs generate, feeding emitted token text through a
 // dsml.StreamDecoder, and returns the accumulated completion text. Once the
 // decoder reports a closed tool block or an end-of-sentence marker the
@@ -20,12 +27,10 @@ var errToolTurnComplete = errors.New("ds4go: tool turn complete")
 // whitespace and the end-of-sentence marker, so stopping saves the trailing
 // tokens. Further emits are suppressed so tokens already in flight (e.g. an
 // accepted speculative batch) cannot degrade the closed block.
-func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.StreamEvent), generate func(context.Context, func(string)) error) (string, error) {
+func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.StreamEvent), generate func(context.Context, func(string)) error, thinkRecover func() (string, error)) (string, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithCancelCause(parent)
-	defer cancel(nil)
 
 	dec := dsml.NewStreamDecoder(thinking)
 	forward := func(events []dsml.StreamEvent) {
@@ -38,6 +43,7 @@ func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.S
 	}
 
 	var text strings.Builder
+	var roundCancel context.CancelCauseFunc
 	stopped := false
 	emit := func(part string) {
 		if stopped {
@@ -47,12 +53,42 @@ func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.S
 		forward(dec.Write(part))
 		if dec.ToolBlockClosed() || dec.Done() {
 			stopped = true
-			cancel(errToolTurnComplete)
+			roundCancel(errToolTurnComplete)
+			return
+		}
+		// Recovery keeps recording: tokens still in flight after the cancel
+		// are sampled reasoning and belong in the turn.
+		if thinkRecover != nil && dec.ToolStanzaInThinking() {
+			roundCancel(errThinkToolRecovery)
 		}
 	}
 
-	err := generate(ctx, emit)
-	if err != nil && (!errors.Is(context.Cause(ctx), errToolTurnComplete) || parent.Err() != nil) {
+	for {
+		ctx, cancel := context.WithCancelCause(parent)
+		roundCancel = cancel
+		err := generate(ctx, emit)
+		cause := context.Cause(ctx)
+		cancel(nil)
+		if err == nil || (errors.Is(cause, errToolTurnComplete) && parent.Err() == nil) {
+			break
+		}
+		if errors.Is(cause, errThinkToolRecovery) && parent.Err() == nil {
+			// In-flight tokens may have closed the thinking block on their
+			// own; only inject while the stanza is still inside it. An empty
+			// injection means there was no budget — resume and let the
+			// parse-time fallback deal with the turn.
+			if dec.ToolStanzaInThinking() {
+				injected, rerr := thinkRecover()
+				if rerr != nil {
+					return "", rerr
+				}
+				if injected != "" {
+					text.WriteString(injected)
+					forward(dec.Write(injected))
+				}
+			}
+			continue
+		}
 		return "", err
 	}
 	events, _, _ := dec.Close()
@@ -72,6 +108,13 @@ type ToolLoop struct {
 	ThinkMode ThinkMode
 	// Thinking tells ParseAssistant whether to require and extract a reasoning block.
 	Thinking bool
+	// DisableThinkRecovery turns off the live recovery for tool calls started
+	// inside an unclosed <think> block. When recovery is active (the default
+	// in thinking mode), a complete stanza opening inside thinking force-feeds
+	// "</think>\n\n" into the session and generation resumes, letting the
+	// model restart the call on the executable side instead of running to the
+	// token limit with the call dropped at parse time.
+	DisableThinkRecovery bool
 	// CompleteFunc overrides the default generator-backed completion path.
 	// When nil, Run uses Generator.GenerateTokens and Engine.TokenText.
 	CompleteFunc func(prompt *Tokens, opts GenerateOptions) (string, error)
@@ -196,10 +239,23 @@ func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(ds
 	if l.CompleteFunc != nil {
 		return l.CompleteFunc(prompt, opts)
 	}
-	return streamCompletion(opts.Context, l.Thinking, onEvent, func(ctx context.Context, emit func(string)) error {
+	// remaining is the turn's token budget shared across the initial
+	// generation, any think-recovery injection, and resumed generation,
+	// mirroring Generator.Continue's MaxTokens default.
+	remaining := opts.MaxTokens
+	if remaining <= 0 {
+		remaining = 128
+	}
+	started := false
+	gen := func(ctx context.Context, emit func(string)) error {
+		if remaining <= 0 {
+			return nil
+		}
 		generate := opts
 		generate.Context = ctx
+		generate.MaxTokens = remaining
 		generate.OnToken = func(token int) {
+			remaining--
 			if part, err := l.Engine.TokenText(token); err == nil {
 				emit(part)
 			}
@@ -207,7 +263,43 @@ func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(ds
 				opts.OnToken(token)
 			}
 		}
-		_, err := (Generator{Engine: l.Engine, Session: l.Session}).GenerateTokens(prompt, generate)
+		g := Generator{Engine: l.Engine, Session: l.Session}
+		if !started {
+			started = true
+			_, err := g.GenerateTokens(prompt, generate)
+			return err
+		}
+		// Resumption after a think-recovery injection continues from the
+		// session's current logits; re-syncing the prompt would rewind the
+		// tokens generated so far.
+		_, err := g.Continue(generate)
 		return err
-	})
+	}
+
+	var thinkRecover func() (string, error)
+	if l.Thinking && !l.DisableThinkRecovery {
+		thinkRecover = func() (string, error) {
+			const inject = "</think>\n\n"
+			toks, err := l.Engine.TokenizeRenderedChat(inject)
+			if err != nil {
+				return "", err
+			}
+			defer toks.Free()
+			ids := toks.Slice()
+			room := l.Session.Ctx() - l.Session.Pos()
+			if len(ids) == 0 || len(ids) >= remaining || len(ids) >= room {
+				// Not enough budget to recover; leave the stream as generated
+				// and let the parse-time fallback deal with it.
+				return "", nil
+			}
+			for _, id := range ids {
+				if err := l.Session.Eval(id); err != nil {
+					return "", err
+				}
+			}
+			remaining -= len(ids)
+			return inject, nil
+		}
+	}
+	return streamCompletion(opts.Context, l.Thinking, onEvent, gen, thinkRecover)
 }

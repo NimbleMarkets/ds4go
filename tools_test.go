@@ -168,7 +168,7 @@ func TestBuildChatPromptMultiTurnToolHistory(t *testing.T) {
 	}
 	defer prompt.Free()
 
-	rendered, err := renderPromptMessages(history, renderChatMessage)
+	rendered, err := renderPromptMessages(history, renderChatMessage, promptRenderOptions{thinking: true, toolContext: true})
 	if err != nil {
 		t.Fatalf("renderPromptMessages: %v", err)
 	}
@@ -196,12 +196,12 @@ func TestToolAwareSystemContentPlacesToolsFirst(t *testing.T) {
 
 func TestToolRegistryRenderPromptMessagesCoalescesToolResults(t *testing.T) {
 	reg := NewToolRegistry()
-	got, err := reg.renderPromptMessages([]ChatMessage{
+	got, err := renderPromptMessages([]ChatMessage{
 		{Role: "user", Content: "question"},
 		{Role: "tool", Content: "A", ToolCallID: "call_1"},
 		{Role: "tool", Content: "B", ToolCallID: "call_2"},
 		{Role: "assistant", Content: "done"},
-	})
+	}, reg.renderMessage, promptRenderOptions{})
 	if err != nil {
 		t.Fatalf("renderPromptMessages: %v", err)
 	}
@@ -371,12 +371,113 @@ func expectedPromptLen(t *testing.T, system string, tools []dsml.Tool, history [
 	if system != "" || toolsSection != "" {
 		total += len(strings.Fields("system: " + toolAwareSystemContent(system, toolsSection)))
 	}
-	rendered, err := renderPromptMessages(history, render)
+	// Mirrors buildChatPrompt's options for the ThinkHigh prompts the tests build.
+	rendered, err := renderPromptMessages(history, render, promptRenderOptions{
+		thinking:    true,
+		toolContext: len(tools) > 0 || historyUsesToolContext(history),
+	})
 	if err != nil {
 		t.Fatalf("renderPromptMessages: %v", err)
 	}
 	for _, msg := range rendered {
+		if msg.prerendered {
+			// The mock rendered-chat tokenizer emits one token per field
+			// with no role prefix.
+			total += len(strings.Fields(msg.content))
+			continue
+		}
 		total += len(strings.Fields(msg.role + ": " + msg.content))
 	}
 	return total
+}
+
+// Reasoning replay: mirroring upstream's render_chat_prompt_text, assistant
+// history turns re-render their <think> block when thinking is enabled and
+// the turn is in tool context (or follows the last user-like turn). Dropping
+// reasoning from replayed tool-call turns degrades reasoning models and
+// breaks KV prefix reuse against the live session.
+
+func TestRenderPromptMessagesReplaysReasoningInToolContext(t *testing.T) {
+	reg := NewToolRegistry()
+	history := []ChatMessage{
+		{Role: "user", Content: "question"},
+		{
+			Role:             "assistant",
+			Content:          "checking",
+			ReasoningContent: "let me check",
+			ToolCalls:        []ToolCall{{ID: "c1", Name: "add", Arguments: `{"a":1}`}},
+		},
+		{Role: "tool", Content: "5", ToolCallID: "c1"},
+	}
+	out, err := renderPromptMessages(history, reg.renderMessage, promptRenderOptions{thinking: true, toolContext: true})
+	if err != nil {
+		t.Fatalf("renderPromptMessages: %v", err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("rendered %d messages, want 3", len(out))
+	}
+	if out[0].prerendered || out[0].role != "user" {
+		t.Fatalf("user turn = %#v", out[0])
+	}
+	turn := out[1]
+	if !turn.prerendered {
+		t.Fatalf("assistant turn not prerendered: %#v", turn)
+	}
+	if !strings.Contains(turn.content, "<think>let me check</think>") {
+		t.Fatalf("assistant turn dropped reasoning: %q", turn.content)
+	}
+	if !strings.Contains(turn.content, `invoke name="add"`) {
+		t.Fatalf("assistant turn missing tool calls: %q", turn.content)
+	}
+	if !strings.HasPrefix(turn.content, "<｜Assistant｜>") || !strings.HasSuffix(turn.content, "<｜end▁of▁sentence｜>") {
+		t.Fatalf("assistant turn missing template markers: %q", turn.content)
+	}
+}
+
+func TestRenderPromptMessagesPlainChatReplaysOnlyAfterLastUser(t *testing.T) {
+	history := []ChatMessage{
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "one", ReasoningContent: "old reasoning"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", Content: "two", ReasoningContent: "fresh reasoning"},
+	}
+	out, err := renderPromptMessages(history, renderChatMessage, promptRenderOptions{thinking: true})
+	if err != nil {
+		t.Fatalf("renderPromptMessages: %v", err)
+	}
+	if strings.Contains(out[1].content, "old reasoning") {
+		t.Fatalf("prior-turn reasoning replayed in plain chat: %q", out[1].content)
+	}
+	if !strings.Contains(out[1].content, "</think>") {
+		t.Fatalf("prior turn missing closed think slot: %q", out[1].content)
+	}
+	if !strings.Contains(out[3].content, "<think>fresh reasoning</think>") {
+		t.Fatalf("turn after last user dropped reasoning: %q", out[3].content)
+	}
+}
+
+func TestRenderPromptMessagesNoThinkingNeverReplays(t *testing.T) {
+	history := []ChatMessage{
+		{Role: "user", Content: "q"},
+		{Role: "assistant", Content: "a", ReasoningContent: "hidden"},
+	}
+	out, err := renderPromptMessages(history, renderChatMessage, promptRenderOptions{toolContext: true})
+	if err != nil {
+		t.Fatalf("renderPromptMessages: %v", err)
+	}
+	if strings.Contains(out[1].content, "hidden") {
+		t.Fatalf("reasoning replayed without thinking: %q", out[1].content)
+	}
+}
+
+func TestHistoryUsesToolContext(t *testing.T) {
+	if historyUsesToolContext([]ChatMessage{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}}) {
+		t.Fatal("plain chat reported as tool context")
+	}
+	if !historyUsesToolContext([]ChatMessage{{Role: "tool", Content: "5"}}) {
+		t.Fatal("tool message not reported as tool context")
+	}
+	if !historyUsesToolContext([]ChatMessage{{Role: "assistant", ToolCalls: []ToolCall{{Name: "add"}}}}) {
+		t.Fatal("assistant tool calls not reported as tool context")
+	}
 }

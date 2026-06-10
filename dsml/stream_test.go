@@ -577,3 +577,55 @@ func TestStreamDecoderDone(t *testing.T) {
 		t.Fatal("Done false after the end-of-sentence marker")
 	}
 }
+
+// Detection for upstream ds4's think-tool recovery: a complete stanza opening
+// inside a still-unclosed <think> block almost always means the model forgot
+// to close its thinking. A generation-driving caller can force-feed
+// "</think>\n\n" so the model restarts the call on the executable side.
+
+func TestStreamDecoderToolStanzaInThinking(t *testing.T) {
+	dec := NewStreamDecoder(true)
+	dec.Write("<think>I should call the tool now ")
+	if dec.ToolStanzaInThinking() {
+		t.Fatal("detected without any stanza opening")
+	}
+	dec.Write("<｜DSML｜tool_")
+	if dec.ToolStanzaInThinking() {
+		t.Fatal("detected on a partial opening")
+	}
+	dec.Write("calls>")
+	if !dec.ToolStanzaInThinking() {
+		t.Fatal("complete stanza opening inside unclosed think not detected")
+	}
+	// The forced close moves decoding out of thinking; the signal clears.
+	dec.Write("</think>\n\n")
+	if dec.ToolStanzaInThinking() {
+		t.Fatal("signal survived leaving the thinking state")
+	}
+}
+
+func TestStreamDecoderToolStanzaInThinkingHoldsBackAcrossChunks(t *testing.T) {
+	dec := NewStreamDecoder(true)
+	dec.Write("<think>" + strings.Repeat("reasoning ", 30))
+	dec.Write("<｜DSML｜tool_")
+	dec.Write("calls>")
+	if !dec.ToolStanzaInThinking() {
+		t.Fatal("opening split across chunks after long reasoning not detected")
+	}
+}
+
+func TestStreamDecoderToolStanzaIgnoresClosedThink(t *testing.T) {
+	dec := NewStreamDecoder(true)
+	dec.Write("reasoning</think>\n\n<｜DSML｜tool_calls>\n")
+	if dec.ToolStanzaInThinking() {
+		t.Fatal("stanza after </think> misreported as inside thinking")
+	}
+}
+
+func TestStreamDecoderToolStanzaNotInPlainContent(t *testing.T) {
+	dec := NewStreamDecoder(false)
+	dec.Write("\n\n<｜DSML｜tool_calls>\n")
+	if dec.ToolStanzaInThinking() {
+		t.Fatal("non-thinking decoder reported a stanza in thinking")
+	}
+}
