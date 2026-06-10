@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -202,6 +203,86 @@ func TestWriteLibraryChecksum(t *testing.T) {
 	}
 	if want := hex.EncodeToString(sum[:]) + "\n"; string(got) != want {
 		t.Fatalf("sidecar = %q, want %q", got, want)
+	}
+}
+
+// inodeOf returns the inode of path, skipping on platforms where the
+// stat result does not expose one (e.g. Windows).
+func inodeOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skipf("inode not available on %T", fi.Sys())
+	}
+	return uint64(st.Ino)
+}
+
+// Regression test: writeFile with force must replace the destination under a
+// new inode (write-to-temp + rename), never rewrite it in place with O_TRUNC.
+// The macOS kernel caches code-signature state per inode, so rewriting a
+// signed dylib in place leaves a stale registration and every subsequent
+// load of the library is killed with SIGKILL (Code Signature Invalid) —
+// even though `codesign --verify` reports the file as valid on disk.
+func TestWriteFileForceReplacesInode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "libds4.dylib")
+	if err := writeFile(path, strings.NewReader("old contents"), false); err != nil {
+		t.Fatalf("initial write: %v", err)
+	}
+	oldInode := inodeOf(t, path)
+
+	if err := writeFile(path, strings.NewReader("new contents"), true); err != nil {
+		t.Fatalf("force overwrite: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new contents" {
+		t.Fatalf("contents = %q, want %q", got, "new contents")
+	}
+	if newInode := inodeOf(t, path); newInode == oldInode {
+		t.Fatalf("force overwrite reused inode %d; must replace via temp file + rename so the kernel re-evaluates the code signature", oldInode)
+	}
+}
+
+func TestWriteFileNoForceRejectsExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "libds4.dylib")
+	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := writeFile(path, strings.NewReader("new contents"), false)
+	if err == nil {
+		t.Fatal("writeFile without force overwrote an existing file")
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "existing" {
+		t.Fatalf("contents = %q, want untouched %q", got, "existing")
+	}
+}
+
+func TestWriteFilePermissionsOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	for _, force := range []bool{false, true} {
+		path := filepath.Join(dir, libraryFileName("darwin"))
+		if err := writeFile(path, strings.NewReader("payload"), force); err != nil {
+			t.Fatalf("writeFile force=%v: %v", force, err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := fi.Mode().Perm(); perm != 0o600 {
+			t.Fatalf("force=%v: perm = %o, want 600", force, perm)
+		}
 	}
 }
 

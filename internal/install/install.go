@@ -1000,21 +1000,39 @@ func extractZipLibrary(data []byte, destDir, libName string, force bool) error {
 }
 
 func writeFile(path string, src io.Reader, force bool) error {
-	flags := os.O_WRONLY | os.O_CREATE
-	if force {
-		flags |= os.O_TRUNC
-	} else {
-		flags |= os.O_EXCL
-	}
 	// 0600: the library is loaded by the installing user only; keeping it
 	// owner-writable also prevents third-party tampering before it is loaded.
-	f, err := os.OpenFile(path, flags, 0o600)
+	if !force {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return fmt.Errorf("create %s: %w", path, err)
+		}
+		defer f.Close()
+		if _, err := io.Copy(f, src); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+		return nil
+	}
+	// Replace via temp file + rename rather than rewriting in place. The
+	// macOS kernel caches code-signature state per inode; truncating and
+	// rewriting a signed dylib keeps the inode, leaving a stale registration
+	// that makes every later load die with SIGKILL (Code Signature Invalid)
+	// even though codesign reports the file as valid. A rename installs the
+	// new inode atomically, so the kernel re-evaluates the signature.
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	defer f.Close()
-	if _, err := io.Copy(f, src); err != nil {
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, src); err != nil {
+		tmp.Close()
 		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
 }
