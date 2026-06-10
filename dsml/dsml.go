@@ -76,6 +76,10 @@ type ParsedMessage struct {
 	ReasoningContent string
 	// ToolCalls holds any tool calls the completion requested.
 	ToolCalls []ToolCall
+	// MalformedReason is the parse failure that degraded a tool-calls stanza
+	// to plain content, and is empty for clean output. Callers can feed it to
+	// ToolSyntaxErrorMessage to ask the model for a corrected call.
+	MalformedReason string
 }
 
 // readUntilStop scans text from index for the earliest occurrence of any

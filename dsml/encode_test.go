@@ -198,3 +198,18 @@ func TestRenderToolResultEscapesOnlyClosingSentinel(t *testing.T) {
 		t.Fatalf("non-wrapper payload text should be preserved in:\n%s", out)
 	}
 }
+
+func TestToolSyntaxErrorMessage(t *testing.T) {
+	msg := ToolSyntaxErrorMessage("dsml: malformed invoke header")
+	if !strings.Contains(msg, "Tool error: invalid DSML tool call: dsml: malformed invoke header") {
+		t.Fatalf("message missing error line with detail: %q", msg)
+	}
+	if !strings.Contains(msg, "was not executed") || !strings.Contains(msg, "Emit a new valid DSML tool call") {
+		t.Fatalf("message missing retry instruction: %q", msg)
+	}
+
+	bare := ToolSyntaxErrorMessage("")
+	if !strings.HasPrefix(bare, "Tool error: invalid DSML tool call\n") {
+		t.Fatalf("bare message = %q, want no detail separator", bare)
+	}
+}

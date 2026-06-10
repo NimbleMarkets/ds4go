@@ -3,6 +3,7 @@ package dsml
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -255,5 +256,139 @@ func TestParseCompletionPlainXMLToolCalls(t *testing.T) {
 	}
 	if msg.ToolCalls[0].Exact != "\n\n<tool_calls>\n<invoke name=\"add\">\n<parameter name=\"a\" string=\"false\">1</parameter>\n</invoke>\n</tool_calls>" {
 		t.Fatalf("Exact = %q", msg.ToolCalls[0].Exact)
+	}
+}
+
+// TestParseCompletionNearMissMarkerInvoke reproduces a sampling typo seen
+// in the wild: the model writes <｜DSMI｜invoke ...> (DSMI for DSML) while
+// the surrounding tool_calls wrapper is correct. Near-miss markers are
+// normalized so the call still parses.
+func TestParseCompletionNearMissMarkerInvoke(t *testing.T) {
+	completion := "ok\n\n<" + dsmlMarker + "tool_calls>\n" +
+		"<｜DSMI｜invoke name=\"svg_append\">\n" +
+		"<｜DSMI｜parameter name=\"chunk\" string=\"true\">&lt;rect/&gt;</｜DSMI｜parameter>\n" +
+		"</｜DSMI｜invoke>\n" +
+		"</" + dsmlMarker + "tool_calls>"
+
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(msg.ToolCalls))
+	}
+	if msg.ToolCalls[0].Name != "svg_append" {
+		t.Errorf("Name = %q, want svg_append", msg.ToolCalls[0].Name)
+	}
+}
+
+// TestParseCompletionNearMissMarkerWrapper covers a typo'd tool_calls
+// wrapper marker as well.
+func TestParseCompletionNearMissMarkerWrapper(t *testing.T) {
+	completion := "ok\n\n<｜DSLI｜tool_calls>\n" +
+		"<｜DSLI｜invoke name=\"add\">\n" +
+		"<｜DSLI｜parameter name=\"a\" string=\"false\">2</｜DSLI｜parameter>\n" +
+		"</｜DSLI｜invoke>\n" +
+		"</｜DSLI｜tool_calls>"
+
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(msg.ToolCalls))
+	}
+}
+
+// TestParseCompletionASCIIPipeMarker normalizes ASCII vertical bars in
+// markers (<|DSML|invoke ...>) to the canonical fullwidth form.
+func TestParseCompletionASCIIPipeMarker(t *testing.T) {
+	completion := "ok\n\n<|DSML|tool_calls>\n" +
+		"<|DSML|invoke name=\"add\">\n" +
+		"<|DSML|parameter name=\"a\" string=\"false\">2</|DSML|parameter>\n" +
+		"</|DSML|invoke>\n" +
+		"</|DSML|tool_calls>"
+
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(msg.ToolCalls))
+	}
+}
+
+// TestParseCompletionNearMissDoesNotTouchContent ensures normalization
+// only rewrites tag-shaped markers, not ordinary prose.
+func TestParseCompletionNearMissDoesNotTouchContent(t *testing.T) {
+	completion := "comparing |DSML| markers and <other> text"
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.Content != completion {
+		t.Errorf("Content = %q, want untouched %q", msg.Content, completion)
+	}
+}
+
+// Malformed-attempt reporting: when a tool stanza degrades to plain content,
+// MalformedReason carries the parse failure so callers can ask the model to
+// retry (mirroring upstream's invalid-DSML tool error suffix).
+
+func TestParseCompletionSetsMalformedReason(t *testing.T) {
+	// Balanced tags but the invoke header is missing its name attribute: not
+	// repairable, degrades to content, and the reason must say why.
+	text := "\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>"
+	msg, err := ParseCompletion(text, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("tool calls = %+v, want none", msg.ToolCalls)
+	}
+	if msg.MalformedReason == "" {
+		t.Fatal("MalformedReason empty for a degraded tool attempt")
+	}
+	if !strings.Contains(msg.MalformedReason, "invoke") {
+		t.Fatalf("MalformedReason = %q, want the invoke-header failure", msg.MalformedReason)
+	}
+}
+
+func TestParseCompletionMalformedReasonTrailingText(t *testing.T) {
+	text := "\n\n<｜DSML｜tool_calls>\n" +
+		"<｜DSML｜invoke name=\"bash\">\n" +
+		"</｜DSML｜invoke>\n" +
+		"</｜DSML｜tool_calls>\nbut wait, I should explain more"
+	msg, err := ParseCompletion(text, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("tool calls = %+v, want none", msg.ToolCalls)
+	}
+	if msg.MalformedReason == "" {
+		t.Fatal("MalformedReason empty for trailing text after the block")
+	}
+}
+
+func TestParseCompletionMalformedReasonEmptyForCleanOutput(t *testing.T) {
+	cases := []struct {
+		name     string
+		text     string
+		thinking bool
+	}{
+		{"plainAnswer", "just a plain answer", false},
+		{"validCall", "\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"bash\">\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>", false},
+		{"stanzaInsideUnclosedThink", "pondering <｜DSML｜tool_calls> usage", true},
+		{"stanzaAfterEOS", "done<｜end▁of▁sentence｜>\n\n<｜DSML｜tool_calls>garbage", false},
+	}
+	for _, tc := range cases {
+		msg, err := ParseCompletion(tc.text, tc.thinking)
+		if err != nil {
+			t.Fatalf("%s: ParseCompletion: %v", tc.name, err)
+		}
+		if msg.MalformedReason != "" {
+			t.Fatalf("%s: MalformedReason = %q, want empty", tc.name, msg.MalformedReason)
+		}
 	}
 }

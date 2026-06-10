@@ -4,7 +4,61 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	"github.com/NimbleMarkets/ds4go/dsml"
 )
+
+// errToolTurnComplete cancels generation once the stream decoder has seen
+// everything the turn needs: a closed tool-calls block or the end-of-sentence
+// marker. It is interpreted as success, not cancellation.
+var errToolTurnComplete = errors.New("ds4go: tool turn complete")
+
+// streamCompletion runs generate, feeding emitted token text through a
+// dsml.StreamDecoder, and returns the accumulated completion text. Once the
+// decoder reports a closed tool block or an end-of-sentence marker the
+// generation context is cancelled: past that point the model can only emit
+// whitespace and the end-of-sentence marker, so stopping saves the trailing
+// tokens. Further emits are suppressed so tokens already in flight (e.g. an
+// accepted speculative batch) cannot degrade the closed block.
+func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.StreamEvent), generate func(context.Context, func(string)) error) (string, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancelCause(parent)
+	defer cancel(nil)
+
+	dec := dsml.NewStreamDecoder(thinking)
+	forward := func(events []dsml.StreamEvent) {
+		if onEvent == nil {
+			return
+		}
+		for _, ev := range events {
+			onEvent(ev)
+		}
+	}
+
+	var text strings.Builder
+	stopped := false
+	emit := func(part string) {
+		if stopped {
+			return
+		}
+		text.WriteString(part)
+		forward(dec.Write(part))
+		if dec.ToolBlockClosed() || dec.Done() {
+			stopped = true
+			cancel(errToolTurnComplete)
+		}
+	}
+
+	err := generate(ctx, emit)
+	if err != nil && (!errors.Is(context.Cause(ctx), errToolTurnComplete) || parent.Err() != nil) {
+		return "", err
+	}
+	events, _, _ := dec.Close()
+	forward(events)
+	return text.String(), nil
+}
 
 // ToolLoop drives multi-turn tool calling on top of Generator and ToolRegistry.
 type ToolLoop struct {
@@ -32,8 +86,14 @@ type ToolLoopOptions struct {
 	// Generate controls model generation for each assistant turn.
 	Generate GenerateOptions
 	// MaxRounds bounds the total number of assistant turns — tool-calling
-	// rounds plus the final answer. Values <= 0 default to 8.
+	// rounds, malformed-tool-call retry turns, and the final answer. Values
+	// <= 0 default to 8.
 	MaxRounds int
+	// OnStreamEvent, when non-nil, receives live stream events (reasoning,
+	// content, and tool-call deltas) during each assistant turn. Tool-call
+	// events are delivered once the enclosing block is validated. It is not
+	// called when CompleteFunc overrides the generation path.
+	OnStreamEvent func(dsml.StreamEvent)
 }
 
 // ToolLoopResult is the final result of one tool loop run.
@@ -69,7 +129,9 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	for rounds := 0; ; rounds++ {
+	toolRounds := 0
+	syntaxRetried := false
+	for attempts := 0; ; attempts++ {
 		if err := ctx.Err(); err != nil {
 			return ToolLoopResult{}, err
 		}
@@ -77,7 +139,7 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 		if err != nil {
 			return ToolLoopResult{}, err
 		}
-		text, err := l.complete(prompt, opts.Generate)
+		text, err := l.complete(prompt, opts.Generate, opts.OnStreamEvent)
 		prompt.Free()
 		if err != nil {
 			return ToolLoopResult{}, err
@@ -88,13 +150,27 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 		}
 		history = append(history, assistant)
 		if len(assistant.ToolCalls) == 0 {
+			// A turn that degraded to content because its DSML could not be
+			// parsed gets one consecutive retry: the parse failure goes back
+			// to the model as a tool error so it can correct its syntax or
+			// answer normally. After a second consecutive failure (or with no
+			// round budget left) the raw text is returned as the answer.
+			if assistant.MalformedReason != "" && !syntaxRetried && attempts < maxRounds-1 {
+				syntaxRetried = true
+				history = append(history, ChatMessage{
+					Role:    "tool",
+					Content: dsml.ToolSyntaxErrorMessage(assistant.MalformedReason),
+				})
+				continue
+			}
 			return ToolLoopResult{
 				History:    history,
 				Assistant:  assistant,
-				ToolRounds: rounds,
+				ToolRounds: toolRounds,
 			}, nil
 		}
-		if rounds >= maxRounds-1 {
+		syntaxRetried = false
+		if attempts >= maxRounds-1 {
 			return ToolLoopResult{}, errors.New("ds4go: tool loop exceeded maximum rounds")
 		}
 		results, err := l.Tools.ExecuteToolCalls(ctx, assistant.ToolCalls)
@@ -102,6 +178,7 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 			return ToolLoopResult{}, err
 		}
 		history = append(history, results...)
+		toolRounds++
 	}
 }
 
@@ -115,23 +192,22 @@ func (l ToolLoop) effectiveThinkMode() ThinkMode {
 	return l.ThinkMode
 }
 
-func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions) (string, error) {
+func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
 	if l.CompleteFunc != nil {
 		return l.CompleteFunc(prompt, opts)
 	}
-	var text strings.Builder
-	generate := opts
-	generate.OnToken = func(token int) {
-		if part, err := l.Engine.TokenText(token); err == nil {
-			text.WriteString(part)
+	return streamCompletion(opts.Context, l.Thinking, onEvent, func(ctx context.Context, emit func(string)) error {
+		generate := opts
+		generate.Context = ctx
+		generate.OnToken = func(token int) {
+			if part, err := l.Engine.TokenText(token); err == nil {
+				emit(part)
+			}
+			if opts.OnToken != nil {
+				opts.OnToken(token)
+			}
 		}
-		if opts.OnToken != nil {
-			opts.OnToken(token)
-		}
-	}
-	_, err := (Generator{Engine: l.Engine, Session: l.Session}).GenerateTokens(prompt, generate)
-	if err != nil {
-		return "", err
-	}
-	return text.String(), nil
+		_, err := (Generator{Engine: l.Engine, Session: l.Session}).GenerateTokens(prompt, generate)
+		return err
+	})
 }

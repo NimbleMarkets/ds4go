@@ -241,3 +241,22 @@ func jsonIsObject(b []byte) bool {
 func RenderToolResult(content string) (string, error) {
 	return toolResultStart + escapeToolResultText(content) + toolResultEnd, nil
 }
+
+// ToolSyntaxErrorMessage renders the tool-error payload sent back to the model
+// when its DSML tool call could not be parsed, mirroring upstream ds4's
+// invalid-DSML error suffix. detail is the parse failure (typically
+// ParsedMessage.MalformedReason) and may be empty. The payload is plain text:
+// wrap it as a tool result (or send it as a "tool" role message) so the model
+// sees the failure where it expects tool output, then retries or answers
+// normally.
+func ToolSyntaxErrorMessage(detail string) string {
+	var b strings.Builder
+	b.WriteString("Tool error: invalid DSML tool call")
+	if detail != "" {
+		b.WriteString(": ")
+		b.WriteString(detail)
+	}
+	b.WriteString("\nThe previous assistant output was not executed because the DSML syntax was malformed. " +
+		"Emit a new valid DSML tool call, or answer normally if no tool is needed.")
+	return b.String()
+}

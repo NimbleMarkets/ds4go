@@ -514,3 +514,66 @@ func TestStreamDecoderRace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// Predicate tests for generation-driving callers: ToolBlockClosed lets a
+// caller stop sampling as soon as the tool block closes instead of paying
+// for trailing tokens; Done reports an explicit end-of-sentence marker.
+
+func TestStreamDecoderToolBlockClosed(t *testing.T) {
+	block := "I'll check.\n\n<｜DSML｜tool_calls>\n" +
+		"<｜DSML｜invoke name=\"bash\">\n" +
+		"<｜DSML｜parameter name=\"command\" string=\"true\">pwd</｜DSML｜parameter>\n" +
+		"</｜DSML｜invoke>\n" +
+		"</｜DSML｜tool_calls>"
+	closer := "</｜DSML｜tool_calls>"
+
+	dec := NewStreamDecoder(false)
+	dec.Write(block[:len(block)-len(closer)])
+	if dec.ToolBlockClosed() {
+		t.Fatal("ToolBlockClosed true before the closing tag")
+	}
+	dec.Write(block[len(block)-len(closer):])
+	if !dec.ToolBlockClosed() {
+		t.Fatal("ToolBlockClosed false after the closing tag")
+	}
+	_, msg, err := dec.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Name != "bash" {
+		t.Fatalf("tool calls = %+v", msg.ToolCalls)
+	}
+}
+
+func TestStreamDecoderToolBlockClosedRevertsOnTrailingText(t *testing.T) {
+	dec := NewStreamDecoder(false)
+	dec.Write("\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"bash\">\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>")
+	if !dec.ToolBlockClosed() {
+		t.Fatal("ToolBlockClosed false after the closing tag")
+	}
+	// Trailing non-whitespace text degrades the block to raw content; the
+	// closed signal must not survive that.
+	dec.Write("and some trailing prose")
+	if dec.ToolBlockClosed() {
+		t.Fatal("ToolBlockClosed still true after the block degraded to raw content")
+	}
+	_, msg, err := dec.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("degraded block still produced tool calls: %+v", msg.ToolCalls)
+	}
+}
+
+func TestStreamDecoderDone(t *testing.T) {
+	dec := NewStreamDecoder(false)
+	dec.Write("all finished")
+	if dec.Done() {
+		t.Fatal("Done true before the end-of-sentence marker")
+	}
+	dec.Write("<｜end▁of▁sentence｜>")
+	if !dec.Done() {
+		t.Fatal("Done false after the end-of-sentence marker")
+	}
+}

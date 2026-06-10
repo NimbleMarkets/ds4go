@@ -3,8 +3,24 @@ package dsml
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// reNearMissMarker matches tag-shaped DSML markers with sampling defects:
+// a misspelled marker body (<｜DSMI｜invoke, <｜DSLI｜parameter) or ASCII
+// vertical bars (<|DSML|tool_calls). Anchoring on "<", the bars, and a
+// known element name keeps it from ever touching ordinary prose.
+var reNearMissMarker = regexp.MustCompile(`<(/?)[｜|]?DS[A-Za-z]{0,3}[｜|](tool_calls|invoke|parameter)`)
+
+// normalizeMarkers rewrites near-miss DSML markers to the canonical
+// <｜DSML｜...> form. Models occasionally sample a corrupted marker token
+// (e.g. ｜DSMI｜ for ｜DSML｜) inside an otherwise perfect tool call;
+// without normalization the whole block silently degrades to plain
+// content and the call never executes.
+func normalizeMarkers(text string) string {
+	return reNearMissMarker.ReplaceAllString(text, "<${1}｜DSML｜${2}")
+}
 
 type dsmlSyntax struct {
 	toolStart   string
@@ -50,6 +66,12 @@ var dsmlSyntaxes = []dsmlSyntax{
 // and no tool calls are parsed. The completion may end either with the explicit
 // <｜end▁of▁sentence｜> marker or simply at end-of-input.
 func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
+	// Normalizing up front means all offsets (including the Exact replay
+	// block) refer to the canonical text. Replaying canonical markers in
+	// place of a sampled typo costs at most a prompt-cache miss on that
+	// turn; leaving the typo costs the entire tool call.
+	text = normalizeMarkers(text)
+
 	msg := ParsedMessage{Role: "assistant"}
 	searchFrom := 0
 	contentBase := 0
@@ -79,7 +101,7 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 	msg.Content = strings.TrimSpace(text[contentBase:rawStart])
 	calls, end, rawBlock, err := parseToolCalls(start, rawStart, text, syn)
 	if err != nil {
-		return rawCompletionMessage(text), nil
+		return rawCompletionMessage(text, err.Error()), nil
 	}
 	for i := range calls {
 		calls[i].Exact = rawBlock
@@ -88,16 +110,20 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 
 	_, trailing, _ := readUntilStop(end, text, []string{eosToken})
 	if strings.TrimSpace(trailing) != "" {
-		return rawCompletionMessage(text), nil
+		return rawCompletionMessage(text, "unexpected text after the tool_calls block"), nil
 	}
 	return msg, nil
 }
 
-func rawCompletionMessage(text string) ParsedMessage {
+// rawCompletionMessage is the fallback for completions whose tool stanza could
+// not be parsed: the raw text becomes plain content and reason records why the
+// stanza degraded.
+func rawCompletionMessage(text, reason string) ParsedMessage {
 	_, content, _ := readUntilStop(0, text, []string{eosToken})
 	return ParsedMessage{
-		Role:    "assistant",
-		Content: strings.TrimSpace(content),
+		Role:            "assistant",
+		Content:         strings.TrimSpace(content),
+		MalformedReason: reason,
 	}
 }
 

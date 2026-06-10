@@ -67,6 +67,11 @@ type StreamDecoder struct {
 	// pendingEvents buffers tool-call-related events until the enclosing
 	// </tool_calls> block is validated.
 	pendingEvents []StreamEvent
+
+	// toolBlockClosed is set once a complete </tool_calls> tag has been
+	// consumed and cleared if trailing text later degrades the block to raw
+	// content.
+	toolBlockClosed bool
 }
 
 type decoderState int
@@ -92,6 +97,22 @@ func NewStreamDecoder(thinking bool) *StreamDecoder {
 		s = stateThinking
 	}
 	return &StreamDecoder{thinking: thinking, state: s}
+}
+
+// ToolBlockClosed reports whether a complete </tool_calls> tag has been
+// consumed. Once the block closes, the only valid continuation for the
+// completion is whitespace and end-of-sentence, so a caller driving
+// generation can stop sampling as soon as this returns true instead of
+// paying for trailing tokens. The signal reverts to false if trailing
+// non-whitespace text later degrades the block to raw content.
+func (d *StreamDecoder) ToolBlockClosed() bool {
+	return d.toolBlockClosed
+}
+
+// Done reports whether the explicit <｜end▁of▁sentence｜> marker has been
+// consumed. Generation past this point produces no further usable output.
+func (d *StreamDecoder) Done() bool {
+	return d.state == stateDone
 }
 
 // Write feeds the next chunk of decoded model text and returns any events
@@ -139,6 +160,7 @@ func (d *StreamDecoder) process() []StreamEvent {
 	var events []StreamEvent
 	for {
 		before := len(d.buf)
+		stateBefore := d.state
 		switch d.state {
 		case stateThinking:
 			d.processThinking(&events)
@@ -161,7 +183,10 @@ func (d *StreamDecoder) process() []StreamEvent {
 		case stateDone:
 			d.buf = nil
 		}
-		if len(d.buf) == before {
+		// A handler can transition state without consuming bytes (e.g. a
+		// tool block at offset 0 of the content); only stop once neither
+		// bytes nor state change, meaning the decoder is waiting for input.
+		if len(d.buf) == before && d.state == stateBefore {
 			break
 		}
 	}
@@ -254,6 +279,7 @@ func (d *StreamDecoder) processInToolCalls(events *[]StreamEvent) {
 
 	if matchComplete(d.buf, d.syntax.toolEnd) {
 		d.buf = d.buf[len(d.syntax.toolEnd):]
+		d.toolBlockClosed = true
 		d.state = stateCheckingToolBlockEnd
 		return
 	}
@@ -483,6 +509,7 @@ func (d *StreamDecoder) enterRawMode(events *[]StreamEvent) {
 	d.calls = nil
 	d.pendingArgs = nil
 	d.seenToolCallsOp = false
+	d.toolBlockClosed = false
 }
 
 // replayConsumedAsContent emits any text that was consumed from d.buf during

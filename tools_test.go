@@ -242,6 +242,46 @@ func TestToolRegistryParseAssistantStoresReplay(t *testing.T) {
 	}
 }
 
+func TestToolRegistryParseAssistantRepairsTruncatedBlock(t *testing.T) {
+	reg := NewToolRegistry()
+	// Generation that hit the token limit mid-parameter: without repair the
+	// strict parse degrades this to plain content and the call is dropped.
+	truncated := "checking\n\n<｜DSML｜tool_calls>\n" +
+		"<｜DSML｜invoke name=\"bash\">\n" +
+		"<｜DSML｜parameter name=\"command\" string=\"true\">ls -la"
+	msg, err := reg.ParseAssistant(truncated, false)
+	if err != nil {
+		t.Fatalf("ParseAssistant: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Name != "bash" {
+		t.Fatalf("truncated call not recovered: %+v", msg.ToolCalls)
+	}
+	if msg.Content != "checking" {
+		t.Fatalf("content = %q, want %q", msg.Content, "checking")
+	}
+	exact, ok := reg.ReplayStore().Lookup(msg.ToolCalls[0].ID)
+	if !ok || !strings.HasSuffix(exact, "</｜DSML｜tool_calls>") {
+		t.Fatalf("expected repaired replay block, got %q", exact)
+	}
+}
+
+func TestToolRegistryParseAssistantKeepsRawWhenRepairCannotHelp(t *testing.T) {
+	reg := NewToolRegistry()
+	// Balanced tags but a malformed invoke header: repair has nothing to
+	// append, so the raw-content fallback must be preserved.
+	malformed := "\n\n<｜DSML｜tool_calls>\n" +
+		"<｜DSML｜invoke>\n" +
+		"</｜DSML｜invoke>\n" +
+		"</｜DSML｜tool_calls>"
+	msg, err := reg.ParseAssistant(malformed, false)
+	if err != nil {
+		t.Fatalf("ParseAssistant: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("malformed header produced tool calls: %+v", msg.ToolCalls)
+	}
+}
+
 func TestToolRegistryReplaysWholeToolCallsBlock(t *testing.T) {
 	reg := NewToolRegistry()
 	rendered, err := dsml.RenderToolCalls([]dsml.ToolCall{

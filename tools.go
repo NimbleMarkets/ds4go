@@ -67,6 +67,10 @@ type ChatMessage struct {
 	// DSML does not render this ID into <tool_result>; prompt builders expect
 	// tool result messages to be ordered to match the assistant's ToolCalls.
 	ToolCallID string
+	// MalformedReason is the parse failure that degraded an assistant tool
+	// stanza to plain content, and is empty for clean turns. ToolLoop uses it
+	// to send the model a syntax-error retry turn.
+	MalformedReason string
 }
 
 // ToolCall is one tool request emitted by the assistant.
@@ -243,11 +247,22 @@ func (r *ToolRegistry) ParseAssistant(text string, thinking bool) (ChatMessage, 
 	if err != nil {
 		return ChatMessage{}, err
 	}
+	if len(parsed.ToolCalls) == 0 {
+		// A completion truncated by the token limit mid-stanza degrades to
+		// plain content under the strict parse. Repair the missing closers
+		// and adopt the result only when it actually recovers a call.
+		if repaired, ok := dsml.RepairCompletion(text); ok {
+			if reparsed, rerr := dsml.ParseCompletion(repaired, thinking); rerr == nil && len(reparsed.ToolCalls) > 0 {
+				parsed = reparsed
+			}
+		}
+	}
 	msg := ChatMessage{
 		Role:             parsed.Role,
 		Content:          parsed.Content,
 		ReasoningContent: parsed.ReasoningContent,
 		ToolCalls:        make([]ToolCall, len(parsed.ToolCalls)),
+		MalformedReason:  parsed.MalformedReason,
 	}
 	replay := r.ReplayStore()
 	for i, call := range parsed.ToolCalls {
