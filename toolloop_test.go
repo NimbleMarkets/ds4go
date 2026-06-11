@@ -465,3 +465,52 @@ func TestStreamCompletionNoRecoveryWithoutCallback(t *testing.T) {
 		t.Fatalf("generation was interrupted without a recovery callback: %q", msg.ReasoningContent)
 	}
 }
+
+func TestCompleteTurnDelegatesToCompleteFunc(t *testing.T) {
+	loop := ToolLoop{
+		CompleteFunc: func(prompt *Tokens, opts GenerateOptions) (string, error) {
+			return "from-complete-func", nil
+		},
+	}
+	text, err := loop.CompleteTurn(nil, GenerateOptions{}, nil)
+	if err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	if text != "from-complete-func" {
+		t.Fatalf("text = %q, want CompleteFunc result", text)
+	}
+}
+
+func TestCompleteTurnStreamsViaDecoder(t *testing.T) {
+	eng := mockEngine(t)
+	defer eng.Close()
+	sess, err := eng.NewSession(128)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+
+	toks, err := eng.TokenizeText("hi")
+	if err != nil {
+		t.Fatalf("TokenizeText: %v", err)
+	}
+	defer toks.Free()
+
+	var deltas []string
+	loop := ToolLoop{Engine: eng, Session: sess, Tools: NewToolRegistry()}
+	text, err := loop.CompleteTurn(toks, GenerateOptions{MaxTokens: 4, StopOnEOS: true},
+		func(ev dsml.StreamEvent) {
+			if ev.Type == dsml.EventContentDelta {
+				deltas = append(deltas, ev.Delta)
+			}
+		})
+	if err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	if text == "" {
+		t.Fatal("empty completion from mock engine")
+	}
+	if joined := strings.Join(deltas, ""); joined != text {
+		t.Fatalf("content deltas reconstruct %q, want %q", joined, text)
+	}
+}

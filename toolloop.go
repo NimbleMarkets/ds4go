@@ -182,7 +182,7 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 		if err != nil {
 			return ToolLoopResult{}, err
 		}
-		text, err := l.complete(prompt, opts.Generate, opts.OnStreamEvent)
+		text, err := l.CompleteTurn(prompt, opts.Generate, opts.OnStreamEvent)
 		prompt.Free()
 		if err != nil {
 			return ToolLoopResult{}, err
@@ -223,6 +223,20 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 		history = append(history, results...)
 		toolRounds++
 	}
+}
+
+// CompleteTurn runs one streaming assistant turn: generation is fed through
+// a dsml.StreamDecoder, stops early once the tool block closes or the
+// end-of-sentence marker appears, applies live think-tool recovery (unless
+// DisableThinkRecovery), and forwards live stream events to onEvent (which
+// may be nil). It returns the accumulated completion text. CompleteFunc,
+// when set, overrides the generation path exactly as in Run.
+//
+// This is the single-turn building block behind Run, exported for hosts
+// that drive their own tool loop (custom execution, per-round UI events)
+// but want the library's stream-driven recovery behaviors.
+func (l ToolLoop) CompleteTurn(prompt *Tokens, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
+	return l.complete(prompt, opts, onEvent)
 }
 
 func (l ToolLoop) effectiveThinkMode() ThinkMode {
