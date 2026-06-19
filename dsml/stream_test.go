@@ -706,3 +706,59 @@ func TestStreamDecoderImplicitInvokeNameBoundaryEmitsNoToolEvents(t *testing.T) 
 		t.Fatalf("invokefoo must not produce tool calls: %#v", msg.ToolCalls)
 	}
 }
+
+func TestWantsGreedySamplingContentVsOpener(t *testing.T) {
+	d := NewStreamDecoder(false)
+	d.Write("a plain reply long enough to flush past the sixty-four byte safety margin so the tail holds no marker")
+	if d.WantsGreedySampling() {
+		t.Fatalf("plain content must not request greedy sampling")
+	}
+	// A forming opener "<｜DSML｜" in the held-back tail should go greedy.
+	d.Write("\n\n<" + dsmlMarker)
+	if !d.WantsGreedySampling() {
+		t.Fatalf("a forming DSML opener must request greedy sampling")
+	}
+}
+
+func TestWantsGreedySamplingStructural(t *testing.T) {
+	d := NewStreamDecoder(false)
+	d.Write("\n\n<" + dsmlMarker + "tool_calls>\n<" + dsmlMarker + "invoke name=\"run\">")
+	if !d.WantsGreedySampling() {
+		t.Fatalf("inside the invoke grammar must request greedy sampling")
+	}
+}
+
+func TestWantsGreedySamplingParamValue(t *testing.T) {
+	d := NewStreamDecoder(false)
+	d.Write("\n\n<" + dsmlMarker + "tool_calls>\n<" + dsmlMarker + "invoke name=\"run\">\n" +
+		"<" + dsmlMarker + "parameter name=\"cmd\" string=\"true\">")
+	// Ordinary value bytes, including a non-DSML "</", stay under sampling.
+	d.Write("echo hi && cat foo </tmp/x")
+	if d.WantsGreedySampling() {
+		t.Fatalf("ordinary value bytes must not request greedy sampling")
+	}
+	// The forming parameter close tag should go greedy.
+	d.Write("</" + dsmlMarker)
+	if !d.WantsGreedySampling() {
+		t.Fatalf("a forming parameter close tag must request greedy sampling")
+	}
+}
+
+func TestWantsGreedySamplingThinkingAndDone(t *testing.T) {
+	d := NewStreamDecoder(true)
+	d.Write("reasoning text")
+	if d.WantsGreedySampling() {
+		t.Fatalf("thinking must not request greedy sampling")
+	}
+	// Done: after a complete block + EOS, sampling is no longer greedy.
+	d2 := NewStreamDecoder(false)
+	d2.Write("answer\n\n<" + dsmlMarker + "tool_calls>\n" +
+		"<" + dsmlMarker + "invoke name=\"x\">\n</" + dsmlMarker + "invoke>\n" +
+		"</" + dsmlMarker + "tool_calls>" + eosToken)
+	if !d2.Done() {
+		t.Fatalf("decoder should be in the done state after a complete block + EOS")
+	}
+	if d2.WantsGreedySampling() {
+		t.Fatalf("done state must not request greedy sampling")
+	}
+}

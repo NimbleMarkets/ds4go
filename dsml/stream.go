@@ -694,6 +694,81 @@ func classifyTagStart(buf []byte, prefix string) tagStartState {
 	}
 }
 
+// markerParamCloses lists the parameter close tags of the marker-bearing
+// dialects together with the unambiguous anchor (past the bare "</") that must
+// be present before greedy sampling kicks in. The plain-XML "</parameter>" is
+// intentionally excluded: its "</" is shared with ordinary markup, so values
+// that contain HTML/XML stay under the configured sampling settings.
+var markerParamCloses = []struct{ closeTag, anchor string }{
+	{parameterEndToken, "</" + dsmlMarker},                          // </｜DSML｜parameter>
+	{"</" + dsmlMarkerShort + "parameter>", "</" + dsmlMarkerShort},  // </DSML｜parameter>
+}
+
+// lastAngleTail returns buf from its last '<' to the end, or nil if there is no
+// '<'. It is the candidate region for a forming DSML marker.
+func lastAngleTail(buf []byte) []byte {
+	for i := len(buf) - 1; i >= 0; i-- {
+		if buf[i] == '<' {
+			return buf[i:]
+		}
+	}
+	return nil
+}
+
+// WantsGreedySampling reports whether the next token should be sampled greedily
+// (argmax) because the decoder is emitting DSML grammar rather than free text.
+// A caller driving generation can consult this before sampling each token to
+// keep tool-call structure reliable while leaving parameter values under the
+// configured sampling settings — except a parameter's closing tag once it is
+// unambiguously DSML. It is derived only from the current decoder state and
+// buffered tail, so malformed output, EOS, or the next turn cannot leave a
+// caller stuck in greedy mode.
+func (d *StreamDecoder) WantsGreedySampling() bool {
+	switch d.state {
+	case stateInToolCalls, stateInInvoke, stateInInvokeBody, stateInParameter, stateCheckingToolBlockEnd:
+		return true
+	case stateContent:
+		return d.contentTailFormsOpener()
+	case stateInParameterValue:
+		return d.paramTailFormsClose()
+	default: // stateThinking, stateRaw, stateDone
+		return false
+	}
+}
+
+// contentTailFormsOpener reports whether the held-back content tail is a forming
+// DSML opener (a partial tool_calls or invoke start), so the opener's bytes are
+// sampled greedily even while still in content state. A lone "<" (one byte) is
+// too common in prose to force argmax.
+func (d *StreamDecoder) contentTailFormsOpener() bool {
+	tail := lastAngleTail(d.buf)
+	if len(tail) < 2 {
+		return false
+	}
+	for _, syn := range dsmlSyntaxes {
+		if matchPartial(tail, syn.toolStart) || matchPartial(tail, syn.invokeStart) {
+			return true
+		}
+	}
+	return false
+}
+
+// paramTailFormsClose reports whether the buffered parameter-value tail is a
+// forming parameter close tag that has already reached the unambiguous marker
+// anchor (so a bare "</" or ordinary "</div>" does not force argmax).
+func (d *StreamDecoder) paramTailFormsClose() bool {
+	tail := lastAngleTail(d.buf)
+	if len(tail) < 2 {
+		return false
+	}
+	for _, m := range markerParamCloses {
+		if len(tail) >= len(m.anchor) && matchPartial(tail, m.closeTag) {
+			return true
+		}
+	}
+	return false
+}
+
 func skipLeadingWhitespaceBytes(buf []byte) []byte {
 	for len(buf) > 0 {
 		switch buf[0] {
