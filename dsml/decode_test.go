@@ -476,6 +476,46 @@ func TestParseCompletionImplicitInvokeTrailingProseIsRaw(t *testing.T) {
 	}
 }
 
+func TestParseCompletionStrayMarkerInContent(t *testing.T) {
+	// A parameter close marker with no enclosing block is malformed markup.
+	completion := "here you go </" + dsmlMarker + "parameter> done"
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.MalformedReason == "" {
+		t.Fatalf("stray DSML marker should set MalformedReason: %#v", msg)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("stray marker must not produce tool calls")
+	}
+}
+
+func TestParseCompletionStrayMarkerInReasoningAllowed(t *testing.T) {
+	// DSML markers inside reasoning are non-executable and must not be flagged.
+	completion := "I might use </" + dsmlMarker + "parameter> here</think>final answer"
+	msg, err := ParseCompletion(completion, true)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.MalformedReason != "" {
+		t.Fatalf("markers in reasoning must be allowed: %q", msg.MalformedReason)
+	}
+	if msg.Content != "final answer" {
+		t.Errorf("Content = %q, want %q", msg.Content, "final answer")
+	}
+}
+
+func TestParseCompletionCleanContentNotFlagged(t *testing.T) {
+	msg, err := ParseCompletion("just a normal answer with < and </ in it", false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.MalformedReason != "" {
+		t.Fatalf("ordinary angle brackets must not be flagged: %q", msg.MalformedReason)
+	}
+}
+
 func TestHasTagPrefix(t *testing.T) {
 	yes := []string{"<x name=\"a\">", "<x>", "<x\t>", "<x\n"}
 	for _, s := range yes {

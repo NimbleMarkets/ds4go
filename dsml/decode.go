@@ -90,11 +90,19 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 	start, rawStart, syn, implicit, ok := findToolBlockStart(text, searchFrom)
 	if !ok {
 		_, content, _ := readUntilStop(contentBase, text, []string{eosToken})
-		msg.Content = strings.TrimSpace(content)
+		content = strings.TrimSpace(content)
+		if contentHasStrayMarker(content) {
+			return rawCompletionMessage(text, "DSML markup outside a valid tool_calls block"), nil
+		}
+		msg.Content = content
 		return msg, nil
 	}
 	if eos := indexFrom(text, contentBase, eosToken); eos >= 0 && eos < start {
-		msg.Content = strings.TrimSpace(text[contentBase:eos])
+		content := strings.TrimSpace(text[contentBase:eos])
+		if contentHasStrayMarker(content) {
+			return rawCompletionMessage(text, "DSML markup outside a valid tool_calls block"), nil
+		}
+		msg.Content = content
 		return msg, nil
 	}
 
@@ -118,6 +126,18 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 		return rawCompletionMessage(text, "unexpected text after the tool_calls block"), nil
 	}
 	return msg, nil
+}
+
+// contentHasStrayMarker reports whether content (already normalized) carries a
+// DSML control marker that escaped a valid tool_calls block. Such a marker in
+// the user-facing reply means the model emitted malformed markup; surfacing it
+// lets the tool loop ask for a corrected call. eosToken / assistant markers do
+// not contain "<｜DSML｜", so they never match.
+func contentHasStrayMarker(content string) bool {
+	return strings.Contains(content, "<"+dsmlMarker) ||
+		strings.Contains(content, "</"+dsmlMarker) ||
+		strings.Contains(content, "<"+dsmlMarkerShort) ||
+		strings.Contains(content, "</"+dsmlMarkerShort)
 }
 
 // rawCompletionMessage is the fallback for completions whose tool stanza could
