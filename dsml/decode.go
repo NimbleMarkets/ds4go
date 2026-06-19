@@ -163,7 +163,7 @@ func parseToolCalls(start int, rawStart int, text string, syn dsmlSyntax) (calls
 			index += len(syn.toolEnd)
 			return calls, index, text[rawStart:index], nil
 		}
-		if !strings.HasPrefix(text[index:], syn.invokeStart) {
+		if !hasTagPrefix(text[index:], syn.invokeStart) {
 			return nil, index, "", fmt.Errorf("dsml: malformed tool call separator or invoke start")
 		}
 
@@ -185,7 +185,7 @@ func parseToolCalls(start int, rawStart int, text string, syn dsmlSyntax) (calls
 				index += len(syn.invokeEnd)
 				break
 			}
-			if !strings.HasPrefix(text[index:], syn.paramStart) {
+			if !hasTagPrefix(text[index:], syn.paramStart) {
 				return nil, index, "", fmt.Errorf("dsml: malformed parameter start")
 			}
 			tagEnd = strings.IndexByte(text[index:], '>')
@@ -235,6 +235,23 @@ func skipASCIIWhitespace(text string, index int) int {
 		}
 	}
 	return index
+}
+
+// hasTagPrefix reports whether s begins with an open tag whose element name is
+// exactly prefix — that is, prefix is followed by a tag delimiter (end of tag
+// or attribute whitespace) rather than more name characters. This keeps
+// "<｜DSML｜invokeX" from matching the "<｜DSML｜invoke" opener. Note that prefix
+// includes any leading "<" (callers pass text[index:] already positioned at the opener).
+func hasTagPrefix(s, prefix string) bool {
+	if !strings.HasPrefix(s, prefix) || len(s) == len(prefix) {
+		return false
+	}
+	switch s[len(prefix)] {
+	case '>', ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 func dsmlAttr(tag string, name string) (string, bool) {

@@ -392,3 +392,36 @@ func TestParseCompletionMalformedReasonEmptyForCleanOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCompletionInvokeNameBoundary(t *testing.T) {
+	// "<｜DSML｜invokefoo" must NOT match the "invoke" opener.
+	completion := "x\n\n<" + dsmlMarker + "tool_calls>\n" +
+		"<" + dsmlMarker + "invokefoo name=\"add\">\n" +
+		"</" + dsmlMarker + "invoke>\n" +
+		"</" + dsmlMarker + "tool_calls>"
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("invokefoo must not parse as a tool call: %#v", msg.ToolCalls)
+	}
+	if msg.MalformedReason == "" {
+		t.Fatalf("invokefoo must produce a MalformedReason, got none")
+	}
+}
+
+func TestHasTagPrefix(t *testing.T) {
+	yes := []string{"<x name=\"a\">", "<x>", "<x\t>", "<x\n"}
+	for _, s := range yes {
+		if !hasTagPrefix(s, "<x") {
+			t.Errorf("hasTagPrefix(%q, \"<x\") = false, want true", s)
+		}
+	}
+	no := []string{"<xy>", "<x", "<", "y<x>"}
+	for _, s := range no {
+		if hasTagPrefix(s, "<x") {
+			t.Errorf("hasTagPrefix(%q, \"<x\") = true, want false", s)
+		}
+	}
+}
