@@ -184,6 +184,27 @@ func TestContinueMaxTokensDefault(t *testing.T) {
 	}
 }
 
+func TestShouldSampleGreedy(t *testing.T) {
+	if !shouldSampleGreedy(GenerateOptions{Temperature: 0}) {
+		t.Error("Temperature<=0 must sample greedily")
+	}
+	if !shouldSampleGreedy(GenerateOptions{Temperature: -1}) {
+		t.Error("negative Temperature must sample greedily")
+	}
+	if shouldSampleGreedy(GenerateOptions{Temperature: 0.7}) {
+		t.Error("Temperature>0 with no SampleControl must not be greedy")
+	}
+	state := true
+	opts := GenerateOptions{Temperature: 0.7, SampleControl: func() bool { return state }}
+	if !shouldSampleGreedy(opts) {
+		t.Error("Temperature>0 with SampleControl()==true must be greedy")
+	}
+	state = false
+	if shouldSampleGreedy(opts) {
+		t.Error("Temperature>0 with SampleControl()==false must not be greedy")
+	}
+}
+
 func TestContinueContextFull(t *testing.T) {
 	eng := mockEngine(t)
 	defer eng.Close()

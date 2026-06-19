@@ -36,6 +36,12 @@ type GenerateOptions struct {
 	// Context, when non-nil, can be cancelled to stop generation gracefully
 	// before the next token is sampled.
 	Context context.Context
+	// SampleControl, when non-nil, is consulted before each token is sampled.
+	// Returning true forces argmax (greedy) sampling for that token regardless
+	// of Temperature; configured Temperature>0 sampling applies otherwise. It is
+	// a no-op when Temperature<=0 (already argmax) and is never consulted on the
+	// speculative-decoding path, which only runs at Temperature<=0.
+	SampleControl func() bool
 }
 
 // Generator binds a ds4 engine and session for Go-native generation helpers.
@@ -89,6 +95,16 @@ func syncWithContext(sync func() error, syncCancel func(ds4api.CancelFunc) error
 	return err
 }
 
+// shouldSampleGreedy reports whether the next token must be argmax-sampled
+// rather than drawn at the configured temperature: either Temperature is
+// already non-positive, or SampleControl requests greedy for this token.
+func shouldSampleGreedy(opts GenerateOptions) bool {
+	if opts.Temperature <= 0 {
+		return true
+	}
+	return opts.SampleControl != nil && opts.SampleControl()
+}
+
 // Continue generates tokens from the current session logits.
 func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	if g.Session == nil {
@@ -127,7 +143,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 			}
 		}
 		var token int
-		if opts.Temperature > 0 {
+		if !shouldSampleGreedy(opts) {
 			token = g.Session.Sample(opts.Temperature, opts.TopK, opts.TopP, opts.MinP, &rng)
 		} else if opts.ExcludeToken != 0 {
 			token = g.Session.ArgmaxExcluding(opts.ExcludeToken)

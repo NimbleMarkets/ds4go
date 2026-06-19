@@ -93,7 +93,7 @@ func TestStreamCompletionStopsAtToolBlockClose(t *testing.T) {
 	fed := 0
 	text, err := streamCompletion(context.Background(), false,
 		func(ev dsml.StreamEvent) { events = append(events, ev) },
-		func(ctx context.Context, emit func(string)) error {
+		func(ctx context.Context, emit func(string), _ func() bool) error {
 			// Mirrors Generator.Continue: check the context before each
 			// token, return its error when cancelled.
 			for _, p := range append(append([]string(nil), blockParts...), junkParts...) {
@@ -142,7 +142,7 @@ func TestStreamCompletionPlainContent(t *testing.T) {
 				deltas = append(deltas, ev.Delta)
 			}
 		},
-		func(ctx context.Context, emit func(string)) error {
+		func(ctx context.Context, emit func(string), _ func() bool) error {
 			emit("hello ")
 			emit("world")
 			return nil
@@ -165,7 +165,7 @@ func TestStreamCompletionPlainContent(t *testing.T) {
 func TestStreamCompletionPropagatesUserCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	_, err := streamCompletion(ctx, false, nil,
-		func(genCtx context.Context, emit func(string)) error {
+		func(genCtx context.Context, emit func(string), _ func() bool) error {
 			emit("partial")
 			cancel()
 			return genCtx.Err()
@@ -178,7 +178,7 @@ func TestStreamCompletionPropagatesUserCancellation(t *testing.T) {
 func TestStreamCompletionPropagatesGenerationError(t *testing.T) {
 	boom := errors.New("boom")
 	_, err := streamCompletion(context.Background(), false, nil,
-		func(ctx context.Context, emit func(string)) error {
+		func(ctx context.Context, emit func(string), _ func() bool) error {
 			return boom
 		}, nil)
 	if !errors.Is(err, boom) {
@@ -399,7 +399,7 @@ func TestStreamCompletionRecoversToolCallInUnclosedThink(t *testing.T) {
 		recovered++
 		return "</think>\n\n", nil
 	}
-	gen := func(ctx context.Context, emit func(string)) error {
+	gen := func(ctx context.Context, emit func(string), _ func() bool) error {
 		if phase == 0 {
 			phase = 1
 			for _, p := range []string{"<think>", "I will call the tool ", "\n\n<｜DSML｜tool_calls>", "never reached"} {
@@ -441,7 +441,7 @@ func TestStreamCompletionRecoversToolCallInUnclosedThink(t *testing.T) {
 }
 
 func TestStreamCompletionNoRecoveryWithoutCallback(t *testing.T) {
-	gen := func(ctx context.Context, emit func(string)) error {
+	gen := func(ctx context.Context, emit func(string), _ func() bool) error {
 		for _, p := range []string{"<think>", "thinking ", "\n\n<｜DSML｜tool_calls>", " more thinking"} {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -478,6 +478,41 @@ func TestCompleteTurnDelegatesToCompleteFunc(t *testing.T) {
 	}
 	if text != "from-complete-func" {
 		t.Fatalf("text = %q, want CompleteFunc result", text)
+	}
+}
+
+func TestStreamCompletionThreadsGreedyPredicate(t *testing.T) {
+	// A bare-invoke completion fed char-by-char; the fake generator samples the
+	// greedy predicate after each emit. Proves WantsGreedySampling is wired to
+	// the live decoder state and flips on inside DSML grammar.
+	full := "answer\n\n<｜DSML｜invoke name=\"x\">\n</｜DSML｜invoke><｜end▁of▁sentence｜>"
+	var sawGreedy, sawNonGreedy bool
+	gen := func(ctx context.Context, emit func(string), wantGreedy func() bool) error {
+		for _, r := range full {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			emit(string(r))
+			if wantGreedy() {
+				sawGreedy = true
+			} else {
+				sawNonGreedy = true
+			}
+		}
+		return nil
+	}
+	text, err := streamCompletion(context.Background(), false, nil, gen, nil)
+	if err != nil {
+		t.Fatalf("streamCompletion: %v", err)
+	}
+	if text == "" {
+		t.Fatal("expected accumulated text")
+	}
+	if !sawGreedy {
+		t.Error("expected greedy sampling while emitting DSML structure")
+	}
+	if !sawNonGreedy {
+		t.Error("expected non-greedy sampling while emitting plain content")
 	}
 }
 

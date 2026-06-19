@@ -27,7 +27,7 @@ var errThinkToolRecovery = errors.New("ds4go: tool call inside unclosed thinking
 // whitespace and the end-of-sentence marker, so stopping saves the trailing
 // tokens. Further emits are suppressed so tokens already in flight (e.g. an
 // accepted speculative batch) cannot degrade the closed block.
-func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.StreamEvent), generate func(context.Context, func(string)) error, thinkRecover func() (string, error)) (string, error) {
+func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.StreamEvent), generate func(ctx context.Context, emit func(string), wantGreedy func() bool) error, thinkRecover func() (string, error)) (string, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -66,7 +66,7 @@ func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.S
 	for {
 		ctx, cancel := context.WithCancelCause(parent)
 		roundCancel = cancel
-		err := generate(ctx, emit)
+		err := generate(ctx, emit, dec.WantsGreedySampling)
 		cause := context.Cause(ctx)
 		cancel(nil)
 		if err == nil || (errors.Is(cause, errToolTurnComplete) && parent.Err() == nil) {
@@ -261,13 +261,14 @@ func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(ds
 		remaining = 128
 	}
 	started := false
-	gen := func(ctx context.Context, emit func(string)) error {
+	gen := func(ctx context.Context, emit func(string), wantGreedy func() bool) error {
 		if remaining <= 0 {
 			return nil
 		}
 		generate := opts
 		generate.Context = ctx
 		generate.MaxTokens = remaining
+		generate.SampleControl = wantGreedy
 		generate.OnToken = func(token int) {
 			remaining--
 			if part, err := l.Engine.TokenText(token); err == nil {
