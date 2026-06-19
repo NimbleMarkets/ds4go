@@ -87,7 +87,7 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 		}
 	}
 
-	start, rawStart, syn, ok := findToolBlockStart(text, searchFrom)
+	start, rawStart, syn, implicit, ok := findToolBlockStart(text, searchFrom)
 	if !ok {
 		_, content, _ := readUntilStop(contentBase, text, []string{eosToken})
 		msg.Content = strings.TrimSpace(content)
@@ -99,12 +99,17 @@ func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
 	}
 
 	msg.Content = strings.TrimSpace(text[contentBase:rawStart])
-	calls, end, rawBlock, err := parseToolCalls(start, rawStart, text, syn)
+	calls, end, rawBlock, err := parseToolCalls(start, rawStart, text, syn, implicit)
 	if err != nil {
 		return rawCompletionMessage(text, err.Error()), nil
 	}
-	for i := range calls {
-		calls[i].Exact = rawBlock
+	if !implicit {
+		// Exact replay is only valid for a full tool_calls block. An implicit
+		// (wrapper-less) block must leave Exact empty so the replay store never
+		// rejects it; the call re-renders canonically instead.
+		for i := range calls {
+			calls[i].Exact = rawBlock
+		}
 	}
 	msg.ToolCalls = calls
 
@@ -127,43 +132,70 @@ func rawCompletionMessage(text, reason string) ParsedMessage {
 	}
 }
 
-func findToolBlockStart(text string, from int) (start int, rawStart int, syn dsmlSyntax, ok bool) {
+func findToolBlockStart(text string, from int) (start int, rawStart int, syn dsmlSyntax, implicit bool, ok bool) {
 	best := -1
 	var bestSyn dsmlSyntax
-	for _, candidate := range dsmlSyntaxes {
-		pos := indexFrom(text, from, candidate.toolStart)
+	bestImplicit := false
+	consider := func(pos int, candidate dsmlSyntax, imp bool) {
 		if pos >= 0 && (best < 0 || pos < best) {
 			best = pos
 			bestSyn = candidate
+			bestImplicit = imp
+		}
+	}
+	for _, candidate := range dsmlSyntaxes {
+		consider(indexFrom(text, from, candidate.toolStart), candidate, false)
+	}
+	// A bare invoke with no enclosing tool_calls wrapper is an implicit
+	// single-call block. "Earliest match wins" means a well-formed block still
+	// selects its toolStart, which precedes the invoke.
+	for _, candidate := range dsmlSyntaxes {
+		pos := from
+		for {
+			pos = indexFrom(text, pos, candidate.invokeStart)
+			if pos < 0 {
+				break
+			}
+			if hasTagPrefix(text[pos:], candidate.invokeStart) {
+				consider(pos, candidate, true)
+				break
+			}
+			pos += len(candidate.invokeStart)
 		}
 	}
 	if best < 0 {
-		return 0, 0, dsmlSyntax{}, false
+		return 0, 0, dsmlSyntax{}, false, false
 	}
 	raw := best
 	if raw >= 2 && text[raw-2:raw] == "\n\n" {
 		raw -= 2
 	}
-	return best, raw, bestSyn, true
+	return best, raw, bestSyn, bestImplicit, true
 }
 
 // parseToolCalls parses a complete tool-calls block beginning at the opening
 // "<...tool_calls>" tag. rawStart is the byte offset to preserve for exact
 // replay, including any leading "\n\n" separator.
-func parseToolCalls(start int, rawStart int, text string, syn dsmlSyntax) (calls []ToolCall, newIndex int, rawBlock string, err error) {
+func parseToolCalls(start int, rawStart int, text string, syn dsmlSyntax, implicit bool) (calls []ToolCall, newIndex int, rawBlock string, err error) {
 	index := start
-	if !strings.HasPrefix(text[index:], syn.toolStart) {
-		return nil, index, "", fmt.Errorf("dsml: malformed tool_calls start")
+	if !implicit {
+		if !strings.HasPrefix(text[index:], syn.toolStart) {
+			return nil, index, "", fmt.Errorf("dsml: malformed tool_calls start")
+		}
+		index += len(syn.toolStart)
 	}
-	index += len(syn.toolStart)
 
 	for {
 		index = skipASCIIWhitespace(text, index)
-		if strings.HasPrefix(text[index:], syn.toolEnd) {
+		if !implicit && strings.HasPrefix(text[index:], syn.toolEnd) {
 			index += len(syn.toolEnd)
 			return calls, index, text[rawStart:index], nil
 		}
 		if !hasTagPrefix(text[index:], syn.invokeStart) {
+			if implicit && len(calls) > 0 {
+				// Implicit block ends at the first non-invoke content.
+				return calls, index, text[rawStart:index], nil
+			}
 			return nil, index, "", fmt.Errorf("dsml: malformed tool call separator or invoke start")
 		}
 

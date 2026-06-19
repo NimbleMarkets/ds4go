@@ -411,6 +411,71 @@ func TestParseCompletionInvokeNameBoundary(t *testing.T) {
 	}
 }
 
+func TestParseCompletionImplicitInvoke(t *testing.T) {
+	// A bare invoke with no <｜DSML｜tool_calls> wrapper still produces a call.
+	completion := "sure\n\n<" + dsmlMarker + "invoke name=\"add\">\n" +
+		"<" + dsmlMarker + "parameter name=\"a\" string=\"false\">2</" + dsmlMarker + "parameter>\n" +
+		"</" + dsmlMarker + "invoke>" + eosToken
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1: %#v", len(msg.ToolCalls), msg)
+	}
+	if msg.ToolCalls[0].Name != "add" {
+		t.Errorf("Name = %q, want add", msg.ToolCalls[0].Name)
+	}
+	if got := argsMap(t, msg.ToolCalls[0].Arguments); !reflect.DeepEqual(got, map[string]any{"a": float64(2)}) {
+		t.Errorf("Arguments = %v", got)
+	}
+	// Implicit blocks must NOT populate Exact: the replay store rejects any
+	// block without a tool_calls wrapper, and ParseAssistant propagates that
+	// error. An empty Exact makes the call re-render canonically on replay.
+	if msg.ToolCalls[0].Exact != "" {
+		t.Errorf("Exact = %q, want empty for implicit invoke", msg.ToolCalls[0].Exact)
+	}
+}
+
+func TestParseCompletionImplicitInvokeMultiple(t *testing.T) {
+	completion := "<" + dsmlMarker + "invoke name=\"a\">\n" +
+		"<" + dsmlMarker + "parameter name=\"n\" string=\"false\">7</" + dsmlMarker + "parameter>\n" +
+		"</" + dsmlMarker + "invoke>\n" +
+		"<" + dsmlMarker + "invoke name=\"b\">\n</" + dsmlMarker + "invoke>" + eosToken
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 2 ||
+		msg.ToolCalls[0].Name != "a" || msg.ToolCalls[1].Name != "b" {
+		t.Fatalf("want [a b], got %#v", msg.ToolCalls)
+	}
+	if got := argsMap(t, msg.ToolCalls[0].Arguments); !reflect.DeepEqual(got, map[string]any{"n": float64(7)}) {
+		t.Errorf("ToolCalls[0] args = %v, want {n:7}", got)
+	}
+	// Implicit blocks must NOT populate Exact (Finding 1)
+	for i, tc := range msg.ToolCalls {
+		if tc.Exact != "" {
+			t.Errorf("ToolCalls[%d].Exact = %q, want empty for implicit invoke", i, tc.Exact)
+		}
+	}
+}
+
+func TestParseCompletionImplicitInvokeTrailingProseIsRaw(t *testing.T) {
+	// Prose after the implicit block is ambiguous; fall back to raw content.
+	completion := "<" + dsmlMarker + "invoke name=\"a\">\n</" + dsmlMarker + "invoke>\nand then some prose"
+	msg, err := ParseCompletion(completion, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("trailing prose must degrade to raw content: %#v", msg.ToolCalls)
+	}
+	if msg.MalformedReason == "" {
+		t.Errorf("expected MalformedReason for trailing prose")
+	}
+}
+
 func TestHasTagPrefix(t *testing.T) {
 	yes := []string{"<x name=\"a\">", "<x>", "<x\t>", "<x\n"}
 	for _, s := range yes {

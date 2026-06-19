@@ -277,7 +277,7 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 
 func (d *StreamDecoder) processContent(events *[]StreamEvent) {
 	eosIdx := bytes.Index(d.buf, []byte(eosToken))
-	_, rawStart, syn, hasTool := findToolBlockStart(string(d.buf), 0)
+	_, rawStart, syn, _, hasTool := findToolBlockStart(string(d.buf), 0)
 
 	if hasTool && (eosIdx < 0 || rawStart < eosIdx) {
 		// Tool block appears before EOS (or EOS absent).
