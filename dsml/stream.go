@@ -57,6 +57,7 @@ type StreamDecoder struct {
 	// Tool-block parsing state.
 	syntax          dsmlSyntax
 	seenToolCallsOp bool
+	implicitBlock   bool // tool calls arrived without a <…tool_calls> wrapper
 	rawBlockStart   int // absolute offset in fullText
 	calls           []ToolCall
 	pendingArgs     *orderedArgs
@@ -277,13 +278,15 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 
 func (d *StreamDecoder) processContent(events *[]StreamEvent) {
 	eosIdx := bytes.Index(d.buf, []byte(eosToken))
-	_, rawStart, syn, _, hasTool := findToolBlockStart(string(d.buf), 0)
+	_, rawStart, syn, implicit, hasTool := findToolBlockStart(string(d.buf), 0)
 
 	if hasTool && (eosIdx < 0 || rawStart < eosIdx) {
-		// Tool block appears before EOS (or EOS absent).
+		// Tool block (explicit or implicit) appears before EOS (or EOS absent).
 		d.emitContent(events, string(d.buf[:rawStart]))
 		d.buf = d.buf[rawStart:]
 		d.syntax = syn
+		d.implicitBlock = implicit
+		d.seenToolCallsOp = implicit // implicit blocks have no wrapper to consume
 		d.rawBlockStart = len(d.fullText) - len(d.buf)
 		d.state = stateInToolCalls
 		return
@@ -330,19 +333,37 @@ func (d *StreamDecoder) processInToolCalls(events *[]StreamEvent) {
 		return
 	}
 
-	if matchComplete(d.buf, d.syntax.toolEnd) {
+	// Explicit blocks end with </tool_calls>; implicit blocks never see one.
+	if !d.implicitBlock && matchComplete(d.buf, d.syntax.toolEnd) {
 		d.buf = d.buf[len(d.syntax.toolEnd):]
 		d.toolBlockClosed = true
 		d.state = stateCheckingToolBlockEnd
 		return
 	}
-	if matchComplete(d.buf, d.syntax.invokeStart) {
+
+	switch classifyTagStart(d.buf, d.syntax.invokeStart) {
+	case tagStartYes:
 		d.state = stateInInvoke
 		return
+	case tagStartPartial:
+		if !d.finalPass {
+			return // wait for the rest of the invoke opener
+		}
 	}
-	if !d.finalPass && (matchPartial(d.buf, d.syntax.toolEnd) || matchPartial(d.buf, d.syntax.invokeStart)) {
-		return // wait for more data
+
+	// Explicit blocks may still be waiting for </tool_calls>.
+	if !d.implicitBlock && !d.finalPass && matchPartial(d.buf, d.syntax.toolEnd) {
+		return
 	}
+
+	// An implicit block closes at the first non-invoke content once at least
+	// one call has been parsed.
+	if d.implicitBlock && len(d.calls) > 0 {
+		d.toolBlockClosed = true
+		d.state = stateCheckingToolBlockEnd
+		return
+	}
+
 	d.enterRawMode(events)
 }
 
@@ -383,11 +404,18 @@ func (d *StreamDecoder) processInInvokeBody(events *[]StreamEvent) {
 		d.completeInvoke(events)
 		return
 	}
-	if matchComplete(d.buf, d.syntax.paramStart) {
+
+	switch classifyTagStart(d.buf, d.syntax.paramStart) {
+	case tagStartYes:
 		d.state = stateInParameter
 		return
+	case tagStartPartial:
+		if !d.finalPass {
+			return
+		}
 	}
-	if !d.finalPass && (matchPartial(d.buf, d.syntax.invokeEnd) || matchPartial(d.buf, d.syntax.paramStart)) {
+
+	if !d.finalPass && matchPartial(d.buf, d.syntax.invokeEnd) {
 		return
 	}
 	d.enterRawMode(events)
@@ -460,6 +488,9 @@ func (d *StreamDecoder) processInParameterValue(events *[]StreamEvent) {
 }
 
 func (d *StreamDecoder) processCheckingToolBlockEnd(events *[]StreamEvent) {
+	// This function handles both explicit tool-block close paths:
+	// 1. After consuming an explicit </tool_calls> wrapper (d.seenToolCallsOp is true)
+	// 2. From implicit-block close in processInToolCalls (d.implicitBlock && len(d.calls) > 0)
 	d.buf = skipLeadingWhitespaceBytes(d.buf)
 	if len(d.buf) == 0 {
 		return
@@ -549,6 +580,7 @@ func (d *StreamDecoder) completeToolBlock(events *[]StreamEvent) {
 	*events = append(*events, d.pendingEvents...)
 	d.pendingEvents = nil
 	d.seenToolCallsOp = false
+	d.implicitBlock = false
 	d.calls = nil
 	d.state = stateContent
 }
@@ -562,6 +594,7 @@ func (d *StreamDecoder) enterRawMode(events *[]StreamEvent) {
 	d.calls = nil
 	d.pendingArgs = nil
 	d.seenToolCallsOp = false
+	d.implicitBlock = false
 	d.toolBlockClosed = false
 }
 
@@ -625,6 +658,40 @@ func matchComplete(buf []byte, str string) bool {
 
 func matchPartial(buf []byte, str string) bool {
 	return len(buf) < len(str) && strings.HasPrefix(str, string(buf))
+}
+
+// tagStartState classifies how a buffer relates to an open-tag prefix that
+// carries a name but no terminating ">" (invokeStart / paramStart).
+type tagStartState int
+
+const (
+	tagStartNo      tagStartState = iota // definitely not this tag
+	tagStartPartial                      // a prefix; wait for more bytes
+	tagStartYes                          // the tag, correctly delimited
+)
+
+// classifyTagStart decides whether buf begins the named open tag. It requires a
+// delimiter after the name so "<｜DSML｜invokeX" is rejected, and waits when the
+// delimiter byte has not yet arrived.
+func classifyTagStart(buf []byte, prefix string) tagStartState {
+	if len(buf) < len(prefix) {
+		if strings.HasPrefix(prefix, string(buf)) {
+			return tagStartPartial
+		}
+		return tagStartNo
+	}
+	if !bytes.HasPrefix(buf, []byte(prefix)) {
+		return tagStartNo
+	}
+	if len(buf) == len(prefix) {
+		return tagStartPartial // delimiter byte not yet arrived
+	}
+	switch buf[len(prefix)] {
+	case '>', ' ', '\t', '\r', '\n':
+		return tagStartYes
+	default:
+		return tagStartNo
+	}
 }
 
 func skipLeadingWhitespaceBytes(buf []byte) []byte {

@@ -629,3 +629,80 @@ func TestStreamDecoderToolStanzaNotInPlainContent(t *testing.T) {
 		t.Fatal("non-thinking decoder reported a stanza in thinking")
 	}
 }
+
+func TestStreamDecoderImplicitInvoke(t *testing.T) {
+	completion := "ok\n\n<" + dsmlMarker + "invoke name=\"add\">\n" +
+		"<" + dsmlMarker + "parameter name=\"a\" string=\"false\">2</" + dsmlMarker + "parameter>\n" +
+		"</" + dsmlMarker + "invoke>" + eosToken
+	d := NewStreamDecoder(false)
+	var events []StreamEvent
+	events = append(events, d.Write(completion)...)
+	tail, msg, err := d.Close()
+	events = append(events, tail...)
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Name != "add" {
+		t.Fatalf("want one call to add, got %#v", msg.ToolCalls)
+	}
+	var starts, ends int
+	for _, ev := range events {
+		switch ev.Type {
+		case EventToolCallStart:
+			starts++
+		case EventToolCallEnd:
+			ends++
+		}
+	}
+	if starts != 1 || ends != 1 {
+		t.Errorf("tool-call events start=%d end=%d, want 1/1", starts, ends)
+	}
+}
+
+func TestStreamDecoderImplicitInvokeClosesEarly(t *testing.T) {
+	// ToolBlockClosed must fire on the implicit block so generation can stop.
+	d := NewStreamDecoder(false)
+	d.Write("<" + dsmlMarker + "invoke name=\"x\">\n</" + dsmlMarker + "invoke>" + eosToken)
+	if !d.ToolBlockClosed() {
+		t.Fatal("ToolBlockClosed() = false for a complete implicit block")
+	}
+}
+
+func TestStreamDecoderInvokeNameBoundaryDegradesToRaw(t *testing.T) {
+	// "<｜DSML｜invokefoo" must not be treated as an invoke; the block is raw.
+	d := NewStreamDecoder(false)
+	completion := "<" + dsmlMarker + "tool_calls>\n<" + dsmlMarker + "invokefoo name=\"x\">"
+	d.Write(completion)
+	_, msg, err := d.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("invokefoo must not produce tool calls: %#v", msg.ToolCalls)
+	}
+}
+
+func TestStreamDecoderImplicitInvokeNameBoundaryEmitsNoToolEvents(t *testing.T) {
+	// A wrapper-less "<｜DSML｜invokefoo" must not enter the tool path: the
+	// streaming decoder emits no tool-call events and never reports the block
+	// closed. (Close() also re-parses, but this asserts the streaming path.)
+	d := NewStreamDecoder(false)
+	var events []StreamEvent
+	events = append(events, d.Write("<"+dsmlMarker+"invokefoo name=\"x\">\n</"+dsmlMarker+"invoke>"+eosToken)...)
+	if d.ToolBlockClosed() {
+		t.Fatal("ToolBlockClosed() = true for a non-invoke (invokefoo) implicit input")
+	}
+	tail, msg, err := d.Close()
+	events = append(events, tail...)
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for _, ev := range events {
+		if ev.Type == EventToolCallStart || ev.Type == EventToolCallEnd {
+			t.Fatalf("unexpected tool-call event for invokefoo: %+v", ev)
+		}
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("invokefoo must not produce tool calls: %#v", msg.ToolCalls)
+	}
+}
