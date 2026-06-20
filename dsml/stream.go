@@ -58,7 +58,7 @@ type StreamDecoder struct {
 	syntax          dsmlSyntax
 	seenToolCallsOp bool
 	implicitBlock   bool // tool calls arrived without a <…tool_calls> wrapper
-	rawBlockStart   int // absolute offset in fullText
+	rawBlockStart   int  // absolute offset in fullText
 	calls           []ToolCall
 	pendingArgs     *orderedArgs
 	paramName       string
@@ -701,7 +701,7 @@ func classifyTagStart(buf []byte, prefix string) tagStartState {
 // that contain HTML/XML stay under the configured sampling settings.
 var markerParamCloses = []struct{ closeTag, anchor string }{
 	{parameterEndToken, "</" + dsmlMarker},                          // </｜DSML｜parameter>
-	{"</" + dsmlMarkerShort + "parameter>", "</" + dsmlMarkerShort},  // </DSML｜parameter>
+	{"</" + dsmlMarkerShort + "parameter>", "</" + dsmlMarkerShort}, // </DSML｜parameter>
 }
 
 // lastAngleTail returns buf from its last '<' to the end, or nil if there is no
