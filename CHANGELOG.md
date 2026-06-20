@@ -2,14 +2,18 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+ * **DSML parsing hardening** (ported from `ds4` upstream): a bare `<｜DSML｜invoke>` with no `<｜DSML｜tool_calls>` wrapper is now accepted as an implicit single-call block; stray DSML markers in plain assistant output are reported as malformed so the tool loop asks the model to retry; and `invoke`/`parameter` openers require a tag delimiter, so `<｜DSML｜invokeX` no longer false-matches `invoke`.
+ * **Structure-aware greedy sampling**: tool turns now sample DSML grammar greedily (argmax) while keeping the configured sampling for parameter values, improving tool-call reliability. It is a no-op at temperature <= 0, so speculative decoding is unaffected. Exposed as `GenerateOptions.SampleControl` and `StreamDecoder.WantsGreedySampling`.
+
 ## v0.5.1 (2026-06-10)
 
  * Add `ds4go install catalog` command
  * Add AMD ROCm support
  * Add `ds4` [SSD streaming support](https://github.com/antirez/ds4#pro-on-128gb-macbooks)
  * Add session cancellation with `session.SetCancel`
- * Tool loops now replay assistant reasoning across turns (preserving KV-cache reuse) and recover tool calls the model starts inside an
-  unclosed `<think>` block.
+ * Tool loops now replay assistant reasoning across turns (preserving KV-cache reuse) and recover tool calls the model starts inside an unclosed `<think>` block.
 
 ## v0.5.0 (2026-06-05)
 
