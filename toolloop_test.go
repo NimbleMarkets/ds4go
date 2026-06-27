@@ -532,8 +532,17 @@ func TestCompleteTurnStreamsViaDecoder(t *testing.T) {
 	defer toks.Free()
 
 	var deltas []string
+	sampleControlCalls := 0
 	loop := ToolLoop{Engine: eng, Session: sess, Tools: NewToolRegistry()}
-	text, err := loop.CompleteTurn(toks, GenerateOptions{MaxTokens: 4, StopOnEOS: true},
+	text, err := loop.CompleteTurn(toks, GenerateOptions{
+		MaxTokens:   4,
+		StopOnEOS:   true,
+		Temperature: 0.7,
+		SampleControl: func() bool {
+			sampleControlCalls++
+			return false
+		},
+	},
 		func(ev dsml.StreamEvent) {
 			if ev.Type == dsml.EventContentDelta {
 				deltas = append(deltas, ev.Delta)
@@ -544,6 +553,9 @@ func TestCompleteTurnStreamsViaDecoder(t *testing.T) {
 	}
 	if text == "" {
 		t.Fatal("empty completion from mock engine")
+	}
+	if sampleControlCalls == 0 {
+		t.Fatal("caller SampleControl was not consulted")
 	}
 	if joined := strings.Join(deltas, ""); joined != text {
 		t.Fatalf("content deltas reconstruct %q, want %q", joined, text)

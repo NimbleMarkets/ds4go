@@ -1,7 +1,6 @@
 # ds4go Roadmap
 
-Planned work, tracked at a high level. See `docs/superpowers/specs/` for design
-detail on in-flight items.
+Planned work, tracked at a high level.
 
 ## Porting tools from ds4
 

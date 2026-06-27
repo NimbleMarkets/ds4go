@@ -268,7 +268,11 @@ func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(ds
 		generate := opts
 		generate.Context = ctx
 		generate.MaxTokens = remaining
-		generate.SampleControl = wantGreedy
+		generate.SampleControl = func() bool {
+			dsmlGreedy := wantGreedy()
+			callerGreedy := opts.SampleControl != nil && opts.SampleControl()
+			return dsmlGreedy || callerGreedy
+		}
 		generate.OnToken = func(token int) {
 			remaining--
 			if part, err := l.Engine.TokenText(token); err == nil {
