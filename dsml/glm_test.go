@@ -1,6 +1,9 @@
 package dsml
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // These cases are ported from upstream ds4's GLM parser tests in ds4_agent.c
 // (test_agent_glm_tool_parser_*), so ds4go's grammar stays bug-compatible with
@@ -148,5 +151,118 @@ func TestParseCompletionDefaultsToDSMLSyntax(t *testing.T) {
 	}
 	if len(msg.ToolCalls) != 0 {
 		t.Fatalf("DSML parse found %d tool calls in GLM markup, want 0", len(msg.ToolCalls))
+	}
+}
+
+func TestGLMRenderToolCall(t *testing.T) {
+	got, err := RenderToolCallsSyntax(SyntaxGLM, []ToolCall{{
+		Name:      "bash",
+		Arguments: `{"command": "printf hi", "refresh_sec": 1}`,
+	}})
+	if err != nil {
+		t.Fatalf("RenderToolCallsSyntax: %v", err)
+	}
+	// Non-string JSON values render as their literal text: GLM has no type
+	// marker, and the parser reads every value back as a string.
+	want := "<tool_call>bash" +
+		"<arg_key>command</arg_key><arg_value>printf hi</arg_value>" +
+		"<arg_key>refresh_sec</arg_key><arg_value>1</arg_value>" +
+		"</tool_call>"
+	if got != want {
+		t.Errorf("rendered:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// Rendering a parsed call and parsing it again must be a fixed point, since
+// multi-turn prompts replay assistant tool calls back to the model.
+func TestGLMRenderToolCallRoundTrips(t *testing.T) {
+	const text = "<tool_call>bash<arg_key>command</arg_key>" +
+		"<arg_value>printf hi</arg_value></tool_call>"
+
+	msg, err := ParseCompletionSyntax(SyntaxGLM, text, false)
+	if err != nil {
+		t.Fatalf("ParseCompletionSyntax: %v", err)
+	}
+	rendered, err := RenderToolCallsSyntax(SyntaxGLM, msg.ToolCalls)
+	if err != nil {
+		t.Fatalf("RenderToolCallsSyntax: %v", err)
+	}
+	again, err := ParseCompletionSyntax(SyntaxGLM, rendered, false)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	if len(again.ToolCalls) != 1 {
+		t.Fatalf("re-parsed %d calls, want 1", len(again.ToolCalls))
+	}
+	if again.ToolCalls[0].Name != msg.ToolCalls[0].Name ||
+		again.ToolCalls[0].Arguments != msg.ToolCalls[0].Arguments {
+		t.Errorf("round trip changed the call: %+v -> %+v", msg.ToolCalls[0], again.ToolCalls[0])
+	}
+}
+
+func TestGLMRenderMultipleToolCalls(t *testing.T) {
+	got, err := RenderToolCallsSyntax(SyntaxGLM, []ToolCall{
+		{Name: "list", Arguments: `{"path": "."}`},
+		{Name: "bash", Arguments: `{"command": "pwd"}`},
+	})
+	if err != nil {
+		t.Fatalf("RenderToolCallsSyntax: %v", err)
+	}
+	msg, err := ParseCompletionSyntax(SyntaxGLM, got, false)
+	if err != nil {
+		t.Fatalf("ParseCompletionSyntax: %v", err)
+	}
+	if len(msg.ToolCalls) != 2 {
+		t.Fatalf("re-parsed %d calls from %q, want 2", len(msg.ToolCalls), got)
+	}
+}
+
+func TestGLMRenderToolsSection(t *testing.T) {
+	section, err := RenderToolsSectionSyntax(SyntaxGLM, []Tool{{
+		Name:        "list",
+		Description: "List one directory.",
+		Parameters:  []byte(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+	}})
+	if err != nil {
+		t.Fatalf("RenderToolsSectionSyntax: %v", err)
+	}
+	// Structural expectations lifted from ds4's agent_glm_tools_prompt_*.
+	for _, want := range []string{
+		"<tools>", "</tools>",
+		`"name": "list"`,
+		"<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key>",
+		"Tool calls are not allowed inside <think></think>",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("GLM tools section missing %q\n---\n%s", want, section)
+		}
+	}
+	if strings.Contains(section, dsmlMarker) {
+		t.Error("GLM tools section leaked DSML markers")
+	}
+}
+
+func TestGLMRenderToolsSectionEmpty(t *testing.T) {
+	section, err := RenderToolsSectionSyntax(SyntaxGLM, nil)
+	if err != nil {
+		t.Fatalf("RenderToolsSectionSyntax: %v", err)
+	}
+	if section != "" {
+		t.Errorf("empty tool list rendered %q, want \"\"", section)
+	}
+}
+
+func TestGLMToolSyntaxErrorMessage(t *testing.T) {
+	msg := ToolSyntaxErrorMessageSyntax(SyntaxGLM, "expected <arg_key> in GLM tool call")
+	for _, want := range []string{
+		"expected <arg_key> in GLM tool call",
+		"<tool_call>$TOOL_NAME<arg_key>$PARAMETER_NAME</arg_key>",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("GLM syntax error message missing %q\n---\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, dsmlMarker) {
+		t.Error("GLM syntax error message leaked DSML markers")
 	}
 }

@@ -43,6 +43,16 @@ var toolsSectionTemplate = "## Tools\n\n" +
 // passing the system message to libds4's chat helpers. An empty tool list
 // renders nothing (an empty string), so callers need not special-case it.
 func RenderToolsSection(tools []Tool) (string, error) {
+	return RenderToolsSectionSyntax(SyntaxDSML, tools)
+}
+
+// RenderToolsSectionSyntax is [RenderToolsSection] for an explicit tool-call
+// markup syntax. GLM renders a "# Tools" block with <tools> schemas instead of
+// DSML's "## Tools" section.
+func RenderToolsSectionSyntax(syntax Syntax, tools []Tool) (string, error) {
+	if syntax == SyntaxGLM {
+		return renderGLMToolsSection(tools)
+	}
 	if len(tools) == 0 {
 		return "", nil
 	}
@@ -97,6 +107,15 @@ func WrapToolCalls(invokes []string) string {
 // caller appends the result to an assistant message's content when replaying
 // tool-call history into a multi-turn prompt. It returns "" for no calls.
 func RenderToolCalls(calls []ToolCall) (string, error) {
+	return RenderToolCallsSyntax(SyntaxDSML, calls)
+}
+
+// RenderToolCallsSyntax is [RenderToolCalls] for an explicit tool-call markup
+// syntax. GLM renders adjacent "<tool_call>" elements with no wrapper block.
+func RenderToolCallsSyntax(syntax Syntax, calls []ToolCall) (string, error) {
+	if syntax == SyntaxGLM {
+		return renderGLMToolCalls(calls)
+	}
 	if len(calls) == 0 {
 		return "", nil
 	}
@@ -278,7 +297,25 @@ func RenderAssistantTurn(content, reasoning, toolCalls string, thinking, replayR
 // sees the failure where it expects tool output, then retries or answers
 // normally.
 func ToolSyntaxErrorMessage(detail string) string {
+	return ToolSyntaxErrorMessageSyntax(SyntaxDSML, detail)
+}
+
+// ToolSyntaxErrorMessageSyntax is [ToolSyntaxErrorMessage] for an explicit
+// tool-call markup syntax. The GLM form carries ds4's agent_glm_syntax_reminder
+// so the model sees the grammar it is expected to emit.
+func ToolSyntaxErrorMessageSyntax(syntax Syntax, detail string) string {
 	var b strings.Builder
+	if syntax == SyntaxGLM {
+		b.WriteString("Tool error: invalid GLM tool call")
+		if detail != "" {
+			b.WriteString(": ")
+			b.WriteString(detail)
+		}
+		b.WriteString("\nThe previous assistant output was not executed because the tool-call syntax was " +
+			"malformed. Emit a new valid tool call, or answer normally if no tool is needed.\n")
+		b.WriteString(glmSyntaxReminder)
+		return b.String()
+	}
 	b.WriteString("Tool error: invalid DSML tool call")
 	if detail != "" {
 		b.WriteString(": ")
