@@ -55,6 +55,7 @@ type StreamDecoder struct {
 	finalPass bool // true during Close(); disables safety margins
 
 	// Tool-block parsing state.
+	syntaxMode      Syntax // grammar selector (ds4's agent_tool_syntax)
 	syntax          dsmlSyntax
 	seenToolCallsOp bool
 	implicitBlock   bool // tool calls arrived without a <…tool_calls> wrapper
@@ -101,16 +102,31 @@ const (
 	stateCheckingToolBlockEnd
 	stateRaw
 	stateDone
+
+	// GLM states. GLM has no wrapper block: a call opens with <tool_call>,
+	// its name is bare text up to the first tag, then <arg_key>/<arg_value>
+	// pairs repeat until </tool_call>.
+	stateGLMName
+	stateGLMArgKey
+	stateGLMArgValue
+	stateGLMAfterCall
 )
 
 // NewStreamDecoder returns a decoder that consumes assistant output
 // incrementally. thinking has the same meaning as in ParseCompletion.
 func NewStreamDecoder(thinking bool) *StreamDecoder {
+	return NewStreamDecoderSyntax(SyntaxDSML, thinking)
+}
+
+// NewStreamDecoderSyntax is [NewStreamDecoder] for an explicit tool-call markup
+// syntax. GLM DSA models emit a different grammar from DeepSeek's DSML; see
+// [Syntax].
+func NewStreamDecoderSyntax(syntax Syntax, thinking bool) *StreamDecoder {
 	s := stateContent
 	if thinking {
 		s = stateThinking
 	}
-	return &StreamDecoder{thinking: thinking, state: s}
+	return &StreamDecoder{thinking: thinking, state: s, syntaxMode: syntax}
 }
 
 // ToolBlockClosed reports whether a complete </tool_calls> tag has been
@@ -172,6 +188,10 @@ func (d *StreamDecoder) Close() ([]StreamEvent, ParsedMessage, error) {
 		} else {
 			d.emitContent(&events, string(d.buf))
 		}
+	case stateGLMAfterCall:
+		// A completed GLM call followed by end-of-stream: nothing pending.
+		d.completeToolBlock(&events)
+		d.emitContent(&events, string(d.buf))
 	case stateDone:
 		// nothing
 	default:
@@ -181,7 +201,7 @@ func (d *StreamDecoder) Close() ([]StreamEvent, ParsedMessage, error) {
 	}
 	d.buf = nil
 
-	msg, err := ParseCompletion(string(d.fullText), d.thinking)
+	msg, err := ParseCompletionSyntax(d.syntaxMode, string(d.fullText), d.thinking)
 	return events, msg, err
 }
 
@@ -209,6 +229,14 @@ func (d *StreamDecoder) process() []StreamEvent {
 			d.processCheckingToolBlockEnd(&events)
 		case stateRaw:
 			d.processRaw(&events)
+		case stateGLMName:
+			d.processGLMName(&events)
+		case stateGLMArgKey:
+			d.processGLMArgKey(&events)
+		case stateGLMArgValue:
+			d.processGLMArgValue(&events)
+		case stateGLMAfterCall:
+			d.processGLMAfterCall(&events)
 		case stateDone:
 			d.buf = nil
 		}
@@ -265,10 +293,17 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 		d.thinkScanFrom = len(d.fullText)
 	}
 	region := string(d.fullText[d.thinkScanFrom:])
-	for _, syn := range dsmlSyntaxes {
-		if strings.Contains(region, syn.toolStart) {
+	if d.syntaxMode == SyntaxGLM {
+		if strings.Contains(region, glmToolCallStart) {
 			d.thinkStanza = true
 			return
+		}
+	} else {
+		for _, syn := range dsmlSyntaxes {
+			if strings.Contains(region, syn.toolStart) {
+				d.thinkStanza = true
+				return
+			}
 		}
 	}
 	if hold := len(d.fullText) - thinkStanzaHoldback; hold > d.thinkScanFrom {
@@ -277,6 +312,10 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 }
 
 func (d *StreamDecoder) processContent(events *[]StreamEvent) {
+	if d.syntaxMode == SyntaxGLM {
+		d.processGLMContent(events)
+		return
+	}
 	eosIdx := bytes.Index(d.buf, []byte(eosToken))
 	_, rawStart, syn, implicit, hasTool := findToolBlockStart(string(d.buf), 0)
 
@@ -624,6 +663,158 @@ func (d *StreamDecoder) emitContent(events *[]StreamEvent, text string) {
 }
 
 // ----------------------------------------------------------------------
+// GLM state handlers
+//
+// Ported from upstream ds4's agent_glm_tool_parse and its streaming renderer.
+// GLM has no wrapper block, so a tool call is recognised by <tool_call> alone
+// and the "block" is the run of adjacent calls.
+// ----------------------------------------------------------------------
+
+func (d *StreamDecoder) processGLMContent(events *[]StreamEvent) {
+	eosIdx := bytes.Index(d.buf, []byte(eosToken))
+	callIdx := bytes.Index(d.buf, []byte(glmToolCallStart))
+
+	if callIdx >= 0 && (eosIdx < 0 || callIdx < eosIdx) {
+		d.emitContent(events, string(d.buf[:callIdx]))
+		d.buf = d.buf[callIdx:]
+		d.rawBlockStart = len(d.fullText) - len(d.buf)
+		d.buf = d.buf[len(glmToolCallStart):]
+		d.state = stateGLMName
+		return
+	}
+	if eosIdx >= 0 {
+		d.emitContent(events, string(d.buf[:eosIdx]))
+		d.buf = d.buf[eosIdx+len(eosToken):]
+		d.state = stateDone
+		return
+	}
+	if n := d.safeContentLen(); n > 0 {
+		d.emitContent(events, string(d.buf[:n]))
+		d.buf = d.buf[n:]
+	}
+}
+
+// processGLMName reads the bare function name up to the first tag.
+func (d *StreamDecoder) processGLMName(events *[]StreamEvent) {
+	lt := bytes.IndexByte(d.buf, '<')
+	if lt < 0 {
+		return // name still arriving
+	}
+	rest := d.buf[lt:]
+	atArg := bytes.HasPrefix(rest, []byte(glmArgKeyStart))
+	atClose := bytes.HasPrefix(rest, []byte(glmToolCallEnd))
+	if !atArg && !atClose {
+		// Wait while either tag is still forming; anything else is malformed.
+		if matchPartial(rest, glmArgKeyStart) || matchPartial(rest, glmToolCallEnd) {
+			return
+		}
+		d.enterRawMode(events)
+		return
+	}
+	name := strings.TrimSpace(string(d.buf[:lt]))
+	if name == "" {
+		d.enterRawMode(events)
+		return
+	}
+	d.pendingEvents = append(d.pendingEvents, StreamEvent{
+		Type:  EventToolCallStart,
+		Index: len(d.calls),
+		Name:  name,
+	})
+	d.calls = append(d.calls, ToolCall{Name: name})
+	d.pendingArgs = newOrderedArgs()
+	d.buf = d.buf[lt:]
+	d.state = stateGLMArgKey
+}
+
+// processGLMArgKey consumes either </tool_call> or one <arg_key>…</arg_key>.
+func (d *StreamDecoder) processGLMArgKey(events *[]StreamEvent) {
+	if bytes.HasPrefix(d.buf, []byte(glmToolCallEnd)) {
+		d.buf = d.buf[len(glmToolCallEnd):]
+		d.finishGLMCall()
+		d.state = stateGLMAfterCall
+		return
+	}
+	if !bytes.HasPrefix(d.buf, []byte(glmArgKeyStart)) {
+		if matchPartial(d.buf, glmArgKeyStart) || matchPartial(d.buf, glmToolCallEnd) {
+			return
+		}
+		d.enterRawMode(events)
+		return
+	}
+	body := d.buf[len(glmArgKeyStart):]
+	end := bytes.Index(body, []byte(glmArgKeyEnd))
+	if end < 0 {
+		return // key still arriving
+	}
+	key := strings.TrimSpace(string(body[:end]))
+	if key == "" {
+		d.enterRawMode(events)
+		return
+	}
+	rest := body[end+len(glmArgKeyEnd):]
+	trimmed := skipLeadingWhitespaceBytes(rest)
+	if !bytes.HasPrefix(trimmed, []byte(glmArgValueStart)) {
+		if matchPartial(trimmed, glmArgValueStart) {
+			return
+		}
+		d.enterRawMode(events)
+		return
+	}
+	d.paramName = key
+	d.buf = trimmed[len(glmArgValueStart):]
+	d.state = stateGLMArgValue
+}
+
+// processGLMArgValue accumulates one argument value up to </arg_value>.
+func (d *StreamDecoder) processGLMArgValue(events *[]StreamEvent) {
+	end := bytes.Index(d.buf, []byte(glmArgValueEnd))
+	if end < 0 {
+		return // value still arriving; held whole so the close tag is never split
+	}
+	value := dsmlUnescapeText(string(d.buf[:end]))
+	d.pendingArgs.set(d.paramName, value, true)
+	d.pendingEvents = append(d.pendingEvents, StreamEvent{
+		Type:  EventToolCallArgumentsDelta,
+		Index: len(d.calls) - 1,
+		Delta: value,
+	})
+	d.paramName = ""
+	d.buf = d.buf[end+len(glmArgValueEnd):]
+	d.state = stateGLMArgKey
+}
+
+// processGLMAfterCall accepts whitespace and an immediately adjacent call;
+// anything else ends the run (ds4's glm_after_call).
+func (d *StreamDecoder) processGLMAfterCall(events *[]StreamEvent) {
+	trimmed := skipLeadingWhitespaceBytes(d.buf)
+	if bytes.HasPrefix(trimmed, []byte(glmToolCallStart)) {
+		d.buf = trimmed[len(glmToolCallStart):]
+		d.state = stateGLMName
+		return
+	}
+	if len(trimmed) == 0 || matchPartial(trimmed, glmToolCallStart) {
+		return // another call may still be forming
+	}
+	d.completeToolBlock(events)
+}
+
+// finishGLMCall closes the in-flight call, recording its arguments.
+func (d *StreamDecoder) finishGLMCall() {
+	if len(d.calls) == 0 {
+		return
+	}
+	args := d.pendingArgs.buildJSON()
+	d.calls[len(d.calls)-1].Arguments = args
+	d.pendingEvents = append(d.pendingEvents, StreamEvent{
+		Type:      EventToolCallEnd,
+		Index:     len(d.calls) - 1,
+		Arguments: args,
+	})
+	d.pendingArgs = newOrderedArgs()
+}
+
+// ----------------------------------------------------------------------
 // Low-level helpers
 // ----------------------------------------------------------------------
 
@@ -727,10 +918,14 @@ func (d *StreamDecoder) WantsGreedySampling() bool {
 	switch d.state {
 	case stateInToolCalls, stateInInvoke, stateInInvokeBody, stateInParameter, stateCheckingToolBlockEnd:
 		return true
+	case stateGLMName, stateGLMArgKey, stateGLMAfterCall:
+		return true
 	case stateContent:
 		return d.contentTailFormsOpener()
 	case stateInParameterValue:
 		return d.paramTailFormsClose()
+	case stateGLMArgValue:
+		return matchPartial(lastAngleTail(d.buf), glmArgValueEnd) && len(lastAngleTail(d.buf)) >= 2
 	default: // stateThinking, stateRaw, stateDone
 		return false
 	}
@@ -744,6 +939,9 @@ func (d *StreamDecoder) contentTailFormsOpener() bool {
 	tail := lastAngleTail(d.buf)
 	if len(tail) < 2 {
 		return false
+	}
+	if d.syntaxMode == SyntaxGLM {
+		return matchPartial(tail, glmToolCallStart)
 	}
 	for _, syn := range dsmlSyntaxes {
 		if matchPartial(tail, syn.toolStart) || matchPartial(tail, syn.invokeStart) {
