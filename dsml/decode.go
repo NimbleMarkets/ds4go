@@ -66,6 +66,16 @@ var dsmlSyntaxes = []dsmlSyntax{
 // and no tool calls are parsed. The completion may end either with the explicit
 // <｜end▁of▁sentence｜> marker or simply at end-of-input.
 func ParseCompletion(text string, thinking bool) (ParsedMessage, error) {
+	return ParseCompletionSyntax(SyntaxDSML, text, thinking)
+}
+
+// ParseCompletionSyntax is [ParseCompletion] for an explicit tool-call markup
+// syntax. GLM DSA models emit a different grammar from DeepSeek's DSML; see
+// [Syntax].
+func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMessage, error) {
+	if syntax == SyntaxGLM {
+		return parseGLMCompletion(text, thinking)
+	}
 	// Normalizing up front means all offsets (including the Exact replay
 	// block) refer to the canonical text. Replaying canonical markers in
 	// place of a sampled typo costs at most a prompt-cache miss on that
