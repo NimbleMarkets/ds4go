@@ -27,12 +27,12 @@ var errThinkToolRecovery = errors.New("ds4go: tool call inside unclosed thinking
 // whitespace and the end-of-sentence marker, so stopping saves the trailing
 // tokens. Further emits are suppressed so tokens already in flight (e.g. an
 // accepted speculative batch) cannot degrade the closed block.
-func streamCompletion(parent context.Context, thinking bool, onEvent func(dsml.StreamEvent), generate func(ctx context.Context, emit func(string), wantGreedy func() bool) error, thinkRecover func() (string, error)) (string, error) {
+func streamCompletion(parent context.Context, syntax dsml.Syntax, thinking bool, onEvent func(dsml.StreamEvent), generate func(ctx context.Context, emit func(string), wantGreedy func() bool) error, thinkRecover func() (string, error)) (string, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
 
-	dec := dsml.NewStreamDecoder(thinking)
+	dec := dsml.NewStreamDecoderSyntax(syntax, thinking)
 	forward := func(events []dsml.StreamEvent) {
 		if onEvent == nil {
 			return
@@ -187,7 +187,7 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 		if err != nil {
 			return ToolLoopResult{}, err
 		}
-		assistant, err := l.Tools.ParseAssistant(text, l.Thinking)
+		assistant, err := l.Tools.ParseAssistantSyntax(ToolSyntax(l.Engine), text, l.Thinking)
 		if err != nil {
 			return ToolLoopResult{}, err
 		}
@@ -202,7 +202,7 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 				syntaxRetried = true
 				history = append(history, ChatMessage{
 					Role:    "tool",
-					Content: dsml.ToolSyntaxErrorMessage(assistant.MalformedReason),
+					Content: dsml.ToolSyntaxErrorMessageSyntax(ToolSyntax(l.Engine), assistant.MalformedReason),
 				})
 				continue
 			}
@@ -325,5 +325,5 @@ func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(ds
 			return inject, nil
 		}
 	}
-	return streamCompletion(opts.Context, l.Thinking, onEvent, gen, thinkRecover)
+	return streamCompletion(opts.Context, ToolSyntax(l.Engine), l.Thinking, onEvent, gen, thinkRecover)
 }

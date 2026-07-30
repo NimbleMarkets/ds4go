@@ -91,7 +91,7 @@ func TestStreamCompletionStopsAtToolBlockClose(t *testing.T) {
 
 	var events []dsml.StreamEvent
 	fed := 0
-	text, err := streamCompletion(context.Background(), false,
+	text, err := streamCompletion(context.Background(), dsml.SyntaxDSML, false,
 		func(ev dsml.StreamEvent) { events = append(events, ev) },
 		func(ctx context.Context, emit func(string), _ func() bool) error {
 			// Mirrors Generator.Continue: check the context before each
@@ -136,7 +136,7 @@ func TestStreamCompletionStopsAtToolBlockClose(t *testing.T) {
 func TestStreamCompletionPlainContent(t *testing.T) {
 	var deltas []string
 	//lint:ignore SA1012 a nil parent is part of the contract: GenerateOptions.Context may be nil
-	text, err := streamCompletion(nil, false,
+	text, err := streamCompletion(nil, dsml.SyntaxDSML, false,
 		func(ev dsml.StreamEvent) {
 			if ev.Type == dsml.EventContentDelta {
 				deltas = append(deltas, ev.Delta)
@@ -164,7 +164,7 @@ func TestStreamCompletionPlainContent(t *testing.T) {
 
 func TestStreamCompletionPropagatesUserCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	_, err := streamCompletion(ctx, false, nil,
+	_, err := streamCompletion(ctx, dsml.SyntaxDSML, false, nil,
 		func(genCtx context.Context, emit func(string), _ func() bool) error {
 			emit("partial")
 			cancel()
@@ -177,7 +177,7 @@ func TestStreamCompletionPropagatesUserCancellation(t *testing.T) {
 
 func TestStreamCompletionPropagatesGenerationError(t *testing.T) {
 	boom := errors.New("boom")
-	_, err := streamCompletion(context.Background(), false, nil,
+	_, err := streamCompletion(context.Background(), dsml.SyntaxDSML, false, nil,
 		func(ctx context.Context, emit func(string), _ func() bool) error {
 			return boom
 		}, nil)
@@ -421,7 +421,7 @@ func TestStreamCompletionRecoversToolCallInUnclosedThink(t *testing.T) {
 		return nil
 	}
 
-	text, err := streamCompletion(context.Background(), true, nil, gen, thinkRecover)
+	text, err := streamCompletion(context.Background(), dsml.SyntaxDSML, true, nil, gen, thinkRecover)
 	if err != nil {
 		t.Fatalf("streamCompletion: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestStreamCompletionNoRecoveryWithoutCallback(t *testing.T) {
 		}
 		return nil
 	}
-	text, err := streamCompletion(context.Background(), true, nil, gen, nil)
+	text, err := streamCompletion(context.Background(), dsml.SyntaxDSML, true, nil, gen, nil)
 	if err != nil {
 		t.Fatalf("streamCompletion: %v", err)
 	}
@@ -501,7 +501,7 @@ func TestStreamCompletionThreadsGreedyPredicate(t *testing.T) {
 		}
 		return nil
 	}
-	text, err := streamCompletion(context.Background(), false, nil, gen, nil)
+	text, err := streamCompletion(context.Background(), dsml.SyntaxDSML, false, nil, gen, nil)
 	if err != nil {
 		t.Fatalf("streamCompletion: %v", err)
 	}

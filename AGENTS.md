@@ -14,8 +14,14 @@ compiler.
   conveniences: default paths, friendly diagnostics, generation helpers,
   prompt/session/tool helpers, model management integration, and CLI-facing
   behavior.
-- `dsml/` is pure text processing for DeepSeek DSML tool-calling markup. It must
-  stay independent of FFI and engine state.
+- `dsml/` is pure text processing for ds4's tool-calling markup. It must stay
+  independent of FFI and engine state. It covers both grammars ds4 emits,
+  selected by `dsml.Syntax`: DeepSeek's DSML (`SyntaxDSML`, the zero value) and
+  GLM DSA's `<tool_call>` markup (`SyntaxGLM`). This mirrors upstream ds4, which
+  drives both through one parser and one streaming renderer via
+  `agent_dsml_parser.syntax`; prefer that parity over splitting the package.
+  Callers resolve the syntax from the engine with `ds4.ToolSyntax`, mirroring
+  `agent_tool_syntax_for_engine`.
 - `cmd/ds4go/` and `cmd/internal/` (CLI/TUI components: `cli`, `tui`) live in the nested `cmd` module.
 - `internal/` (core library-internal packages: `install`, `models`, `cliopts`) live in the root module.
 - `examples/` and root packages may use the library packages where appropriate.

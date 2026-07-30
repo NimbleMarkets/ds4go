@@ -173,6 +173,12 @@ func (r *ToolRegistry) RenderToolsSection() (string, error) {
 	return dsml.RenderToolsSection(dsmlToolsFromSchemas(r.Schemas()))
 }
 
+// RenderToolsSectionSyntax renders the tools section in an explicit tool-call
+// markup syntax; see [ToolSyntax].
+func (r *ToolRegistry) RenderToolsSectionSyntax(syntax dsml.Syntax) (string, error) {
+	return dsml.RenderToolsSectionSyntax(syntax, dsmlToolsFromSchemas(r.Schemas()))
+}
+
 // BuildChatPrompt renders a tool-aware chat prompt using ds4's chat helpers.
 //
 // The tools section is prepended to the system message. If system is empty and
@@ -194,12 +200,14 @@ func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []Chat
 type turnRenderInfo struct {
 	thinking        bool
 	replayReasoning bool
+	syntax          dsml.Syntax
 }
 
 // promptRenderOptions configures renderPromptMessages for one prompt build.
 type promptRenderOptions struct {
 	thinking    bool
 	toolContext bool
+	syntax      dsml.Syntax
 }
 
 type chatMessageRenderer func(ChatMessage, turnRenderInfo) (renderedChatMessage, error)
@@ -242,7 +250,8 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 		tokens.Free()
 		return nil, err
 	}
-	toolsSection, err := dsml.RenderToolsSection(tools)
+	syntax := ToolSyntax(engine)
+	toolsSection, err := dsml.RenderToolsSectionSyntax(syntax, tools)
 	if err != nil {
 		tokens.Free()
 		return nil, err
@@ -257,6 +266,7 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 	rendered, err := renderPromptMessages(history, render, promptRenderOptions{
 		thinking:    think == ThinkHigh || think == ThinkMax,
 		toolContext: len(tools) > 0 || historyUsesToolContext(history),
+		syntax:      syntax,
 	})
 	if err != nil {
 		tokens.Free()
@@ -287,13 +297,29 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 	return tokens, nil
 }
 
+// ToolSyntax reports the tool-call markup grammar an engine's model uses,
+// mirroring upstream ds4's agent_tool_syntax_for_engine: GLM DSA shapes emit
+// <tool_call> markup, everything else emits DeepSeek DSML.
+func ToolSyntax(engine *Engine) dsml.Syntax {
+	if engine != nil && engine.IsGLMDSA() {
+		return dsml.SyntaxGLM
+	}
+	return dsml.SyntaxDSML
+}
+
 // ParseAssistant parses one assistant completion and assigns stable tool-call IDs.
 func (r *ToolRegistry) ParseAssistant(text string, thinking bool) (ChatMessage, error) {
-	parsed, err := dsml.ParseCompletion(text, thinking)
+	return r.ParseAssistantSyntax(dsml.SyntaxDSML, text, thinking)
+}
+
+// ParseAssistantSyntax is [ToolRegistry.ParseAssistant] for an explicit
+// tool-call markup syntax; see [ToolSyntax].
+func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thinking bool) (ChatMessage, error) {
+	parsed, err := dsml.ParseCompletionSyntax(syntax, text, thinking)
 	if err != nil {
 		return ChatMessage{}, err
 	}
-	if len(parsed.ToolCalls) == 0 {
+	if len(parsed.ToolCalls) == 0 && syntax == dsml.SyntaxDSML {
 		// A completion truncated by the token limit mid-stanza degrades to
 		// plain content under the strict parse. Repair the missing closers
 		// and adopt the result only when it actually recovers a call.
@@ -360,7 +386,7 @@ func (r *ToolRegistry) renderMessage(msg ChatMessage, turn turnRenderInfo) (rend
 	if msg.Role != "assistant" {
 		return renderChatMessage(msg, turn)
 	}
-	renderedCalls, err := r.renderAssistantToolCalls(msg.ToolCalls)
+	renderedCalls, err := r.renderAssistantToolCalls(turn.syntax, msg.ToolCalls)
 	if err != nil {
 		return renderedChatMessage{}, err
 	}
@@ -372,12 +398,18 @@ func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessag
 	case "", "system", "user":
 		return renderedChatMessage{role: msg.Role, content: msg.Content}, nil
 	case "assistant":
-		renderedCalls, err := renderToolCalls(msg.ToolCalls)
+		renderedCalls, err := renderToolCallsSyntax(turn.syntax, msg.ToolCalls)
 		if err != nil {
 			return renderedChatMessage{}, err
 		}
 		return assistantRendered(msg, renderedCalls, turn), nil
 	case "tool":
+		if turn.syntax == dsml.SyntaxGLM {
+			// libds4 wraps a GLM tool role in <|observation|><tool_response>,
+			// including escaping the closing sentinel, so hand it the raw
+			// content under its real role (ds4_chat_append_message).
+			return renderedChatMessage{role: "tool", content: msg.Content}, nil
+		}
 		result, err := dsml.RenderToolResult(msg.Content)
 		if err != nil {
 			return renderedChatMessage{}, err
@@ -394,6 +426,20 @@ func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessag
 // replayed tool calls — to their special vocab tokens, matching what the
 // model actually sampled so the session's KV prefix stays reusable.
 func assistantRendered(msg ChatMessage, renderedCalls string, turn turnRenderInfo) renderedChatMessage {
+	if turn.syntax == dsml.SyntaxGLM {
+		// libds4 owns the GLM assistant envelope, including the <think></think>
+		// pair it inserts for a non-thinking turn (ds4_chat_append_message), so
+		// the content is handed over under its real role rather than
+		// pre-rendered as chat-template text.
+		content := msg.Content
+		if renderedCalls != "" {
+			if content != "" {
+				content += "\n"
+			}
+			content += renderedCalls
+		}
+		return renderedChatMessage{role: "assistant", content: content}
+	}
 	return renderedChatMessage{
 		role:        "assistant",
 		content:     dsml.RenderAssistantTurn(msg.Content, msg.ReasoningContent, renderedCalls, turn.thinking, turn.replayReasoning),
@@ -448,9 +494,22 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 	out := make([]renderedChatMessage, 0, len(history))
 	for i := 0; i < len(history); {
 		if history[i].Role == "tool" {
+			// DSML coalesces consecutive tool results into one user turn
+			// carrying their <tool_result> blocks. GLM keeps each result a
+			// separate "tool" turn, because libds4 wraps every one in its own
+			// <|observation|><tool_response> element.
+			if opts.syntax == dsml.SyntaxGLM {
+				rendered, err := render(history[i], turnRenderInfo{syntax: opts.syntax})
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, rendered)
+				i++
+				continue
+			}
 			var content strings.Builder
 			for i < len(history) && history[i].Role == "tool" {
-				rendered, err := render(history[i], turnRenderInfo{})
+				rendered, err := render(history[i], turnRenderInfo{syntax: opts.syntax})
 				if err != nil {
 					return nil, err
 				}
@@ -467,6 +526,7 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 		rendered, err := render(history[i], turnRenderInfo{
 			thinking:        opts.thinking,
 			replayReasoning: opts.toolContext || i > lastUser,
+			syntax:          opts.syntax,
 		})
 		if err != nil {
 			return nil, err
@@ -481,8 +541,19 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 }
 
 func renderToolCalls(calls []ToolCall) (string, error) {
+	return renderToolCallsSyntax(dsml.SyntaxDSML, calls)
+}
+
+func renderToolCallsSyntax(syntax dsml.Syntax, calls []ToolCall) (string, error) {
 	if len(calls) == 0 {
 		return "", nil
+	}
+	if syntax == dsml.SyntaxGLM {
+		out := make([]dsml.ToolCall, len(calls))
+		for i, c := range calls {
+			out[i] = dsml.ToolCall{Name: c.Name, Arguments: c.Arguments}
+		}
+		return dsml.RenderToolCallsSyntax(dsml.SyntaxGLM, out)
 	}
 	invokes := make([]string, len(calls))
 	for i, call := range calls {
@@ -498,9 +569,14 @@ func renderToolCalls(calls []ToolCall) (string, error) {
 	return dsml.WrapToolCalls(invokes), nil
 }
 
-func (r *ToolRegistry) renderAssistantToolCalls(calls []ToolCall) (string, error) {
+func (r *ToolRegistry) renderAssistantToolCalls(syntax dsml.Syntax, calls []ToolCall) (string, error) {
 	if len(calls) == 0 {
 		return "", nil
+	}
+	if syntax == dsml.SyntaxGLM {
+		// GLM has no Exact replay block: parsing records no raw stanza, so
+		// calls always re-render canonically.
+		return renderToolCallsSyntax(syntax, calls)
 	}
 	replay := r.ReplayStore()
 	if replay != nil {
@@ -512,7 +588,7 @@ func (r *ToolRegistry) renderAssistantToolCalls(calls []ToolCall) (string, error
 			return exact, nil
 		}
 	}
-	return renderToolCalls(calls)
+	return renderToolCallsSyntax(syntax, calls)
 }
 
 func dsmlToolsFromSchemas(schemas []ToolSchema) []dsml.Tool {

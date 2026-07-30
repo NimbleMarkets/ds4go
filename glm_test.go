@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/dsml"
 )
 
 // glmMockEngine returns a mock engine plus its controls, so tests can switch
@@ -231,5 +232,111 @@ func TestBuildChatPromptDeepSeekUnaffected(t *testing.T) {
 	high := promptTokens(t, eng, "", ThinkHigh)
 	if containsSubsequence(high, wantPrefix) {
 		t.Error("DeepSeek prompt at ThinkHigh gained the max-effort prefix")
+	}
+}
+
+// toolSyntax selects the markup grammar from the engine, mirroring ds4's
+// agent_tool_syntax_for_engine.
+func TestToolSyntaxFollowsEngineFamily(t *testing.T) {
+	eng, ctl := glmMockEngine(t)
+	if got := ToolSyntax(eng); got != dsml.SyntaxDSML {
+		t.Errorf("ToolSyntax(DeepSeek engine) = %v, want %v", got, dsml.SyntaxDSML)
+	}
+	ctl.SetGLM(true)
+	if got := ToolSyntax(eng); got != dsml.SyntaxGLM {
+		t.Errorf("ToolSyntax(GLM engine) = %v, want %v", got, dsml.SyntaxGLM)
+	}
+}
+
+// On GLM, a tool result goes back as an actual "tool" role so libds4 wraps it
+// in <|observation|><tool_response>; DSML instead replays it as a user turn
+// carrying a <tool_result> block.
+func TestBuildChatPromptGLMToolResultUsesToolRole(t *testing.T) {
+	eng, ctl := glmMockEngine(t)
+	ctl.SetGLM(true)
+
+	toks, err := BuildChatPrompt(eng, "", nil, []ChatMessage{
+		{Role: "user", Content: "run it"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "1", Name: "bash", Arguments: `{"command": "pwd"}`}}},
+		{Role: "tool", ToolCallID: "1", Content: "OUTPUT"},
+	}, ThinkNone)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt: %v", err)
+	}
+	defer toks.Free()
+	got := append([]int(nil), toks.Slice()...)
+
+	// The mock renders a chat message as "<role>: <content>".
+	want := renderedTokensRole(t, eng, "tool", "OUTPUT")
+	if !containsSubsequence(got, want) {
+		t.Error("GLM prompt does not carry the tool result under the tool role")
+	}
+	if containsSubsequence(got, renderedTokensRole(t, eng, "user", "<tool_result>")) {
+		t.Error("GLM prompt rendered the tool result as a DSML user turn")
+	}
+}
+
+// renderedTokensRole returns the ids the mock chat renderer emits for a message.
+func renderedTokensRole(t *testing.T, eng *Engine, role, content string) []int {
+	t.Helper()
+	toks, err := eng.TokenizeText(role + ": " + content)
+	if err != nil {
+		t.Fatalf("TokenizeText: %v", err)
+	}
+	defer toks.Free()
+	return append([]int(nil), toks.Slice()...)
+}
+
+// Assistant tool-call history replays in the model's own markup.
+func TestBuildChatPromptGLMAssistantCallsUseGLMMarkup(t *testing.T) {
+	eng, ctl := glmMockEngine(t)
+	ctl.SetGLM(true)
+
+	toks, err := BuildChatPrompt(eng, "", nil, []ChatMessage{
+		{Role: "user", Content: "run it"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "1", Name: "bash", Arguments: `{"command": "pwd"}`}}},
+	}, ThinkNone)
+	if err != nil {
+		t.Fatalf("BuildChatPrompt: %v", err)
+	}
+	defer toks.Free()
+	got := append([]int(nil), toks.Slice()...)
+
+	want, err := dsml.RenderToolCallsSyntax(dsml.SyntaxGLM, []dsml.ToolCall{
+		{Name: "bash", Arguments: `{"command": "pwd"}`},
+	})
+	if err != nil {
+		t.Fatalf("RenderToolCallsSyntax: %v", err)
+	}
+	// The markup words appear inside the rendered assistant turn.
+	markup, err := eng.TokenizeText(want)
+	if err != nil {
+		t.Fatalf("TokenizeText: %v", err)
+	}
+	defer markup.Free()
+	if !containsSubsequence(got, markup.Slice()) {
+		t.Error("GLM prompt does not replay the assistant tool call in GLM markup")
+	}
+}
+
+// ParseAssistant must read the engine's own markup.
+func TestToolRegistryParseAssistantGLM(t *testing.T) {
+	eng, ctl := glmMockEngine(t)
+	ctl.SetGLM(true)
+	reg := NewToolRegistry()
+
+	const text = "<tool_call>bash<arg_key>command</arg_key><arg_value>pwd</arg_value></tool_call>"
+	msg, err := reg.ParseAssistantSyntax(ToolSyntax(eng), text, false)
+	if err != nil {
+		t.Fatalf("ParseAssistantSyntax: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("got %d tool calls, want 1", len(msg.ToolCalls))
+	}
+	if msg.ToolCalls[0].Name != "bash" {
+		t.Errorf("Name = %q, want %q", msg.ToolCalls[0].Name, "bash")
+	}
+	if msg.ToolCalls[0].ID == "" {
+		t.Error("tool call ID is empty, want an assigned id")
 	}
 }

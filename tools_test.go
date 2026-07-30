@@ -295,7 +295,7 @@ func TestToolRegistryReplaysWholeToolCallsBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseAssistant: %v", err)
 	}
-	got, err := reg.renderAssistantToolCalls(msg.ToolCalls)
+	got, err := reg.renderAssistantToolCalls(dsml.SyntaxDSML, msg.ToolCalls)
 	if err != nil {
 		t.Fatalf("renderAssistantToolCalls: %v", err)
 	}
