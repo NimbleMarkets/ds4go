@@ -4,6 +4,7 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+ * Add [`workspacetool` package](./workspacetool/README.md) providing local workspace tools for `ds4go.ToolLoop`: `read`, `more`, `list`, `search`, plus opt-in `write`/`edit` and shell job tools (`bash`, `bash_status`, `bash_stop`). Conservative by default: paths are confined to the workspace root, symlink traversal is rejected, and writes and shell require explicit `AllowWrite`/`AllowShell` opt-in, with an optional `Confirm` callback for application-level approval.
  * **DSML parsing hardening** (ported from `ds4` upstream): a bare `<｜DSML｜invoke>` with no `<｜DSML｜tool_calls>` wrapper is now accepted as an implicit single-call block; stray DSML markers in plain assistant output are reported as malformed so the tool loop asks the model to retry; and `invoke`/`parameter` openers require a tag delimiter, so `<｜DSML｜invokeX` no longer false-matches `invoke`.
  * **Structure-aware greedy sampling**: tool turns now sample DSML grammar greedily (argmax) while keeping the configured sampling for parameter values, improving tool-call reliability. It is a no-op at temperature <= 0, so speculative decoding is unaffected. Exposed as `GenerateOptions.SampleControl` and `StreamDecoder.WantsGreedySampling`.
 

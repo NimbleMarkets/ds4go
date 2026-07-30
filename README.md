@@ -216,6 +216,23 @@ ds4go — command cheat sheet
 Run 'ds4go help <command>' for detailed usage.
 ```
 
+## Tool Libraries
+
+`ds4go` includes optional tool packages that can be registered on a
+`ToolRegistry` for model-driven workflows:
+
+- [`workspacetool`](./workspacetool/README.md) exposes local workspace tools:
+  `read`, `more`, `list`, `search`, opt-in `write` / `edit`, and opt-in shell
+  jobs.
+- [`webtool`](./webtool/README.md) exposes browser-backed `google_search` and
+  `visit_page` tools.
+- [`lsp/lsptool`](./lsp/README.md#tool-loop) adapts a language-server client as
+  diagnostics, hover, symbols, and completion tools.
+
+Workspace tools are conservative by default: paths are confined to the
+configured root, symlink traversal is rejected, writes require `AllowWrite`, and
+shell commands require `AllowShell`.
+
 ## Examples
 
 ```sh
