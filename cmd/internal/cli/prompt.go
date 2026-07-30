@@ -331,6 +331,9 @@ func runChatTurn(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 	defer prompt.Free()
 
 	opts := cfg.GenerateOptions()
+	// The REPL's /think commands change the mode per turn, so the prompt's
+	// mode wins over the one baked in from the flags.
+	opts.ThinkMode = thinkMode
 	var response strings.Builder
 	opts.OnToken = func(token int) {
 		if text, err := engine.TokenText(token); err == nil {

@@ -65,12 +65,82 @@ const (
 	mockPrefillChunk uint32 = 2048
 )
 
+// MockControls tunes the model-family behaviour of a mock library after it is
+// created.  The zero behaviour of a fresh mock is a DeepSeek V4 engine: not
+// GLM, EOS is the only generation stop, and no thinking-control markers.  It
+// is safe to call these from any goroutine.
+type MockControls struct {
+	mu       sync.RWMutex
+	glm      bool
+	stops    map[int32]bool
+	thinking map[int32]bool
+}
+
+// SetGLM makes the mock engine report the GLM DSA family (ds4_engine_is_glm_dsa).
+func (c *MockControls) SetGLM(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.glm = enabled
+}
+
+// SetStopTokens overrides the token ids the mock reports as generation stops
+// (ds4_token_is_stop) in addition to EOS.  GLM stops on the system, user,
+// assistant, and observation role tokens, so tests use this to exercise
+// callers that must not assume EOS is the only stop.
+func (c *MockControls) SetStopTokens(tokens ...int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stops = tokenSet(tokens)
+}
+
+// SetThinkingControlTokens overrides the token ids the mock reports as <think>
+// and </think> markers (ds4_token_is_thinking_control).
+func (c *MockControls) SetThinkingControlTokens(tokens ...int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.thinking = tokenSet(tokens)
+}
+
+func (c *MockControls) isGLM() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.glm
+}
+
+func (c *MockControls) isStop(token int32) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.stops[token]
+}
+
+func (c *MockControls) isThinking(token int32) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.thinking[token]
+}
+
+func tokenSet(tokens []int) map[int32]bool {
+	set := make(map[int32]bool, len(tokens))
+	for _, t := range tokens {
+		set[int32(t)] = true
+	}
+	return set
+}
+
 // NewMockLibrary returns a Library whose C symbols are backed by trivial
 // in-memory state.  The mock supports engine/session lifecycle, tokenization,
 // deterministic generation, and optional MTP metadata.
 func NewMockLibrary() *Library {
+	lib, _ := NewMockLibraryWithControls()
+	return lib
+}
+
+// NewMockLibraryWithControls returns a mock library alongside the controls that
+// tune its model-family behaviour.  See [MockControls].
+func NewMockLibraryWithControls() (*Library, *MockControls) {
 	lib := &Library{path: "mock", handle: 0}
 	r := &lib.raw
+	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}}
 	mockStderr.set(-1)
 
 	// Engine lifecycle.
@@ -137,10 +207,9 @@ func NewMockLibrary() *Library {
 	r.ds4TokenUser = func(e uintptr) int32 { return mockUserToken }
 	r.ds4TokenAssistant = func(e uintptr) int32 { return mockAssistantToken }
 
-	// GLM DSA. The mock models a GLM engine, whose generation stop set is EOS
-	// plus the role tokens, so binding-layer callers that wrongly compare
-	// against EOS alone are caught by tests.
-	r.ds4EngineIsGLMDSA = func(e uintptr) bool { return true }
+	// GLM DSA. Defaults model a DeepSeek engine (not GLM, EOS-only stops, no
+	// thinking-control markers); tests opt into GLM behaviour via MockControls.
+	r.ds4EngineIsGLMDSA = func(e uintptr) bool { return ctl.isGLM() }
 	r.ds4GLMReasoningEffortText = func(mode ThinkMode) string {
 		switch mode {
 		case ThinkHigh:
@@ -152,18 +221,16 @@ func NewMockLibrary() *Library {
 		}
 	}
 	r.ds4TokenIsStop = func(e uintptr, token int32) bool {
-		return token == mockTokenEOS(e) ||
-			token == mockUserToken ||
-			token == mockAssistantToken
+		return token == mockTokenEOS(e) || ctl.isStop(token)
 	}
 	r.ds4TokenIsThinkingControl = func(e uintptr, token int32) bool {
-		return token == mockThinkStartToken || token == mockThinkEndToken
+		return ctl.isThinking(token)
 	}
 	r.ds4TokenIsStopForThinkMode = func(e uintptr, token int32, mode ThinkMode) bool {
 		if r.ds4TokenIsStop(e, token) {
 			return true
 		}
-		return mode == ThinkNone && r.ds4TokenIsThinkingControl(e, token)
+		return !mockThinkModeEnabled(mode) && r.ds4TokenIsThinkingControl(e, token)
 	}
 	r.ds4EnginePrefillChunk = func(e uintptr) uint32 { return mockPrefillChunk }
 	r.ds4SessionPrefillCap = func(s uintptr) int32 { return int32(mockPrefillChunk) }
@@ -389,7 +456,13 @@ func NewMockLibrary() *Library {
 		return 100
 	}
 
-	return lib
+	return lib, ctl
+}
+
+// mockThinkModeEnabled mirrors ds4_think_mode_enabled for the mock: thinking
+// markers are active for every mode except ThinkNone.
+func mockThinkModeEnabled(mode ThinkMode) bool {
+	return mode != ThinkNone
 }
 
 // ---------------------------------------------------------------------------

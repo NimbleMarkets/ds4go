@@ -14,7 +14,8 @@ func openMockEngine(t *testing.T, lib *Library) *Engine {
 }
 
 func TestEngineIsGLMDSA(t *testing.T) {
-	lib := NewMockLibrary()
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetGLM(true)
 	eng := openMockEngine(t, lib)
 	if !eng.IsGLMDSA() {
 		t.Error("IsGLMDSA() = false, want true (mock reports the GLM DSA family)")
@@ -22,7 +23,8 @@ func TestEngineIsGLMDSA(t *testing.T) {
 }
 
 func TestEngineIsGLMDSAFalseWhenUnsupported(t *testing.T) {
-	lib := NewMockLibrary()
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetGLM(true)
 	lib.raw.ds4EngineIsGLMDSA = nil
 	eng := openMockEngine(t, lib)
 	if eng.IsGLMDSA() {
@@ -36,7 +38,9 @@ func TestEngineIsGLMDSAFalseWhenUnsupported(t *testing.T) {
 // GLM stops generation on the role tokens, not just EOS, so the engine
 // predicate must be consulted rather than comparing against TokenEOS.
 func TestEngineTokenIsStopUsesLibraryPredicate(t *testing.T) {
-	lib := NewMockLibrary()
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetGLM(true)
+	ctl.SetStopTokens(int(mockUserToken), int(mockAssistantToken))
 	eng := openMockEngine(t, lib)
 
 	user := eng.TokenUser()
@@ -57,7 +61,8 @@ func TestEngineTokenIsStopUsesLibraryPredicate(t *testing.T) {
 // Older libds4 builds predate ds4_token_is_stop. Callers must still get correct
 // DeepSeek behaviour, where EOS is the only generation stop.
 func TestEngineTokenIsStopFallsBackToEOS(t *testing.T) {
-	lib := NewMockLibrary()
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetStopTokens(int(mockUserToken), int(mockAssistantToken))
 	lib.raw.ds4TokenIsStop = nil
 	lib.raw.ds4TokenIsStopForThinkMode = nil
 	eng := openMockEngine(t, lib)
@@ -74,7 +79,8 @@ func TestEngineTokenIsStopFallsBackToEOS(t *testing.T) {
 }
 
 func TestEngineTokenIsThinkingControl(t *testing.T) {
-	lib := NewMockLibrary()
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetThinkingControlTokens(int(mockThinkStartToken), int(mockThinkEndToken))
 	eng := openMockEngine(t, lib)
 
 	if !eng.TokenIsThinkingControl(int(mockThinkStartToken)) {
@@ -93,7 +99,9 @@ func TestEngineTokenIsThinkingControl(t *testing.T) {
 // In no-thinking mode a stray thinking tag is a control marker, not content,
 // so it must terminate the completion alongside the ordinary stop set.
 func TestEngineTokenIsStopForThinkMode(t *testing.T) {
-	lib := NewMockLibrary()
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetGLM(true)
+	ctl.SetThinkingControlTokens(int(mockThinkStartToken), int(mockThinkEndToken))
 	eng := openMockEngine(t, lib)
 
 	if !eng.TokenIsStopForThinkMode(int(mockThinkStartToken), ThinkNone) {

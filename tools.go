@@ -204,6 +204,25 @@ type promptRenderOptions struct {
 
 type chatMessageRenderer func(ChatMessage, turnRenderInfo) (renderedChatMessage, error)
 
+// appendThinkPrefix emits the model-family reasoning-effort prefix, mirroring
+// ds4's chat_push_think_prefix. GLM DSA carries effort as a system message at
+// every enabled think mode, where DeepSeek uses a plain prompt prefix and only
+// at ThinkMax. It must be appended before the caller's own system message, as
+// ds4_encode_chat_prompt does.
+func appendThinkPrefix(engine *Engine, tokens *Tokens, think ThinkMode) error {
+	if engine.IsGLMDSA() {
+		effort := engine.GLMReasoningEffortText(think)
+		if effort == "" {
+			return nil
+		}
+		return engine.ChatAppendMessage(tokens, "system", effort)
+	}
+	if think == ThinkMax {
+		return engine.ChatAppendMaxEffortPrefix(tokens)
+	}
+	return nil
+}
+
 func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode, render chatMessageRenderer) (*Tokens, error) {
 	if engine == nil {
 		return nil, errors.New("ds4go: nil engine")
@@ -219,11 +238,9 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 		tokens.Free()
 		return nil, err
 	}
-	if think == ThinkMax {
-		if err := engine.ChatAppendMaxEffortPrefix(tokens); err != nil {
-			tokens.Free()
-			return nil, err
-		}
+	if err := appendThinkPrefix(engine, tokens, think); err != nil {
+		tokens.Free()
+		return nil, err
 	}
 	toolsSection, err := dsml.RenderToolsSection(tools)
 	if err != nil {

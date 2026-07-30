@@ -704,6 +704,17 @@ func (e *Engine) IsGLMDSA() bool {
 	return e.lib.raw.ds4EngineIsGLMDSA(e.ptr)
 }
 
+// GLMReasoningEffortText returns the GLM reasoning-effort system line for mode,
+// or "" for ThinkNone and for libraries without GLM support. Callers should
+// only emit it when [Engine.IsGLMDSA] reports true; DeepSeek shapes use
+// [Engine.ChatAppendMaxEffortPrefix] instead.
+func (e *Engine) GLMReasoningEffortText(mode ThinkMode) string {
+	if e == nil {
+		return ""
+	}
+	return e.lib.GLMReasoningEffortText(mode)
+}
+
 // PrefillChunk returns the engine's effective prefill chunk size
 // (ds4_engine_prefill_chunk), or 0 on libraries without the accessor.
 func (e *Engine) PrefillChunk() uint32 {

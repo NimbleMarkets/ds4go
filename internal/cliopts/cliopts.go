@@ -224,6 +224,9 @@ func (c *CLIConfig) GenerateOptions() ds4.GenerateOptions {
 		MinP:        c.MinP,
 		Seed:        c.ResolvedSeed(),
 		StopOnEOS:   true,
+		// Stop detection must match the think mode the prompt is rendered with;
+		// callers that vary it per turn (the chat REPL) override this field.
+		ThinkMode: c.ThinkMode(),
 	}
 }
 

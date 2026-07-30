@@ -127,3 +127,29 @@ func TestSelectBackend_FallbackDefaults(t *testing.T) {
 		}
 	}
 }
+
+// Generation stop detection depends on the think mode the prompt was rendered
+// with: with thinking off, a thinking marker ends the turn rather than being
+// emitted as content. The sampling options must therefore carry it.
+func TestGenerateOptionsCarriesThinkMode(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  CLIConfig
+		want ds4.ThinkMode
+	}{
+		{"default is high", CLIConfig{}, ds4.ThinkHigh},
+		{"nothink", CLIConfig{NoThink: true}, ds4.ThinkNone},
+		{"think-max", CLIConfig{ThinkMax: true}, ds4.ThinkMax},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := c.cfg
+			if got := cfg.GenerateOptions().ThinkMode; got != c.want {
+				t.Errorf("GenerateOptions().ThinkMode = %v, want %v", got, c.want)
+			}
+			if got := cfg.GenerateOptions().ThinkMode; got != cfg.ThinkMode() {
+				t.Errorf("GenerateOptions().ThinkMode = %v, want ThinkMode() = %v", got, cfg.ThinkMode())
+			}
+		})
+	}
+}

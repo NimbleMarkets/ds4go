@@ -250,6 +250,11 @@ func (l ToolLoop) effectiveThinkMode() ThinkMode {
 }
 
 func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
+	// Stop detection has to agree with how the prompt was rendered: in a
+	// thinking turn the <think>/</think> markers are content, not turn-ending
+	// control tokens. The loop's think mode governs both, so it wins over
+	// whatever the caller left in GenerateOptions.
+	opts.ThinkMode = l.effectiveThinkMode()
 	if l.CompleteFunc != nil {
 		return l.CompleteFunc(prompt, opts)
 	}

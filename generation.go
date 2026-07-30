@@ -27,8 +27,15 @@ type GenerateOptions struct {
 	MinP float32
 	// Seed seeds ds4's sampler. A zero seed is valid and deterministic.
 	Seed uint64
-	// StopOnEOS stops generation when ds4 emits the engine EOS token.
+	// StopOnEOS stops generation when ds4 emits a generation stop token. For
+	// DeepSeek shapes that is the engine EOS token; GLM DSA shapes also stop on
+	// the system, user, assistant, and observation role tokens.
 	StopOnEOS bool
+	// ThinkMode refines stop detection when StopOnEOS is set: with thinking
+	// disabled, a <think> or </think> marker is a protocol control token rather
+	// than assistant content and ends the completion. It does not otherwise
+	// affect generation; prompt rendering takes its own think mode.
+	ThinkMode ThinkMode
 	// ExcludeToken asks argmax generation to skip a specific token id.
 	ExcludeToken int
 	// OnToken streams generated tokens. Returning normally continues generation.
@@ -122,9 +129,17 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 		maxTokens = room - 1
 		capped = true
 	}
+	// Stop detection goes through the engine predicate rather than an EOS
+	// comparison: GLM DSA also ends a turn on the role tokens, and with
+	// thinking disabled on a stray thinking marker. eos is still needed
+	// separately for the speculative path, which takes a single token id.
 	eos := -1
+	isStop := func(int) bool { return false }
 	if opts.StopOnEOS && g.Engine != nil {
 		eos = g.Engine.TokenEOS()
+		isStop = func(token int) bool {
+			return g.Engine.TokenIsStopForThinkMode(token, opts.ThinkMode)
+		}
 	}
 	var rng = opts.Seed
 	out := make([]int, 0, maxTokens)
@@ -150,7 +165,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 		} else {
 			token = g.Session.Argmax()
 		}
-		if opts.StopOnEOS && token == eos {
+		if isStop(token) {
 			break
 		}
 		if useSpec {
@@ -175,7 +190,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 				i++
 			} else {
 				for _, t := range accepted {
-					if opts.StopOnEOS && t == eos {
+					if isStop(t) {
 						return out, nil
 					}
 					out = append(out, t)
