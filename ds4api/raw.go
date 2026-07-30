@@ -35,33 +35,66 @@ type cDistributedOptions struct {
 	Debug           bool
 }
 
+type cTPOptions struct {
+	Role            int32
+	Requested       bool
+	ListenHost      unsafe.Pointer
+	ListenPort      int32
+	LeaderHost      unsafe.Pointer
+	LeaderPort      int32
+	Transport       int32
+	RDMADevice      unsafe.Pointer
+	RDMAGIDIndex    int32
+	RDMAGIDIndexSet bool
+	GLMTokenPrefill bool
+	DebugHash       int32
+}
+
+// cEngineOptions mirrors ds4_engine_options. Field order is load-bearing: it is
+// read by offset on the C side, so new upstream fields must be inserted at their
+// header position, never appended. TestEngineOptionsLayoutMatchesC pins it.
 type cEngineOptions struct {
-	ModelPath                  unsafe.Pointer
-	MTPPath                    unsafe.Pointer
-	Backend                    Backend
-	NThreads                   int32
-	PrefillChunk               uint32
-	MTPDraftTokens             int32
-	MTPMargin                  float32
-	DirectionalSteeringFile    unsafe.Pointer
-	ExpertProfilePath          unsafe.Pointer
-	DirectionalSteeringAttn    float32
-	DirectionalSteeringFFN     float32
-	PowerPercent               int32
-	SSDStreamingCacheExperts   uint32
-	SSDStreamingCacheBytes     uint64
-	SSDStreamingPreloadExperts uint32
-	SimulateUsedMemoryBytes    uint64
-	WarmWeights                bool
-	Quality                    bool
-	SSDStreaming               bool
-	SSDStreamingCold           bool
-	InspectOnly                bool
-	LoadSlice                  bool
-	LoadLayerStart             uint32
-	LoadLayerEnd               uint32
-	LoadOutput                 bool
-	Distributed                cDistributedOptions
+	ModelPath                    unsafe.Pointer
+	MTPPath                      unsafe.Pointer
+	Backend                      Backend
+	NThreads                     int32
+	ContextSize                  int32
+	PrefillChunk                 uint32
+	MTPDraftTokens               int32
+	MTPMargin                    float32
+	DsparkConfidenceThreshold    float32
+	DirectionalSteeringFile      unsafe.Pointer
+	ExpertProfilePath            unsafe.Pointer
+	DirectionalSteeringAttn      float32
+	DirectionalSteeringFFN       float32
+	PowerPercent                 int32
+	SSDStreamingCacheExperts     uint32
+	SSDStreamingCacheBytes       uint64
+	SSDStreamingFullLayers       uint32
+	SSDStreamingPreloadExperts   uint32
+	SimulateUsedMemoryBytes      uint64
+	WarmWeights                  bool
+	Quality                      bool
+	GLMMTP                       bool
+	GLMMTPTiming                 bool
+	Dspark                       bool
+	DsparkStrict                 bool
+	DsparkConfidenceThresholdSet bool
+	CUDATensorParallel           bool
+	SSDStreaming                 bool
+	SSDStreamingCold             bool
+	SSDStreamingFullLayersSet    bool
+	InspectOnly                  bool
+	PlacementCtxHint             int32
+	ShareSessionPrefillWorkspace bool
+	FirstTokenTest               bool
+	MetalGraphTest               bool
+	LoadSlice                    bool
+	LoadLayerStart               uint32
+	LoadLayerEnd                 uint32
+	LoadOutput                   bool
+	Distributed                  cDistributedOptions
+	TP                           cTPOptions
 }
 
 type cContextMemory struct {
@@ -123,8 +156,15 @@ type rawSymbols struct {
 	ds4ChatAppendAssistantPrefix        func(e uintptr, tokens *cTokens, thinkMode ThinkMode)
 	ds4TokenText                        func(e uintptr, token int32, length *uintptr) unsafe.Pointer
 	ds4TokenEOS                         func(e uintptr) int32
+	ds4TokenIsStop                      func(e uintptr, token int32) bool
+	ds4TokenIsThinkingControl           func(e uintptr, token int32) bool
+	ds4TokenIsStopForThinkMode          func(e uintptr, token int32, mode ThinkMode) bool
 	ds4TokenUser                        func(e uintptr) int32
 	ds4TokenAssistant                   func(e uintptr) int32
+	ds4EngineIsGLMDSA                   func(e uintptr) bool
+	ds4GLMReasoningEffortText           func(mode ThinkMode) string
+	ds4EnginePrefillChunk               func(e uintptr) uint32
+	ds4SessionPrefillCap                func(s uintptr) int32
 	ds4SessionCreate                    func(out *uintptr, e uintptr, ctxSize int32) int32
 	ds4SessionFree                      func(s uintptr)
 	ds4SessionPower                     func(s uintptr) int32

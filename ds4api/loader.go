@@ -112,6 +112,27 @@ func (l *Library) SupportsSessionCancel() bool {
 	return l != nil && l.raw.ds4SessionSetCancel != nil
 }
 
+// SupportsGLM reports whether the loaded library exports the GLM DSA entry
+// points. When false, the library predates upstream GLM 5.2 support and can
+// only run DeepSeek V4 shapes; Engine.IsGLMDSA is then always false and the
+// stop-token predicates fall back to EOS-only (DeepSeek) semantics.
+func (l *Library) SupportsGLM() bool {
+	return l != nil && l.raw.ds4EngineIsGLMDSA != nil
+}
+
+// GLMReasoningEffortText returns the GLM reasoning-effort system line for mode
+// (ds4_glm_reasoning_effort_text), or "" for ThinkNone and for libraries
+// without GLM support. GLM encodes thinking effort as a system message rather
+// than the DeepSeek max-effort prompt prefix.
+func (l *Library) GLMReasoningEffortText(mode ThinkMode) string {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if l == nil || l.raw.ds4GLMReasoningEffortText == nil {
+		return ""
+	}
+	return l.raw.ds4GLMReasoningEffortText(mode)
+}
+
 func (l *Library) register() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -169,6 +190,30 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4TokenEOS, "ds4_token_eos")
 	mustRegister(&r.ds4TokenUser, "ds4_token_user")
 	mustRegister(&r.ds4TokenAssistant, "ds4_token_assistant")
+	// GLM DSA support (upstream ds4 "Add GLM 5.2 inference"). These are absent
+	// from older libds4 builds, so every one is optional and the wrappers fall
+	// back to DeepSeek-only semantics when missing.
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_is_glm_dsa"); err == nil {
+		mustRegister(&r.ds4EngineIsGLMDSA, "ds4_engine_is_glm_dsa")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_glm_reasoning_effort_text"); err == nil {
+		mustRegister(&r.ds4GLMReasoningEffortText, "ds4_glm_reasoning_effort_text")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_token_is_stop"); err == nil {
+		mustRegister(&r.ds4TokenIsStop, "ds4_token_is_stop")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_token_is_thinking_control"); err == nil {
+		mustRegister(&r.ds4TokenIsThinkingControl, "ds4_token_is_thinking_control")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_token_is_stop_for_think_mode"); err == nil {
+		mustRegister(&r.ds4TokenIsStopForThinkMode, "ds4_token_is_stop_for_think_mode")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_prefill_chunk"); err == nil {
+		mustRegister(&r.ds4EnginePrefillChunk, "ds4_engine_prefill_chunk")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_session_prefill_cap"); err == nil {
+		mustRegister(&r.ds4SessionPrefillCap, "ds4_session_prefill_cap")
+	}
 	mustRegister(&r.ds4SessionCreate, "ds4_session_create")
 	mustRegister(&r.ds4SessionFree, "ds4_session_free")
 	mustRegister(&r.ds4SessionPower, "ds4_session_power")

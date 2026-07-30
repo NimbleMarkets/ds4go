@@ -500,6 +500,17 @@ func (s *Session) Ctx() int {
 	return int(s.lib.raw.ds4SessionCtx(s.ptr))
 }
 
+// PrefillCap returns the session's prefill capacity in tokens
+// (ds4_session_prefill_cap), or 0 on libraries without the accessor.
+func (s *Session) PrefillCap() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionPrefillCap == nil {
+		return 0
+	}
+	return int(s.lib.raw.ds4SessionPrefillCap(s.ptr))
+}
+
 // Tokens returns a borrowed snapshot of ds4_session_tokens.
 func (s *Session) Tokens() *Tokens {
 	libCallMu.Lock()

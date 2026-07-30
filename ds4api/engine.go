@@ -635,6 +635,86 @@ func (e *Engine) TokenEOS() int {
 	return int(e.lib.raw.ds4TokenEOS(e.ptr))
 }
 
+// TokenIsStop reports whether token ends generation for this model
+// (ds4_token_is_stop). DeepSeek shapes stop only on EOS, but GLM DSA also
+// stops on the system, user, assistant, and observation role tokens, so
+// callers must use this instead of comparing against [Engine.TokenEOS].
+//
+// Libraries without ds4_token_is_stop fall back to an EOS comparison.
+func (e *Engine) TokenIsStop(token int) bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	return e.tokenIsStopLocked(token)
+}
+
+// tokenIsStopLocked implements TokenIsStop with libCallMu already held.
+func (e *Engine) tokenIsStopLocked(token int) bool {
+	if e == nil || e.ptr == 0 {
+		return false
+	}
+	if e.lib.raw.ds4TokenIsStop == nil {
+		return int32(token) == e.lib.raw.ds4TokenEOS(e.ptr)
+	}
+	return e.lib.raw.ds4TokenIsStop(e.ptr, int32(token))
+}
+
+// TokenIsThinkingControl reports whether token is a <think> or </think> marker
+// (ds4_token_is_thinking_control). Returns false on libraries that do not
+// export the predicate.
+func (e *Engine) TokenIsThinkingControl(token int) bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4TokenIsThinkingControl == nil {
+		return false
+	}
+	return e.lib.raw.ds4TokenIsThinkingControl(e.ptr, int32(token))
+}
+
+// TokenIsStopForThinkMode reports whether token ends generation under mode
+// (ds4_token_is_stop_for_think_mode). Beyond the ordinary stop set, a thinking
+// control marker emitted while thinking is disabled is treated as a stop: the
+// prompt already supplied the closing tag, so the marker is protocol noise
+// rather than assistant content.
+//
+// Libraries without the predicate fall back to [Engine.TokenIsStop].
+func (e *Engine) TokenIsStopForThinkMode(token int, mode ThinkMode) bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 {
+		return false
+	}
+	if e.lib.raw.ds4TokenIsStopForThinkMode == nil {
+		return e.tokenIsStopLocked(token)
+	}
+	return e.lib.raw.ds4TokenIsStopForThinkMode(e.ptr, int32(token), mode)
+}
+
+// IsGLMDSA reports whether the open model is a GLM DSA shape
+// (ds4_engine_is_glm_dsa) rather than a DeepSeek V4 shape. GLM uses different
+// chat markers, stop tokens, and tool-call markup, so callers building prompts
+// or parsing completions must branch on this.
+//
+// Returns false on libraries predating GLM support; see [Library.SupportsGLM].
+func (e *Engine) IsGLMDSA() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineIsGLMDSA == nil {
+		return false
+	}
+	return e.lib.raw.ds4EngineIsGLMDSA(e.ptr)
+}
+
+// PrefillChunk returns the engine's effective prefill chunk size
+// (ds4_engine_prefill_chunk), or 0 on libraries without the accessor.
+func (e *Engine) PrefillChunk() uint32 {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EnginePrefillChunk == nil {
+		return 0
+	}
+	return e.lib.raw.ds4EnginePrefillChunk(e.ptr)
+}
+
 // TokenUser returns ds4's user-role token id.
 func (e *Engine) TokenUser() int {
 	libCallMu.Lock()

@@ -54,6 +54,17 @@ func (m *mockStderrStream) write(msg string) {
 // mocks: TestSessionCopyLogits asserts the two agree.
 const mockVocabSize int32 = 129280
 
+// Mock special-token ids and prefill geometry. The role tokens double as GLM
+// generation stops in the mock's ds4_token_is_stop.
+const (
+	mockUserToken       int32 = 2
+	mockAssistantToken  int32 = 3
+	mockThinkStartToken int32 = 4
+	mockThinkEndToken   int32 = 5
+
+	mockPrefillChunk uint32 = 2048
+)
+
 // NewMockLibrary returns a Library whose C symbols are backed by trivial
 // in-memory state.  The mock supports engine/session lifecycle, tokenization,
 // deterministic generation, and optional MTP metadata.
@@ -123,8 +134,39 @@ func NewMockLibrary() *Library {
 	// Token metadata.
 	r.ds4TokenText = mockTokenText
 	r.ds4TokenEOS = mockTokenEOS
-	r.ds4TokenUser = func(e uintptr) int32 { return 2 }
-	r.ds4TokenAssistant = func(e uintptr) int32 { return 3 }
+	r.ds4TokenUser = func(e uintptr) int32 { return mockUserToken }
+	r.ds4TokenAssistant = func(e uintptr) int32 { return mockAssistantToken }
+
+	// GLM DSA. The mock models a GLM engine, whose generation stop set is EOS
+	// plus the role tokens, so binding-layer callers that wrongly compare
+	// against EOS alone are caught by tests.
+	r.ds4EngineIsGLMDSA = func(e uintptr) bool { return true }
+	r.ds4GLMReasoningEffortText = func(mode ThinkMode) string {
+		switch mode {
+		case ThinkHigh:
+			return "Reasoning Effort: High"
+		case ThinkMax:
+			return "Reasoning Effort: Max"
+		default:
+			return ""
+		}
+	}
+	r.ds4TokenIsStop = func(e uintptr, token int32) bool {
+		return token == mockTokenEOS(e) ||
+			token == mockUserToken ||
+			token == mockAssistantToken
+	}
+	r.ds4TokenIsThinkingControl = func(e uintptr, token int32) bool {
+		return token == mockThinkStartToken || token == mockThinkEndToken
+	}
+	r.ds4TokenIsStopForThinkMode = func(e uintptr, token int32, mode ThinkMode) bool {
+		if r.ds4TokenIsStop(e, token) {
+			return true
+		}
+		return mode == ThinkNone && r.ds4TokenIsThinkingControl(e, token)
+	}
+	r.ds4EnginePrefillChunk = func(e uintptr) uint32 { return mockPrefillChunk }
+	r.ds4SessionPrefillCap = func(s uintptr) int32 { return int32(mockPrefillChunk) }
 
 	// Session.
 	r.ds4SessionCreate = mockSessionCreate
