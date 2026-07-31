@@ -206,7 +206,7 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 	out := filepath.Join(m.ModelsDir, model.FileName)
 	if st, err := os.Stat(out); err == nil && st.Size() > 0 {
 		if model.SHA256 != "" {
-			if meta, err := m.remoteMetadata(ctx, strings.TrimRight(hfRepoBase, "/")+"/"+model.FileName, token); err == nil {
+			if meta, err := m.remoteMetadata(ctx, modelDownloadURL(model), token); err == nil {
 				if err := ensureRemoteHashMatchesPinned(meta.SHA256, model.SHA256, model.FileName); err != nil {
 					return Model{}, err
 				}
@@ -228,7 +228,7 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 	}
 	defer lock.Close()
 
-	url := strings.TrimRight(hfRepoBase, "/") + "/" + model.FileName
+	url := modelDownloadURL(model)
 	sha, err := m.downloadFile(ctx, url, out, token, model.SHA256)
 	if err != nil {
 		return Model{}, err
@@ -275,7 +275,7 @@ func (m *Manager) DownloadDryRun(ctx context.Context, alias, token string) (Mode
 	if token == "" {
 		token = huggingFaceToken()
 	}
-	url := strings.TrimRight(hfRepoBase, "/") + "/" + model.FileName
+	url := modelDownloadURL(model)
 	out := filepath.Join(m.ModelsDir, model.FileName)
 
 	fmt.Fprintf(m.Out, "Dry run: would download %s\n", model.Alias)

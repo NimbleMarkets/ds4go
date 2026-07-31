@@ -1,6 +1,8 @@
 // Package models manages ds4go's curated model catalog.
 package models
 
+import "strings"
+
 // Model describes a curated ds4 GGUF model.
 type Model struct {
 	Alias          string  `json:"alias"`
@@ -9,10 +11,17 @@ type Model struct {
 	SizeGB         float64 `json:"sizeGB"`
 	RecommendedRAM string  `json:"recommendedRAM"`
 	SHA256         string  `json:"sha256,omitempty"`
-	Imatrix        bool    `json:"imatrix"`
-	Legacy         bool    `json:"legacy"`
-	Optional       bool    `json:"optional"`
-	Distributed    bool    `json:"distributed"`
+	// Repo is the Hugging Face repo hosting this model. Empty means the default
+	// DeepSeek repo, so existing entries and saved state stay valid.
+	Repo string `json:"repo,omitempty"`
+	// GLM marks a GLM DSA model. Its tool-calling markup, stop tokens, and
+	// reasoning-effort prompt differ from DeepSeek's; libds4 selects the
+	// behaviour from the GGUF, and ds4go exposes it via Engine.IsGLMDSA.
+	GLM         bool `json:"glm,omitempty"`
+	Imatrix     bool `json:"imatrix"`
+	Legacy      bool `json:"legacy"`
+	Optional    bool `json:"optional"`
+	Distributed bool `json:"distributed"`
 	// DistributedRole and LayerRange describe a distributed split half. LayerRange
 	// is in upstream ds4 --layers form (e.g. "0:30", "31:output"); DistributedRole
 	// is "coordinator" or "worker". Both empty for non-distributed models.
@@ -29,6 +38,13 @@ type Model struct {
 const (
 	hfRepo = "antirez/deepseek-v4-gguf"
 
+	// glmRepo hosts the GLM 5.2 quants ds4's download_model.sh offers as
+	// glm-antirez-*. ds4 spells it "antirez/GLM-5.2-GGUF" because it fetches
+	// GLM with the Hugging Face CLI, which follows redirects; ds4go reads
+	// x-linked-size/x-linked-etag off the resolve response and so must use the
+	// canonical lower-case name that answers directly.
+	glmRepo = "antirez/glm-5.2-gguf"
+
 	// DefaultModelSymlink is the name of the active-model symlink in ModelsDir.
 	DefaultModelSymlink = "ds4flash.gguf"
 
@@ -43,6 +59,17 @@ const (
 )
 
 var hfRepoBase = "https://huggingface.co/" + hfRepo + "/resolve/main"
+
+// modelDownloadURL returns the resolve URL for a curated model. Entries without
+// an explicit Repo use hfRepoBase, which tests override to point at a local
+// server.
+func modelDownloadURL(m Model) string {
+	base := hfRepoBase
+	if m.Repo != "" && m.Repo != hfRepo {
+		base = "https://huggingface.co/" + m.Repo + "/resolve/main"
+	}
+	return strings.TrimRight(base, "/") + "/" + m.FileName
+}
 
 var curated = []Model{
 	{
@@ -102,6 +129,36 @@ var curated = []Model{
 		DistributedRole: "worker",
 		LayerRange:      "31:output",
 		Notes:           "DeepSeek V4 Pro Q4 distributed split: worker half; run with --role worker --layers 31:output",
+	},
+	{
+		Alias:          "glm-iq2xxs",
+		FileName:       "GLM-5.2-UD-IQ2_XXS_RoutedIQ2XXS_blk78Q2K.gguf",
+		Repo:           glmRepo,
+		GLM:            true,
+		SizeGB:         196.6,
+		RecommendedRAM: ">=256 GB",
+		SHA256:         "a49de64c5020432bdae23de36a423a9660a5621bc0db8d12b66bd8814b07fea0",
+		Notes:          "GLM 5.2 routed IQ2_XXS with Q2_K block 78; reduced-memory testing",
+	},
+	{
+		Alias:          "glm-q2",
+		FileName:       "GLM-5.2-UD-Q2_K_RoutedQ2K.gguf",
+		Repo:           glmRepo,
+		GLM:            true,
+		SizeGB:         244.0,
+		RecommendedRAM: ">=320 GB",
+		SHA256:         "b9fa49d010dad35b96418c45831c212a746715b0646c1121ccfc414455bd6fe5",
+		Notes:          "GLM 5.2 routed Q2_K",
+	},
+	{
+		Alias:          "glm-q4",
+		FileName:       "GLM-5.2-UD-Q4_K_RoutedQ4K.gguf",
+		Repo:           glmRepo,
+		GLM:            true,
+		SizeGB:         404.4,
+		RecommendedRAM: ">=512 GB",
+		SHA256:         "7160879c87756236eea16ec6bfeb19288d16fa94dcfcef3a5ed5f38b1383d3a5",
+		Notes:          "GLM 5.2 routed Q4_K; highest quality, largest footprint",
 	},
 	{
 		Alias:          "mtp",

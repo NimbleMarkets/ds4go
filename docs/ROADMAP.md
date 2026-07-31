@@ -28,3 +28,34 @@ line numbers (`agent_edit_find_old_span` in `ds4_agent.c`).
 
 Triage remaining upstream agent tools (e.g. shell/command execution, file read)
 against ds4-go's sandboxing and security posture before porting.
+
+## GLM 5.2 support
+
+ds4go parses, renders, and streams GLM DSA tool markup (`dsml.SyntaxGLM`,
+selected per engine by `ds4.ToolSyntax`). Remaining work:
+
+### Verify the tools prompt against a real GLM model
+
+The GLM tools section is ported from ds4's `agent_glm_tools_prompt_intro` /
+`agent_glm_tools_prompt_after_schemas`, but has only been exercised against the
+mock library. It still needs a run against a real GLM 5.2 GGUF to confirm:
+
+- the `<tools>` JSON-schema block tokenizes and is honored as ds4 renders it;
+- the model emits `<tool_call>` markup our grammar accepts, end to end through
+  `ToolLoop`;
+- tool results returned under the `"tool"` role land as
+  `<|observation|><tool_response>` in the prompt, and multi-turn replay of
+  assistant tool calls keeps the session KV prefix reusable.
+
+ds4's version of the prompt then lists usage rules for its own fixed tool set
+(`read`/`more`/`edit`/`bash`). Those are deliberately omitted because ds4go's
+tool set is caller-defined; revisit if real runs show the model needs more
+grounding than the schemas provide.
+
+### Sharded GGUF models
+
+The catalog carries the three single-file `antirez/GLM-5.2-GGUF` quants. The
+Unsloth `UD-Q4_K_XL` build ds4's `download_model.sh` also offers is 11 shards
+(~467 GB), which the catalog cannot express: `Model` names one file, and the
+downloader fetches one URL. Supporting it needs a multi-file model entry plus
+shard-aware download, resume, and verification.
