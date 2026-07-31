@@ -1,6 +1,7 @@
 package dsml
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -265,4 +266,58 @@ func TestGLMToolSyntaxErrorMessage(t *testing.T) {
 	if strings.Contains(msg, dsmlMarker) {
 		t.Error("GLM syntax error message leaked DSML markers")
 	}
+}
+
+// ds4's GLM parser does no entity unescaping, and the GLM tools prompt (unlike
+// DSML's) never asks the model to escape. A literal entity in an argument --
+// HTML being written to a file, a shell command -- must therefore survive
+// verbatim rather than being decoded. The streaming events and the final
+// message must agree on that.
+func TestGLMArgValueEntitiesArePreserved(t *testing.T) {
+	const text = "<tool_call>write<arg_key>content</arg_key>" +
+		"<arg_value>&lt;div&gt; &amp; more</arg_value></tool_call>"
+	const want = "&lt;div&gt; &amp; more"
+
+	msg, err := ParseCompletionSyntax(SyntaxGLM, text, false)
+	if err != nil {
+		t.Fatalf("ParseCompletionSyntax: %v", err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("got %d tool calls, want 1", len(msg.ToolCalls))
+	}
+	if got := argValue(t, msg.ToolCalls[0].Arguments, "content"); got != want {
+		t.Errorf("parsed content = %q, want %q", got, want)
+	}
+
+	// The streamed EventToolCallEnd must carry the same value as the final
+	// parse; otherwise a streaming caller and a batch caller disagree.
+	d := NewStreamDecoderSyntax(SyntaxGLM, false)
+	events := d.Write(text)
+	tail, streamed, err := d.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	events = append(events, tail...)
+
+	if got := argValue(t, streamed.ToolCalls[0].Arguments, "content"); got != want {
+		t.Errorf("streamed message content = %q, want %q", got, want)
+	}
+	for _, e := range events {
+		if e.Type == EventToolCallEnd {
+			if got := argValue(t, e.Arguments, "content"); got != want {
+				t.Errorf("EventToolCallEnd content = %q, want %q", got, want)
+			}
+		}
+	}
+}
+
+// argValue decodes one key out of a JSON arguments object.
+func argValue(t *testing.T, argsJSON, key string) string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
+		t.Fatalf("arguments %q are not valid JSON: %v", argsJSON, err)
+	}
+	s, _ := m[key].(string)
+	return s
 }

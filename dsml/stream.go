@@ -772,7 +772,11 @@ func (d *StreamDecoder) processGLMArgValue(events *[]StreamEvent) {
 	if end < 0 {
 		return // value still arriving; held whole so the close tag is never split
 	}
-	value := dsmlUnescapeText(string(d.buf[:end]))
+	// No entity unescaping: ds4's GLM parser does none, and the GLM tools
+	// prompt never asks the model to escape, so an entity in an argument is
+	// literal payload. DSML is the exception -- its prompt documents escaping
+	// the closing parameter tag -- and it keeps unescaping on its own path.
+	value := string(d.buf[:end])
 	d.pendingArgs.set(d.paramName, value, true)
 	d.pendingEvents = append(d.pendingEvents, StreamEvent{
 		Type:  EventToolCallArgumentsDelta,
