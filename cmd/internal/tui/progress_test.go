@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"io"
 	"regexp"
 	"strings"
@@ -49,4 +50,89 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
 
 func stripANSI(s string) string {
 	return ansiRE.ReplaceAllString(s, "")
+}
+
+// The progress line is redrawn with a bare "\r", which only rewinds the
+// current physical row. A line wider than the terminal wraps, so every redraw
+// leaves the wrapped remainder on screen and the display repeats instead of
+// updating in place. The rendered frame must therefore never exceed the
+// terminal width.
+func TestProgressLineFitsTerminalWidth(t *testing.T) {
+	defer restoreTerminalSize(t)
+	terminalSizeFunc = func(io.Writer) (int, bool) { return 80, true }
+	t.Setenv("COLUMNS", "")
+
+	var buf bytes.Buffer
+	p := newProgressReader(&buf, "GLM-5.2-UD-IQ2_XXS_RoutedIQ2XXS_blk78Q2K.gguf",
+		361299968, 211075856448, io.NopCloser(strings.NewReader("")))
+	p.render(true)
+
+	for _, frame := range renderedFrames(buf.String()) {
+		if w := lipgloss.Width(frame); w > 80 {
+			t.Errorf("rendered frame width = %d, want <= 80 (wraps and repeats above that)", w)
+		}
+	}
+}
+
+// With no terminal and no COLUMNS, assume a conservative 80 columns rather
+// than a width most terminals do not have.
+func TestProgressWidthFallsBackToEightyColumns(t *testing.T) {
+	defer restoreTerminalSize(t)
+	terminalSizeFunc = func(io.Writer) (int, bool) { return 0, false }
+	t.Setenv("COLUMNS", "")
+
+	var buf bytes.Buffer
+	p := newProgressReader(&buf, "model.gguf", 1, 100, io.NopCloser(strings.NewReader("")))
+	if got := p.columns(); got != 80 {
+		t.Errorf("columns() = %d, want 80", got)
+	}
+}
+
+// An explicit COLUMNS still wins when there is no measurable terminal, so
+// callers can size output in pipelines.
+func TestProgressWidthUsesColumnsEnv(t *testing.T) {
+	defer restoreTerminalSize(t)
+	terminalSizeFunc = func(io.Writer) (int, bool) { return 0, false }
+	t.Setenv("COLUMNS", "100")
+
+	var buf bytes.Buffer
+	p := newProgressReader(&buf, "model.gguf", 1, 100, io.NopCloser(strings.NewReader("")))
+	if got := p.columns(); got != 100 {
+		t.Errorf("columns() = %d, want 100", got)
+	}
+}
+
+// Redirected output has no cursor to rewind, so "\r" frames just accumulate in
+// the log. Only the first and final frames belong there.
+func TestProgressDoesNotSpamWhenNotATerminal(t *testing.T) {
+	defer restoreTerminalSize(t)
+	terminalSizeFunc = func(io.Writer) (int, bool) { return 0, false }
+
+	var buf bytes.Buffer
+	p := newProgressReader(&buf, "model.gguf", 0, 1000, io.NopCloser(strings.NewReader("")))
+	for i := 0; i < 50; i++ {
+		p.current += 20
+		p.lastRender = time.Time{} // defeat the rate limiter
+		p.render(false)
+	}
+	if n := strings.Count(buf.String(), "\r"); n > 1 {
+		t.Errorf("wrote %d carriage-return frames to a non-terminal, want at most 1", n)
+	}
+}
+
+func restoreTerminalSize(t *testing.T) {
+	t.Helper()
+	original := terminalSizeFunc
+	t.Cleanup(func() { terminalSizeFunc = original })
+}
+
+// renderedFrames splits progress output into its individual redraws.
+func renderedFrames(out string) []string {
+	var frames []string
+	for _, f := range strings.Split(out, "\r") {
+		if f != "" {
+			frames = append(frames, f)
+		}
+	}
+	return frames
 }
