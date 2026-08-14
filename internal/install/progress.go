@@ -3,9 +3,38 @@ package install
 import (
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"time"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/term"
 )
+
+// defaultProgressColumns is used when the output is not a measurable terminal.
+// A frame wider than the real terminal wraps, and the "\r" redraw then rewinds
+// only the last physical row, so the display repeats instead of updating.
+const defaultProgressColumns = 80
+
+// progressColumns reports the render width for w.
+func progressColumns(w io.Writer) int {
+	if file, ok := w.(*os.File); ok && term.IsTerminal(file.Fd()) {
+		if width, _, err := term.GetSize(file.Fd()); err == nil && width >= 20 {
+			return width
+		}
+	}
+	if cols, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && cols >= 40 {
+		return cols
+	}
+	return defaultProgressColumns
+}
+
+// progressIsTerminal reports whether w can have its cursor rewound.
+func progressIsTerminal(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(file.Fd())
+}
 
 type downloadProgress struct {
 	out        io.Writer
@@ -26,7 +55,7 @@ func newDownloadProgress(out io.Writer, name string, total int64) *downloadProgr
 		style: defaultNimbleStyle(),
 		name:  name,
 		total: total,
-		width: 96,
+		width: progressColumns(out),
 	}
 	p.render(true)
 	return p
@@ -51,7 +80,9 @@ func (p *downloadProgress) Done(err error) {
 	if err == nil && p.total > 0 {
 		p.downloaded = p.total
 	}
-	p.render(false)
+	// Forced: the final frame must be emitted even when the rate limiter or the
+	// non-terminal guard would skip an ordinary redraw.
+	p.render(true)
 	fmt.Fprintln(p.out)
 }
 
@@ -60,11 +91,18 @@ func (p *downloadProgress) render(force bool) {
 	if !force && now.Sub(p.last) < 100*time.Millisecond && p.downloaded < p.total {
 		return
 	}
+	// Redirected output has no cursor to rewind, so interstitial frames would
+	// only pile up in a log. Keep the first and the final one.
+	if !force && !progressIsTerminal(p.out) {
+		return
+	}
 	p.last = now
 
 	msg := p.line()
-	if len(msg) < p.width {
-		msg += strings.Repeat(" ", p.width-len(msg))
+	// Pad by display width: len() counts ANSI escape bytes, so byte-based
+	// padding never clears the previous frame.
+	if w := lipgloss.Width(msg); w < p.width {
+		msg += strings.Repeat(" ", p.width-w)
 	}
 	fmt.Fprintf(p.out, "\r%s", msg)
 }
