@@ -11,8 +11,20 @@ import (
 // layout of ds4.h as compiled for a 64-bit target (offsetof/sizeof ground truth
 // taken from the upstream header; see docs/ROADMAP.md).
 //
-// A failure here means ds4.h changed shape: re-derive the offsets from the
-// header rather than adjusting the expectations to match the Go structs.
+// These expectations are a recorded snapshot of the C layout, so they pin the
+// Go mirrors against *that* snapshot. They cannot notice upstream moving: when
+// ds4.h gains a field, both the Go struct and these numbers stay stale and the
+// test still passes while the ABI silently breaks.
+//
+// Detecting upstream drift is therefore a manual sync step -- re-derive the
+// layout from the current header and compare:
+//
+//	printf '#include <stddef.h>\n#include <stdio.h>\n#include "ds4.h"\n'\
+//	  'int main(void){printf("%%zu\\n", sizeof(ds4_engine_options));}' > /tmp/z.c
+//	cc -I/path/to/ds4 -o /tmp/z /tmp/z.c && /tmp/z   # must equal the size below
+//
+// When it differs, re-derive every offset with offsetof and update both the Go
+// struct and these numbers -- never adjust the numbers to match the Go struct.
 
 type fieldOffset struct {
 	name string
@@ -34,7 +46,7 @@ func checkOffsets(t *testing.T, structName string, size, wantSize uintptr, field
 
 func TestEngineOptionsLayoutMatchesC(t *testing.T) {
 	var o cEngineOptions
-	checkOffsets(t, "ds4_engine_options", unsafe.Sizeof(o), 264, []fieldOffset{
+	checkOffsets(t, "ds4_engine_options", unsafe.Sizeof(o), 272, []fieldOffset{
 		{"model_path", unsafe.Offsetof(o.ModelPath), 0},
 		{"mtp_path", unsafe.Offsetof(o.MTPPath), 8},
 		{"backend", unsafe.Offsetof(o.Backend), 16},
@@ -67,15 +79,16 @@ func TestEngineOptionsLayoutMatchesC(t *testing.T) {
 		{"ssd_streaming_full_layers_set", unsafe.Offsetof(o.SSDStreamingFullLayersSet), 114},
 		{"inspect_only", unsafe.Offsetof(o.InspectOnly), 115},
 		{"placement_ctx_hint", unsafe.Offsetof(o.PlacementCtxHint), 116},
-		{"share_session_prefill_workspace", unsafe.Offsetof(o.ShareSessionPrefillWorkspace), 120},
-		{"first_token_test", unsafe.Offsetof(o.FirstTokenTest), 121},
-		{"metal_graph_test", unsafe.Offsetof(o.MetalGraphTest), 122},
-		{"load_slice", unsafe.Offsetof(o.LoadSlice), 123},
-		{"load_layer_start", unsafe.Offsetof(o.LoadLayerStart), 124},
-		{"load_layer_end", unsafe.Offsetof(o.LoadLayerEnd), 128},
-		{"load_output", unsafe.Offsetof(o.LoadOutput), 132},
-		{"distributed", unsafe.Offsetof(o.Distributed), 136},
-		{"tp", unsafe.Offsetof(o.TP), 200},
+		{"placement_session_count_hint", unsafe.Offsetof(o.PlacementSessionCountHint), 120},
+		{"share_session_prefill_workspace", unsafe.Offsetof(o.ShareSessionPrefillWorkspace), 124},
+		{"first_token_test", unsafe.Offsetof(o.FirstTokenTest), 125},
+		{"metal_graph_test", unsafe.Offsetof(o.MetalGraphTest), 126},
+		{"load_slice", unsafe.Offsetof(o.LoadSlice), 127},
+		{"load_layer_start", unsafe.Offsetof(o.LoadLayerStart), 128},
+		{"load_layer_end", unsafe.Offsetof(o.LoadLayerEnd), 132},
+		{"load_output", unsafe.Offsetof(o.LoadOutput), 136},
+		{"distributed", unsafe.Offsetof(o.Distributed), 144},
+		{"tp", unsafe.Offsetof(o.TP), 208},
 	})
 }
 

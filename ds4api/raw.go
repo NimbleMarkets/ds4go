@@ -86,6 +86,7 @@ type cEngineOptions struct {
 	SSDStreamingFullLayersSet    bool
 	InspectOnly                  bool
 	PlacementCtxHint             int32
+	PlacementSessionCountHint    int32
 	ShareSessionPrefillWorkspace bool
 	FirstTokenTest               bool
 	MetalGraphTest               bool
