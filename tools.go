@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -339,10 +340,14 @@ func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thi
 	replay := r.ReplayStore()
 	for i, call := range parsed.ToolCalls {
 		id := r.nextToolCallID()
+		arguments := call.Arguments
+		if syntax == dsml.SyntaxGLM {
+			arguments = r.coerceGLMArguments(call.Name, arguments)
+		}
 		msg.ToolCalls[i] = ToolCall{
 			ID:        id,
 			Name:      call.Name,
-			Arguments: call.Arguments,
+			Arguments: arguments,
 		}
 		if replay != nil && call.Exact != "" {
 			if err := replay.Remember(id, call.Exact); err != nil {
@@ -351,6 +356,148 @@ func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thi
 		}
 	}
 	return msg, nil
+}
+
+// coerceGLMArguments restores the JSON types declared by a registered tool's
+// schema. Native GLM markup has no type bit, so dsml correctly parses every
+// <arg_value> as a string; ToolRegistry is the first layer that also knows the
+// function schema and can distinguish, for example, integer 3 from string "3".
+func (r *ToolRegistry) coerceGLMArguments(name, arguments string) string {
+	handler, err := r.lookup(name)
+	if err != nil {
+		return arguments
+	}
+	var params struct {
+		Properties map[string]struct {
+			Type json.RawMessage `json:"type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(handler.Schema().Parameters, &params); err != nil {
+		return arguments
+	}
+	pairs, ok := orderedRawObject(arguments)
+	if !ok {
+		return arguments
+	}
+	changed := false
+	for i := range pairs {
+		property, exists := params.Properties[pairs[i].key]
+		if !exists {
+			continue
+		}
+		var text string
+		if json.Unmarshal(pairs[i].value, &text) != nil {
+			continue
+		}
+		if value, ok := coerceJSONString(text, property.Type); ok {
+			pairs[i].value = json.RawMessage(value)
+			changed = true
+		}
+	}
+	if !changed {
+		return arguments
+	}
+	var out strings.Builder
+	out.WriteByte('{')
+	for i, pair := range pairs {
+		if i > 0 {
+			out.WriteString(", ")
+		}
+		key, _ := json.Marshal(pair.key)
+		out.Write(key)
+		out.WriteString(": ")
+		out.Write(pair.value)
+	}
+	out.WriteByte('}')
+	return out.String()
+}
+
+type rawObjectPair struct {
+	key   string
+	value json.RawMessage
+}
+
+func orderedRawObject(raw string) ([]rawObjectPair, bool) {
+	if !json.Valid([]byte(raw)) {
+		return nil, false
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return nil, false
+	}
+	var pairs []rawObjectPair
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		name, ok := key.(string)
+		if !ok {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, false
+		}
+		pairs = append(pairs, rawObjectPair{key: name, value: value})
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, false
+	}
+	return pairs, true
+}
+
+func coerceJSONString(value string, rawTypes json.RawMessage) (string, bool) {
+	var one string
+	var types []string
+	if err := json.Unmarshal(rawTypes, &one); err == nil {
+		types = []string{one}
+	} else if json.Unmarshal(rawTypes, &types) != nil {
+		return "", false
+	}
+	// A schema that explicitly permits strings is ambiguous; preserving the
+	// model's string is safer than guessing another member of the union.
+	if slices.Contains(types, "string") {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(value)
+	for _, typ := range types {
+		switch typ {
+		case "integer":
+			if trimmed != "" && json.Valid([]byte(trimmed)) &&
+				!strings.ContainsAny(trimmed, ".eE") {
+				var n json.Number
+				if json.Unmarshal([]byte(trimmed), &n) == nil {
+					return trimmed, true
+				}
+			}
+		case "number":
+			if trimmed != "" && json.Valid([]byte(trimmed)) {
+				var n json.Number
+				if json.Unmarshal([]byte(trimmed), &n) == nil {
+					return trimmed, true
+				}
+			}
+		case "boolean":
+			if trimmed == "true" || trimmed == "false" {
+				return trimmed, true
+			}
+		case "null":
+			if trimmed == "null" {
+				return trimmed, true
+			}
+		case "object":
+			if strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed)) {
+				return trimmed, true
+			}
+		case "array":
+			if strings.HasPrefix(trimmed, "[") && json.Valid([]byte(trimmed)) {
+				return trimmed, true
+			}
+		}
+	}
+	return "", false
 }
 
 // ExecuteToolCalls invokes the registered Go handlers for the given tool calls.

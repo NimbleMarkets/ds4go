@@ -1,6 +1,9 @@
 package models
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -110,5 +113,43 @@ func TestCuratedRepoNamesAreCanonical(t *testing.T) {
 	}
 	if hfRepo != strings.ToLower(hfRepo) {
 		t.Errorf("hfRepo = %q, want lower case", hfRepo)
+	}
+}
+
+func TestModelForPath(t *testing.T) {
+	glm, ok := Lookup("glm-q2")
+	if !ok {
+		t.Fatal("missing glm-q2 catalog entry")
+	}
+	if got, ok := ModelForPath(filepath.Join("somewhere", glm.FileName)); !ok || got.Alias != glm.Alias {
+		t.Fatalf("direct ModelForPath = (%q, %v), want (%q, true)", got.Alias, ok, glm.Alias)
+	}
+
+	if _, ok := ModelForPath(filepath.Join("somewhere", "custom.gguf")); ok {
+		t.Fatal("custom model unexpectedly matched the curated catalog")
+	}
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, glm.FileName)
+	if err := os.WriteFile(target, []byte("model"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, DefaultModelSymlink)
+	if err := os.Symlink(glm.FileName, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if got, ok := ModelForPath(link); !ok || !got.GLM {
+		t.Fatalf("symlink ModelForPath = (%+v, %v), want GLM model", got, ok)
+	}
+
+	hardLink := filepath.Join(dir, "active.gguf")
+	if err := os.Link(target, hardLink); err != nil {
+		t.Skipf("hard link unavailable: %v", err)
+	}
+	if got, ok := ModelForPath(hardLink); !ok || !got.GLM {
+		t.Fatalf("hard-link ModelForPath = (%+v, %v), want GLM model", got, ok)
 	}
 }

@@ -331,6 +331,53 @@ func TestToolRegistryExecuteToolCalls(t *testing.T) {
 	}
 }
 
+func TestToolRegistryCoercesGLMArgumentsFromSchema(t *testing.T) {
+	reg := NewToolRegistry()
+	type args struct {
+		Count   int            `json:"count"`
+		Ratio   float64        `json:"ratio"`
+		Enabled bool           `json:"enabled"`
+		Label   string         `json:"label"`
+		Items   []int          `json:"items"`
+		Meta    map[string]int `json:"meta"`
+	}
+	var got args
+	if err := reg.RegisterFunc(ToolSchema{
+		Name: "typed",
+		Parameters: json.RawMessage(`{"type":"object","properties":{` +
+			`"count":{"type":"integer"},"ratio":{"type":"number"},` +
+			`"enabled":{"type":"boolean"},"label":{"type":"string"},` +
+			`"items":{"type":"array"},"meta":{"type":"object"}}}`),
+	}, func(ctx context.Context, raw json.RawMessage) (string, error) {
+		return "ok", json.Unmarshal(raw, &got)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	text := "<tool_call>typed" +
+		"<arg_key>count</arg_key><arg_value>3</arg_value>" +
+		"<arg_key>ratio</arg_key><arg_value>1.5</arg_value>" +
+		"<arg_key>enabled</arg_key><arg_value>true</arg_value>" +
+		"<arg_key>label</arg_key><arg_value>007</arg_value>" +
+		"<arg_key>items</arg_key><arg_value>[1,2]</arg_value>" +
+		"<arg_key>meta</arg_key><arg_value>{\"x\":4}</arg_value>" +
+		"</tool_call>"
+	msg, err := reg.ParseAssistantSyntax(dsml.SyntaxGLM, text, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(msg.ToolCalls))
+	}
+	if _, err := reg.ExecuteToolCalls(context.Background(), msg.ToolCalls); err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 3 || got.Ratio != 1.5 || !got.Enabled || got.Label != "007" ||
+		len(got.Items) != 2 || got.Items[1] != 2 || got.Meta["x"] != 4 {
+		t.Fatalf("decoded args = %+v", got)
+	}
+}
+
 func TestToolRegistryRenderToolsSectionEmpty(t *testing.T) {
 	out, err := NewToolRegistry().RenderToolsSection()
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/install"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 var defaultLibraryMu sync.Mutex
@@ -198,6 +199,9 @@ func DiscardLogs() error {
 
 // NewEngine loads the default libds4 shared library and opens a ds4 engine.
 func NewEngine(opts ds4api.EngineOptions) (*ds4api.Engine, error) {
+	if model, ok := models.ModelForPath(opts.ModelPath); ok && model.GLM {
+		opts.MTPPath = ""
+	}
 	lib, err := Load("")
 	if err != nil {
 		return nil, err
@@ -229,10 +233,16 @@ func defaultCallbackLibrary(load bool) (*ds4api.Library, error) {
 }
 
 // ApplyMTPDefaults populates MTPPath, MTPDraftTokens, and MTPMargin with
-// sensible defaults when an MTP model is installed. It only fills fields
-// that are currently empty or zero, so explicit caller settings are respected.
+// sensible defaults when an MTP model is installed. GLM models suppress the
+// external MTP path because their optional predictor is embedded in the base
+// GGUF. For other model families, only empty or zero fields are filled, so
+// explicit caller settings are respected.
 func ApplyMTPDefaults(opts *EngineOptions) {
 	if opts == nil {
+		return
+	}
+	if model, ok := models.ModelForPath(opts.ModelPath); ok && model.GLM {
+		opts.MTPPath = ""
 		return
 	}
 	if opts.MTPPath == "" {

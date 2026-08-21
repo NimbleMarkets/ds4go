@@ -22,6 +22,10 @@ compiler.
   `agent_dsml_parser.syntax`; prefer that parity over splitting the package.
   Callers resolve the syntax from the engine with `ds4.ToolSyntax`, mirroring
   `agent_tool_syntax_for_engine`.
+  GLM `<arg_value>` elements carry no scalar type information, so `dsml` parses
+  their values as JSON strings. Schema-aware conversion to integer, number,
+  boolean, array, object, or null belongs in the root `ToolRegistry`, where the
+  registered tool schema is available; do not add schema knowledge to `dsml`.
 - `cmd/ds4go/` and `cmd/internal/` (CLI/TUI components: `cli`, `tui`) live in the nested `cmd` module.
 - `internal/` (core library-internal packages: `install`, `models`, `cliopts`) live in the root module.
 - `examples/` and root packages may use the library packages where appropriate.
@@ -51,6 +55,12 @@ to avoid binary planting.
 - **macOS Code Signing**: macOS on Apple Silicon (arm64) requires all binaries to be signed. Foreign ad-hoc signed libraries (built on remote CI runners) will trigger a kernel `SIGKILL` on load. The validator and installer must verify code signature status and refuse loading invalid or foreign ad-hoc signed libraries, directing users to sign locally via `codesign -s - --force <libPath>`.
 - **Stderr Logging Redirection**: Logging is redirected via process-global file descriptors using `SetStderr`, `SetStderrFd`, `DiscardLogs`, and `CaptureStderr`. Do not use or reintroduce callback-based logging (`SetLogFunc`). Redirection is not supported on Windows.
 - **Backend Detection**: Use `DetectDefaultBackend(libPath)` to query preferred backends from the `ds4go-install.json` metadata sidecar file or fall back to system capability checks (e.g. checking `/dev/nvidiactl` or `nvidia-smi` on Linux).
+- **Model-family MTP Policy**: DeepSeek may use a separate external MTP support
+  model. GLM 5.2's optional next-token predictor is embedded in the base GGUF,
+  and libds4 rejects an external `mtp_path` for GLM. Root-package and CLI policy
+  must suppress `MTPPath` for catalog-recognized `Model.GLM` models, including
+  the active-model hard link. Keep `ds4api` a strict binding that passes explicit
+  engine options through unchanged.
 - After syncing the upstream ds4 checkout, run `task ds4:sync`
   (`scripts/check-ds4-sync.sh`). `ds4api` mirrors C structs that libds4 reads by
   byte offset, so an upstream field insertion breaks the ABI with no compile or
@@ -66,4 +76,3 @@ go vet ./... ./cmd/...
 
 Use `go test ./... ./cmd/... -race` for changes that touch shared state, callbacks,
 streaming, sessions, or prompt/tool orchestration.
-

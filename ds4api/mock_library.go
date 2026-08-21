@@ -548,12 +548,16 @@ func mockTokensStartsWith(tokens *cTokens, prefix *cTokens) bool {
 // ---------------------------------------------------------------------------
 
 type mockEngine struct {
-	eosToken      int32
-	hasMTP        bool
-	hasOutputHead bool
-	mtpDraft      int32
-	nextToken     int32
-	powerPercent  int32
+	eosToken                     int32
+	hasMTP                       bool
+	hasOutputHead                bool
+	mtpDraft                     int32
+	nextToken                    int32
+	powerPercent                 int32
+	contextSize                  int32
+	placementCtxHint             int32
+	placementSessionCountHint    int32
+	shareSessionPrefillWorkspace bool
 }
 
 type mockSession struct {
@@ -620,6 +624,10 @@ func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
 	eng := &mockEngine{eosToken: 1, hasMTP: false, hasOutputHead: true, mtpDraft: 1, nextToken: 42}
 	if opt != nil {
 		eng.powerPercent = opt.PowerPercent
+		eng.contextSize = opt.ContextSize
+		eng.placementCtxHint = opt.PlacementCtxHint
+		eng.placementSessionCountHint = opt.PlacementSessionCountHint
+		eng.shareSessionPrefillWorkspace = opt.ShareSessionPrefillWorkspace
 		if eng.powerPercent == 0 {
 			eng.powerPercent = 100
 		}

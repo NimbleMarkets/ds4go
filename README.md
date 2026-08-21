@@ -9,7 +9,11 @@
 
 `ds4go` is a zero-CGO Go wrapper for the [`ds4` inference engine](https://github.com/antirez/ds4). Applications using `ds4go` loads a pre-built `libds4` shared library at runtime with [`github.com/ebitengine/purego`](https://github.com/ebitengine/purego).  The shared library owns hardware acceleration. Use a Metal, CUDA, or CPU build of ds4 that matches your machine and model.
 
-[`ds4`](https://github.com/antirez/ds4) itself is an inference engine focused on the [*DeepSeek v4 Flash* model](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) targeting machines with 96G or more of GPU-accessible RAM.  
+[`ds4`](https://github.com/antirez/ds4) itself is an inference engine focused on
+large mixture-of-experts models, including
+[*DeepSeek V4 Flash*](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) and
+[*GLM 5.2*](https://huggingface.co/antirez/glm-5.2-gguf). These models target
+machines with substantial GPU-accessible memory.
 
 We try to maintain parity with the upstream `ds4` library, wrapping its C API.  We build slightly-opinionated tools to facilitate using `ds4`.
 
@@ -61,16 +65,27 @@ $DS4_DIR/lib/      native shared libraries
 $DS4_DIR/models/   GGUF model files
 ```
 
-Manage curated DeepSeek V4 Flash models with:
+Manage curated DeepSeek V4 Flash and GLM 5.2 models with:
 
 ```sh
 ds4go model list
 ds4go model download q2-imatrix
 ds4go model set q2-imatrix
+
+# GLM 5.2 catalog aliases include glm-iq2xxs, glm-q2, and glm-q4
+ds4go model download glm-iq2xxs
+ds4go model set glm-iq2xxs
 ```
 
 The default model path for commands and examples is
 `$DS4_DIR/models/ds4flash.gguf`.
+
+DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM 5.2's
+optional next-token predictor is embedded in the base model instead, and
+`libds4` rejects an external MTP path for GLM. When a curated GLM model is
+selected directly or through the active-model link, ds4go therefore suppresses
+`--mtp` / `EngineOptions.MTPPath`; DeepSeek models keep the configured external
+MTP model.
 
 Place the shared library in `~/.ds4/lib/`, `$DS4_DIR/lib/`, next to your
 executable, or in a `lib/` directory next to your executable. You can also point
@@ -243,13 +258,22 @@ go run ./examples/toolloop --model ./ds4flash.gguf --nothink --tokens 512
 go run ./examples/openai-compatible --model ./ds4flash.gguf --host 127.0.0.1 --port 8000
 ```
 
-The `toolloop` example registers a Go `add` tool and exercises DSML tool-call parsing, tool dispatch, tool-result rendering, and exact replay. Use `--mock` for a no-model smoke test. The OpenAI-compatible example exposes `POST /v1/chat/completions` for a minimal local test server.
+The `toolloop` example registers a Go `add` tool and exercises model-native
+tool-call parsing (DeepSeek DSML or GLM `<tool_call>` markup), tool dispatch,
+tool-result rendering, and replay. Use `--mock` for a no-model smoke test. The
+OpenAI-compatible example exposes `POST /v1/chat/completions` for a minimal
+local test server.
 
 ## API Coverage
 
 Most users should import the root package `ds4` from `github.com/NimbleMarkets/ds4go`. It provides Go-native runtime policy and convenience helpers on top of the raw API. This includes `DetectDefaultBackend(libPath)`, which queries backend preferences from installation metadata (`ds4go-install.json`) or falls back to system checks (probes for `/dev/nvidia0` or `nvidia-smi` on Linux to select CUDA; defaults to Metal on macOS arm64, and CPU reference otherwise).
 
-The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
+The strict binding layer lives in package `ds4api`, imported as `github.com/NimbleMarkets/ds4go/ds4api`. It mirrors the public `ds4.h` API: engines, sessions, token vectors, chat prompt rendering, tokenization, logprob helpers, MTP metadata, GLM model-family helpers, engine context and placement hints, directional steering options, snapshot/payload save-load, and DS4 context-memory helpers. APIs that take `FILE *` use the package's opaque `ds4api.File` wrapper around a C `FILE*`.
+
+`EngineOptions.ContextSize` communicates the largest planned session context to
+the engine. `PlacementCtxHint`, `PlacementSessionCountHint`, and
+`ShareSessionPrefillWorkspace` provide the corresponding GPU-placement planning
+hints. The CLI maps `--ctx` to both `ContextSize` and `PlacementCtxHint`.
 
 `ds4_log` is exposed as `LogString`, which safely calls it with a fixed `"%s"` format. Arbitrary C varargs are intentionally not surfaced as a Go variadic API. `SetStderr`/`SetStderrFd` redirect libds4's diagnostic stream to a file or descriptor (see below). `SetAbortFunc` exposes libds4's fatal-invariant hook, which fires immediately before libds4 aborts the process.
 

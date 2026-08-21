@@ -1,7 +1,11 @@
 // Package models manages ds4go's curated model catalog.
 package models
 
-import "strings"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // Model describes a curated ds4 GGUF model.
 type Model struct {
@@ -179,4 +183,38 @@ func Curated() []Model {
 		out[i].GGUFPath = "models/" + out[i].FileName
 	}
 	return out
+}
+
+// ModelForPath returns the curated model whose GGUF file is selected by path.
+// It follows a final-model symlink such as ds4flash.gguf before matching, while
+// also accepting a direct path to a curated file.
+func ModelForPath(path string) (Model, bool) {
+	if path == "" {
+		return Model{}, false
+	}
+	base := filepath.Base(filepath.Clean(path))
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		base = filepath.Base(resolved)
+	}
+	models := Curated()
+	for _, model := range models {
+		if model.FileName == base {
+			return model, true
+		}
+	}
+	// The active ds4flash.gguf is normally a hard link, not a symlink. Match
+	// its file identity against curated files beside it so model-family policy
+	// still follows the selected catalog entry.
+	selected, err := os.Stat(path)
+	if err != nil {
+		return Model{}, false
+	}
+	dir := filepath.Dir(filepath.Clean(path))
+	for _, model := range models {
+		candidate, err := os.Stat(filepath.Join(dir, model.FileName))
+		if err == nil && os.SameFile(selected, candidate) {
+			return model, true
+		}
+	}
+	return Model{}, false
 }

@@ -135,6 +135,18 @@ type EngineOptions struct {
 	Backend Backend
 	// NThreads controls CPU worker threads when the backend uses them.
 	NThreads int
+	// ContextSize is the largest session context the engine should prepare for.
+	// GLM uses it for startup graph-memory guards and cache sizing.
+	ContextSize int
+	// PlacementCtxHint prices per-layer KV storage for GPU placement. Callers
+	// normally set it to the same value as ContextSize.
+	PlacementCtxHint int
+	// PlacementSessionCountHint is the number of independently allocated
+	// session graphs/caches the placement planner should reserve for.
+	PlacementSessionCountHint int
+	// ShareSessionPrefillWorkspace reports that serialized sessions can share
+	// their prefill scratch workspace.
+	ShareSessionPrefillWorkspace bool
 	// MTPDraftTokens controls speculative draft length.
 	MTPDraftTokens int
 	// MTPMargin controls speculative acceptance confidence.

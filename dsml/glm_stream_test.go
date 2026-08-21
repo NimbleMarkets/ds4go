@@ -199,6 +199,53 @@ func TestGLMStreamMalformedDegradesToContent(t *testing.T) {
 	}
 }
 
+func TestGLMStreamTrailingTextDoesNotEmitToolEvents(t *testing.T) {
+	const text = "<tool_call>list<arg_key>path</arg_key><arg_value>.</arg_value></tool_call> trailing"
+	events, msg := feedGLM(t, false, text)
+	if len(msg.ToolCalls) != 0 || msg.MalformedReason == "" {
+		t.Fatalf("parsed message = %+v, want malformed raw content", msg)
+	}
+	for _, event := range events {
+		if event.Type == EventToolCallStart || event.Type == EventToolCallArgumentsDelta || event.Type == EventToolCallEnd {
+			t.Fatalf("malformed trailing text emitted tool event: %+v", event)
+		}
+	}
+	if got := eventText(events, EventContentDelta); got != text {
+		t.Errorf("content events = %q, want %q", got, text)
+	}
+}
+
+func TestGLMStreamPartialTrailingMarkerDoesNotEmitToolEvents(t *testing.T) {
+	const text = "<tool_call>list</tool_call><tool"
+	events, msg := feedGLM(t, false, text)
+	if len(msg.ToolCalls) != 0 || msg.MalformedReason == "" {
+		t.Fatalf("parsed message = %+v, want malformed raw content", msg)
+	}
+	for _, event := range events {
+		if event.Type == EventToolCallStart || event.Type == EventToolCallArgumentsDelta || event.Type == EventToolCallEnd {
+			t.Fatalf("partial trailing marker emitted tool event: %+v", event)
+		}
+	}
+	if got := eventText(events, EventContentDelta); got != text {
+		t.Errorf("content events = %q, want %q", got, text)
+	}
+}
+
+func TestGLMStreamEOSValidatesToolEvents(t *testing.T) {
+	events, msg := feedGLM(t, false,
+		"<tool_call>list<arg_key>path</arg_key><arg_value>.</arg_value></tool_call>"+eosToken)
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(msg.ToolCalls))
+	}
+	foundEnd := false
+	for _, event := range events {
+		foundEnd = foundEnd || event.Type == EventToolCallEnd
+	}
+	if !foundEnd {
+		t.Fatal("valid GLM call followed by EOS emitted no tool-call end event")
+	}
+}
+
 // The default constructor stays on DSML.
 func TestNewStreamDecoderDefaultsToDSML(t *testing.T) {
 	d := NewStreamDecoder(false)

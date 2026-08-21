@@ -797,10 +797,22 @@ func (d *StreamDecoder) processGLMAfterCall(events *[]StreamEvent) {
 		d.state = stateGLMName
 		return
 	}
-	if len(trimmed) == 0 || matchPartial(trimmed, glmToolCallStart) {
+	if bytes.HasPrefix(trimmed, []byte(eosToken)) {
+		d.buf = trimmed[len(eosToken):]
+		d.completeToolBlock(events)
+		d.state = stateDone
+		return
+	}
+	if len(trimmed) == 0 {
+		return
+	}
+	if !d.finalPass && (matchPartial(trimmed, glmToolCallStart) || matchPartial(trimmed, eosToken)) {
 		return // another call may still be forming
 	}
-	d.completeToolBlock(events)
+	// The strict completion parser rejects prose after the final GLM call.
+	// Discard the pending tool events and replay the stanza as content so live
+	// streaming agrees with the ParsedMessage returned by Close.
+	d.enterRawMode(events)
 }
 
 // finishGLMCall closes the in-flight call, recording its arguments.

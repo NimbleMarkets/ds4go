@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 func TestSelectBackend_ExplicitFlags(t *testing.T) {
@@ -149,6 +150,52 @@ func TestGenerateOptionsCarriesThinkMode(t *testing.T) {
 			}
 			if got := cfg.GenerateOptions().ThinkMode; got != cfg.ThinkMode() {
 				t.Errorf("GenerateOptions().ThinkMode = %v, want ThinkMode() = %v", got, cfg.ThinkMode())
+			}
+		})
+	}
+}
+
+func TestEngineOptionsCarryContextSizing(t *testing.T) {
+	cli := CLIConfig{Ctx: 32768}
+	if got := cli.EngineOptions(); got.ContextSize != cli.Ctx || got.PlacementCtxHint != cli.Ctx {
+		t.Errorf("CLI EngineOptions context = (%d, %d), want (%d, %d)",
+			got.ContextSize, got.PlacementCtxHint, cli.Ctx, cli.Ctx)
+	}
+	server := ServerConfig{Ctx: 65536}
+	if got := server.EngineOptions(); got.ContextSize != server.Ctx || got.PlacementCtxHint != server.Ctx {
+		t.Errorf("server EngineOptions context = (%d, %d), want (%d, %d)",
+			got.ContextSize, got.PlacementCtxHint, server.Ctx, server.Ctx)
+	}
+}
+
+func TestEngineOptionsSuppressExternalMTPForGLM(t *testing.T) {
+	glm, ok := models.Lookup("glm-q2")
+	if !ok {
+		t.Fatal("missing glm-q2 catalog entry")
+	}
+	deepseek, ok := models.Lookup("q2-imatrix")
+	if !ok {
+		t.Fatal("missing q2-imatrix catalog entry")
+	}
+
+	const mtp = "/models/deepseek-mtp.gguf"
+	cliGLM := CLIConfig{Model: glm.FileName, MTP: mtp}
+	serverGLM := ServerConfig{Model: glm.FileName, MTP: mtp}
+	cliDeepSeek := CLIConfig{Model: deepseek.FileName, MTP: mtp}
+	serverDeepSeek := ServerConfig{Model: deepseek.FileName, MTP: mtp}
+	for _, test := range []struct {
+		name string
+		got  ds4.EngineOptions
+		want string
+	}{
+		{"CLI GLM", cliGLM.EngineOptions(), ""},
+		{"server GLM", serverGLM.EngineOptions(), ""},
+		{"CLI DeepSeek", cliDeepSeek.EngineOptions(), mtp},
+		{"server DeepSeek", serverDeepSeek.EngineOptions(), mtp},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got.MTPPath != test.want {
+				t.Errorf("MTPPath = %q, want %q", test.got.MTPPath, test.want)
 			}
 		})
 	}

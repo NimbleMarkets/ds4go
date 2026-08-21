@@ -67,6 +67,18 @@ func TestDefaultMTPPath(t *testing.T) {
 	}
 }
 
+func TestApplyMTPDefaultsSuppressesExternalMTPForGLM(t *testing.T) {
+	glm, ok := models.Lookup("glm-q2")
+	if !ok {
+		t.Fatal("missing glm-q2 catalog entry")
+	}
+	opts := EngineOptions{ModelPath: glm.FileName, MTPPath: "/models/deepseek-mtp.gguf"}
+	ApplyMTPDefaults(&opts)
+	if opts.MTPPath != "" {
+		t.Errorf("MTPPath = %q, want empty for GLM", opts.MTPPath)
+	}
+}
+
 func TestDefaultLibraryPathIgnoresCWD(t *testing.T) {
 	// A libds4 planted in the working directory must never be selected:
 	// loading a shared library from the CWD is a binary-planting vector.

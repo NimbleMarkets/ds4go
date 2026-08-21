@@ -152,6 +152,32 @@ func TestEnginePrefillChunk(t *testing.T) {
 	}
 }
 
+func TestEngineOpenCarriesContextPlacementHints(t *testing.T) {
+	lib := NewMockLibrary()
+	eng, err := lib.NewEngine(EngineOptions{
+		ContextSize:                  32768,
+		PlacementCtxHint:             65536,
+		PlacementSessionCountHint:    3,
+		ShareSessionPrefillWorkspace: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	mock := mockEnginePtr(eng.ptr)
+	if mock == nil {
+		t.Fatal("mock engine is missing")
+	}
+	if mock.contextSize != 32768 || mock.placementCtxHint != 65536 || mock.placementSessionCountHint != 3 {
+		t.Errorf("context hints = (%d, %d, %d), want (32768, 65536, 3)",
+			mock.contextSize, mock.placementCtxHint, mock.placementSessionCountHint)
+	}
+	if !mock.shareSessionPrefillWorkspace {
+		t.Error("ShareSessionPrefillWorkspace was not passed to ds4_engine_open")
+	}
+}
+
 func TestSessionPrefillCap(t *testing.T) {
 	lib := NewMockLibrary()
 	eng := openMockEngine(t, lib)

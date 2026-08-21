@@ -191,11 +191,20 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		simUsedBytes = b
 	}
 
+	mtpPath := c.MTP
+	if model, ok := models.ModelForPath(c.Model); ok && model.GLM {
+		// libds4 rejects an external --mtp support model for GLM. GLM 5.2's
+		// optional next-token predictor is embedded in the base GGUF instead.
+		mtpPath = ""
+	}
+
 	return ds4.EngineOptions{
 		ModelPath:                  c.Model,
-		MTPPath:                    c.MTP,
+		MTPPath:                    mtpPath,
 		Backend:                    c.SelectBackend(),
 		NThreads:                   c.Threads,
+		ContextSize:                c.Ctx,
+		PlacementCtxHint:           c.Ctx,
 		PrefillChunk:               c.PrefillChunk,
 		MTPDraftTokens:             c.MTPDraft,
 		MTPMargin:                  c.MTPMargin,
@@ -383,11 +392,18 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 		simUsedBytes = b
 	}
 
+	mtpPath := c.MTP
+	if model, ok := models.ModelForPath(c.Model); ok && model.GLM {
+		mtpPath = ""
+	}
+
 	return ds4.EngineOptions{
 		ModelPath:                  c.Model,
-		MTPPath:                    c.MTP,
+		MTPPath:                    mtpPath,
 		Backend:                    c.SelectBackend(),
 		NThreads:                   c.Threads,
+		ContextSize:                c.Ctx,
+		PlacementCtxHint:           c.Ctx,
 		PrefillChunk:               c.PrefillChunk,
 		MTPDraftTokens:             c.MTPDraft,
 		MTPMargin:                  c.MTPMargin,
