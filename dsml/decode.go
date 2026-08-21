@@ -102,7 +102,7 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 		_, content, _ := readUntilStop(contentBase, text, []string{eosToken})
 		content = strings.TrimSpace(content)
 		if contentHasStrayMarker(content) {
-			return rawCompletionMessage(text, "DSML markup outside a valid tool_calls block"), nil
+			return rawCompletionMessage(text, "DSML markup outside a valid tool_calls block", thinking), nil
 		}
 		msg.Content = content
 		return msg, nil
@@ -110,7 +110,7 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 	if eos := indexFrom(text, contentBase, eosToken); eos >= 0 && eos < start {
 		content := strings.TrimSpace(text[contentBase:eos])
 		if contentHasStrayMarker(content) {
-			return rawCompletionMessage(text, "DSML markup outside a valid tool_calls block"), nil
+			return rawCompletionMessage(text, "DSML markup outside a valid tool_calls block", thinking), nil
 		}
 		msg.Content = content
 		return msg, nil
@@ -119,7 +119,7 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 	msg.Content = strings.TrimSpace(text[contentBase:rawStart])
 	calls, end, rawBlock, err := parseToolCalls(start, rawStart, text, syn, implicit)
 	if err != nil {
-		return rawCompletionMessage(text, err.Error()), nil
+		return rawCompletionMessage(text, err.Error(), thinking), nil
 	}
 	if !implicit {
 		// Exact replay is only valid for a full tool_calls block. An implicit
@@ -133,7 +133,7 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 
 	_, trailing, _ := readUntilStop(end, text, []string{eosToken})
 	if strings.TrimSpace(trailing) != "" {
-		return rawCompletionMessage(text, "unexpected text after the tool_calls block"), nil
+		return rawCompletionMessage(text, "unexpected text after the tool_calls block", thinking), nil
 	}
 	return msg, nil
 }
@@ -153,13 +153,28 @@ func contentHasStrayMarker(content string) bool {
 // rawCompletionMessage is the fallback for completions whose tool stanza could
 // not be parsed: the raw text becomes plain content and reason records why the
 // stanza degraded.
-func rawCompletionMessage(text, reason string) ParsedMessage {
-	_, content, _ := readUntilStop(0, text, []string{eosToken})
-	return ParsedMessage{
-		Role:            "assistant",
-		Content:         strings.TrimSpace(content),
-		MalformedReason: reason,
+//
+// The thinking split is preserved. Folding the whole completion into Content
+// would lose the reasoning block and show the user raw <think> markers as the
+// assistant's reply, and markup left inside a closed think block is reasoning
+// rather than an executable call -- the same rule upstream ds4 applies in
+// "server: recover truncated DSML tool calls".
+func rawCompletionMessage(text, reason string, thinking bool) ParsedMessage {
+	msg := ParsedMessage{Role: "assistant", MalformedReason: reason}
+	base := 0
+	if thinking {
+		if end := strings.LastIndex(text, thinkingEndToken); end >= 0 {
+			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text[:end], thinkingStartToken))
+			base = end + len(thinkingEndToken)
+		} else {
+			// Thinking never closed: the whole completion is reasoning.
+			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text, thinkingStartToken))
+			return msg
+		}
 	}
+	_, content, _ := readUntilStop(base, text, []string{eosToken})
+	msg.Content = strings.TrimSpace(content)
+	return msg
 }
 
 func findToolBlockStart(text string, from int) (start int, rawStart int, syn dsmlSyntax, implicit bool, ok bool) {

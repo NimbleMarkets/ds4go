@@ -530,3 +530,67 @@ func TestHasTagPrefix(t *testing.T) {
 		}
 	}
 }
+
+// A completion that degrades to raw content must still honour the thinking
+// split. Folding the whole text into Content loses the reasoning block and
+// shows the user raw <think> markers as the assistant's reply. Upstream ds4
+// does the same in "server: recover truncated DSML tool calls": incomplete
+// markup inside a closed think block is flushed as reasoning.
+func TestMalformedCompletionKeepsReasoningSplit(t *testing.T) {
+	const text = "<think>reasoning here</think>answer <｜DSML｜invoke name=\"x\">broken"
+
+	msg, err := ParseCompletion(text, true)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.MalformedReason == "" {
+		t.Fatal("expected the stanza to degrade to raw content")
+	}
+	if msg.ReasoningContent != "reasoning here" {
+		t.Errorf("ReasoningContent = %q, want %q", msg.ReasoningContent, "reasoning here")
+	}
+	if strings.Contains(msg.Content, "<think>") || strings.Contains(msg.Content, "</think>") {
+		t.Errorf("Content leaks thinking markers: %q", msg.Content)
+	}
+	if !strings.Contains(msg.Content, "answer") {
+		t.Errorf("Content lost the post-thinking reply: %q", msg.Content)
+	}
+}
+
+// A stanza that opens inside <think> but whose closing tag lands after
+// </think> is not executable. The reasoning must survive rather than being
+// dumped into the reply along with the markup.
+func TestStanzaSpanningThinkCloseKeepsReasoning(t *testing.T) {
+	const text = "<think>plan <｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"bash\">\n" +
+		"<｜DSML｜parameter name=\"command\" string=\"true\">pwd</｜DSML｜parameter>\n" +
+		"</｜DSML｜invoke></think>\n</｜DSML｜tool_calls>"
+
+	msg, err := ParseCompletion(text, true)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("executed %d calls from a stanza spanning </think>, want 0", len(msg.ToolCalls))
+	}
+	if !strings.Contains(msg.ReasoningContent, "plan") {
+		t.Errorf("ReasoningContent lost the thinking text: %q", msg.ReasoningContent)
+	}
+	if strings.Contains(msg.Content, "<think>") {
+		t.Errorf("Content leaks thinking markers: %q", msg.Content)
+	}
+}
+
+// Without thinking, the raw fallback is unchanged.
+func TestMalformedCompletionWithoutThinkingUnchanged(t *testing.T) {
+	const text = "answer <｜DSML｜invoke name=\"x\">broken"
+	msg, err := ParseCompletion(text, false)
+	if err != nil {
+		t.Fatalf("ParseCompletion: %v", err)
+	}
+	if msg.ReasoningContent != "" {
+		t.Errorf("ReasoningContent = %q, want empty without thinking", msg.ReasoningContent)
+	}
+	if !strings.Contains(msg.Content, "answer") {
+		t.Errorf("Content = %q, want the raw text", msg.Content)
+	}
+}

@@ -183,14 +183,14 @@ func parseGLMCompletion(text string, thinking bool) (ParsedMessage, error) {
 
 	calls, end, err := glmParseToolCalls(start, text)
 	if err != nil {
-		return rawCompletionMessage(text, err.Error()), nil
+		return rawCompletionMessage(text, err.Error(), thinking), nil
 	}
 	msg.Content = strings.TrimSpace(text[contentBase:start])
 	msg.ToolCalls = calls
 
 	_, trailing, _ := readUntilStop(end, text, []string{eosToken})
 	if strings.TrimSpace(trailing) != "" {
-		return rawCompletionMessage(text, "unexpected text after the GLM tool call"), nil
+		return rawCompletionMessage(text, "unexpected text after the GLM tool call", thinking), nil
 	}
 	return msg, nil
 }
