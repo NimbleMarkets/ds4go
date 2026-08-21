@@ -79,6 +79,7 @@ func newModelInfoCommand() *cobra.Command {
 func newModelDownloadCommand() *cobra.Command {
 	var token string
 	var dryRun bool
+	var force bool
 	cmd := &cobra.Command{
 		Use:     "download [alias]",
 		Aliases: []string{"pull"},
@@ -86,11 +87,12 @@ func newModelDownloadCommand() *cobra.Command {
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runModelDownloadWithToken(args, token, dryRun)
+			return runModelDownloadWithToken(args, token, dryRun, force)
 		},
 	}
 	cmd.Flags().StringVar(&token, "token", "", "Hugging Face token (defaults to HF_TOKEN or ~/.cache/huggingface/token)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be downloaded without downloading it")
+	cmd.Flags().BoolVar(&force, "force", false, "download even when the target volume looks too small")
 	return cmd
 }
 
@@ -264,7 +266,7 @@ func runModelSet(args []string) error {
 	return nil
 }
 
-func runModelDownloadWithToken(args []string, token string, dryRun bool) error {
+func runModelDownloadWithToken(args []string, token string, dryRun, force bool) error {
 	alias := ""
 	if len(args) > 0 {
 		alias = args[0]
@@ -287,7 +289,7 @@ func runModelDownloadWithToken(args []string, token string, dryRun bool) error {
 		_, err := modelManager().DownloadDryRun(context.Background(), alias, token)
 		return err
 	}
-	model, err := modelManager().Download(context.Background(), alias, token)
+	model, err := modelManager().Download(context.Background(), alias, token, force)
 	if err != nil {
 		return err
 	}

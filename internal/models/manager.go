@@ -192,7 +192,7 @@ func (m *Manager) setLocked(alias string) error {
 }
 
 // Download downloads a curated model from Hugging Face with resume support.
-func (m *Manager) Download(ctx context.Context, alias, token string) (Model, error) {
+func (m *Manager) Download(ctx context.Context, alias, token string, force bool) (Model, error) {
 	model, ok := lookup(alias)
 	if !ok {
 		return Model{}, unknownAlias(alias)
@@ -220,6 +220,23 @@ func (m *Manager) Download(ctx context.Context, alias, token string) (Model, err
 		}
 		return model, nil
 	}
+	// Refuse a download the volume cannot hold, before writing a byte. The
+	// remote size is authoritative; the catalog figure is the fallback when
+	// the HEAD fails. Runs after the already-installed return above, so
+	// re-running on a complete model is never blocked.
+	if !force {
+		total := int64(0)
+		if meta, err := m.remoteMetadata(ctx, modelDownloadURL(model), token); err == nil && meta.Size > 0 {
+			total = meta.Size
+		} else if model.SizeGB > 0 {
+			total = int64(model.SizeGB * (1 << 30))
+		}
+		_, have := m.partial(model)
+		if err := m.checkDiskSpace(m.ModelsDir, model.FileName, total, have); err != nil {
+			return Model{}, err
+		}
+	}
+
 	// Hold an exclusive lock for the duration of the download so a second
 	// process cannot race on the same .part file and corrupt it.
 	lock, err := TryLock(out + ".lock")
@@ -296,16 +313,23 @@ func (m *Manager) DownloadDryRun(ctx context.Context, alias, token string) (Mode
 		}
 	}
 
+	total := int64(0)
+	if model.SizeGB > 0 {
+		total = int64(model.SizeGB * (1 << 30))
+	}
 	if meta, err := m.remoteMetadata(ctx, url, token); err != nil {
 		fmt.Fprintf(m.Out, "  Remote:      metadata unavailable (%v)\n", err)
 	} else {
 		if meta.Size > 0 {
+			total = meta.Size
 			fmt.Fprintf(m.Out, "  Remote size: %s\n", formatBytes(meta.Size))
 		}
 		if meta.SHA256 != "" {
 			fmt.Fprintf(m.Out, "  Remote SHA:  %s\n", meta.SHA256)
 		}
 	}
+	_, have := m.partial(model)
+	fmt.Fprintf(m.Out, "  Disk space:  %s\n", m.diskSpaceReport(m.ModelsDir, total, have))
 	return model, nil
 }
 

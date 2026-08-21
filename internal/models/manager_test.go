@@ -103,7 +103,7 @@ func TestDownloadWritesModelAndConfig(t *testing.T) {
 	hfRepoBase = srv.URL
 	defer func() { hfRepoBase = oldRepo }()
 
-	if _, err := m.Download(context.Background(), "q2-imatrix", ""); err != nil {
+	if _, err := m.Download(context.Background(), "q2-imatrix", "", false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(m.ModelsDir, model.FileName))
@@ -245,7 +245,7 @@ func TestDownloadQuarantinesHashMismatch(t *testing.T) {
 	hfRepoBase = srv.URL
 	defer func() { hfRepoBase = oldRepo }()
 
-	if _, err := m.Download(context.Background(), "q2-imatrix", ""); err == nil {
+	if _, err := m.Download(context.Background(), "q2-imatrix", "", false); err == nil {
 		t.Fatal("Download succeeded, want hash mismatch")
 	}
 	if _, err := os.Stat(filepath.Join(m.ModelsDir, model.FileName+".part")); err != nil {
@@ -296,7 +296,7 @@ func TestDownloadPromotesCompletePartialBeforeRange(t *testing.T) {
 	hfRepoBase = srv.URL
 	defer func() { hfRepoBase = oldRepo }()
 
-	if _, err := m.Download(context.Background(), "mtp", ""); err != nil {
+	if _, err := m.Download(context.Background(), "mtp", "", false); err != nil {
 		t.Fatal(err)
 	}
 	if getCalled {
@@ -470,7 +470,7 @@ func TestDownloadDefaultsToFirstInferenceableModel(t *testing.T) {
 	ctx := context.Background()
 
 	// An adjunct model (mtp) alone never produces a default.
-	if _, err := m.Download(ctx, "mtp", ""); err != nil {
+	if _, err := m.Download(ctx, "mtp", "", false); err != nil {
 		t.Fatalf("download mtp: %v", err)
 	}
 	if got := defaultAlias(t, m); got != "" {
@@ -478,7 +478,7 @@ func TestDownloadDefaultsToFirstInferenceableModel(t *testing.T) {
 	}
 
 	// The first inferenceable model becomes the default.
-	if _, err := m.Download(ctx, "q2-imatrix", ""); err != nil {
+	if _, err := m.Download(ctx, "q2-imatrix", "", false); err != nil {
 		t.Fatalf("download q2-imatrix: %v", err)
 	}
 	if got := defaultAlias(t, m); got != "q2-imatrix" {
@@ -486,7 +486,7 @@ func TestDownloadDefaultsToFirstInferenceableModel(t *testing.T) {
 	}
 
 	// A later inferenceable download must not steal the default.
-	if _, err := m.Download(ctx, "q4-imatrix", ""); err != nil {
+	if _, err := m.Download(ctx, "q4-imatrix", "", false); err != nil {
 		t.Fatalf("download q4-imatrix: %v", err)
 	}
 	if got := defaultAlias(t, m); got != "q2-imatrix" {
