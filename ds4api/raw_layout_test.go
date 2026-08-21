@@ -16,15 +16,18 @@ import (
 // ds4.h gains a field, both the Go struct and these numbers stay stale and the
 // test still passes while the ABI silently breaks.
 //
-// Detecting upstream drift is therefore a manual sync step -- re-derive the
-// layout from the current header and compare:
+// Detecting upstream drift is therefore a separate step, which
+// scripts/check-ds4-sync.sh performs: it recompiles the real header, reports
+// every field named below through offsetof, and diffs that against these
+// numbers. Run it after each upstream sync:
 //
-//	printf '#include <stddef.h>\n#include <stdio.h>\n#include "ds4.h"\n'\
-//	  'int main(void){printf("%%zu\\n", sizeof(ds4_engine_options));}' > /tmp/z.c
-//	cc -I/path/to/ds4 -o /tmp/z /tmp/z.c && /tmp/z   # must equal the size below
+//	task ds4:sync           # or: DS4_SRC=../ds4 ./scripts/check-ds4-sync.sh
 //
-// When it differs, re-derive every offset with offsetof and update both the Go
-// struct and these numbers -- never adjust the numbers to match the Go struct.
+// When it reports drift, update both the Go struct in raw.go and these numbers
+// to match the header -- never adjust the numbers to match the Go struct.
+//
+// The script parses the field names and offsets straight out of this file, so
+// keep the {"c_field_name", unsafe.Offsetof(...), N} shape below intact.
 
 type fieldOffset struct {
 	name string

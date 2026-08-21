@@ -62,6 +62,11 @@ tasks:
     cmds:
       - go vet ./... ./cmd/...
 
+  ds4:sync:
+    desc: Check the FFI mirrors against an upstream ds4 checkout (DS4_SRC=../ds4)
+    cmds:
+      - ./scripts/check-ds4-sync.sh
+
   pre-push:
     desc: Verify formatting, build, and vet — run this before pushing
     cmds:

@@ -51,6 +51,12 @@ to avoid binary planting.
 - **macOS Code Signing**: macOS on Apple Silicon (arm64) requires all binaries to be signed. Foreign ad-hoc signed libraries (built on remote CI runners) will trigger a kernel `SIGKILL` on load. The validator and installer must verify code signature status and refuse loading invalid or foreign ad-hoc signed libraries, directing users to sign locally via `codesign -s - --force <libPath>`.
 - **Stderr Logging Redirection**: Logging is redirected via process-global file descriptors using `SetStderr`, `SetStderrFd`, `DiscardLogs`, and `CaptureStderr`. Do not use or reintroduce callback-based logging (`SetLogFunc`). Redirection is not supported on Windows.
 - **Backend Detection**: Use `DetectDefaultBackend(libPath)` to query preferred backends from the `ds4go-install.json` metadata sidecar file or fall back to system capability checks (e.g. checking `/dev/nvidiactl` or `nvidia-smi` on Linux).
+- After syncing the upstream ds4 checkout, run `task ds4:sync`
+  (`scripts/check-ds4-sync.sh`). `ds4api` mirrors C structs that libds4 reads by
+  byte offset, so an upstream field insertion breaks the ABI with no compile or
+  load error, and the Go layout test cannot catch it: its expectations are a
+  recorded snapshot that goes stale alongside the Go struct. The script
+  recompiles the real header and diffs it against those expectations.
 - Before committing or handing off substantial code changes, run:
 
 ```sh
