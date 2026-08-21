@@ -95,7 +95,8 @@ func renderGLMToolsSection(tools []Tool) (string, error) {
 		}
 		schemas[i] = fmt.Sprintf(
 			`{"type": "function", "function": {"name": %s, "description": %s, "parameters": %s}}`,
-			toJSONString(t.Name), toJSONString(t.Description), string(params))
+			canonicalJSONString(t.Name), canonicalJSONString(t.Description),
+			canonicalSchemaParams(params))
 	}
 	return fmt.Sprintf(glmToolsSectionTemplate, strings.Join(schemas, "\n")), nil
 }

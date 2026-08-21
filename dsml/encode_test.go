@@ -26,7 +26,9 @@ func TestRenderToolsSection(t *testing.T) {
 	if !strings.Contains(out, `"description": "Add two numbers"`) {
 		t.Errorf("missing rendered description in:\n%s", out)
 	}
-	if !strings.Contains(out, `"parameters": {"type":"object"}`) {
+	// Parameters are canonicalized (ds4-server's json_prompt_value spelling),
+	// so the caller's compact form renders with the default separators.
+	if !strings.Contains(out, `"parameters": {"type": "object"}`) {
 		t.Errorf("missing rendered parameters in:\n%s", out)
 	}
 }

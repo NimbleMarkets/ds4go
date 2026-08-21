@@ -72,7 +72,8 @@ func RenderToolsSectionSyntax(syntax Syntax, tools []Tool) (string, error) {
 			return "", fmt.Errorf("dsml: tool %q parameters must be a JSON object", t.Name)
 		}
 		schemas[i] = fmt.Sprintf(`{"name": %s, "description": %s, "parameters": %s}`,
-			toJSONString(t.Name), toJSONString(t.Description), string(params))
+			canonicalJSONString(t.Name), canonicalJSONString(t.Description),
+			canonicalSchemaParams(params))
 	}
 	return fmt.Sprintf(toolsSectionTemplate, strings.Join(schemas, "\n")), nil
 }
