@@ -79,6 +79,7 @@ type cEngineOptions struct {
 	GLMMTPTiming                 bool
 	Dspark                       bool
 	DsparkStrict                 bool
+	DsparkExactSampling          bool
 	DsparkConfidenceThresholdSet bool
 	CUDATensorParallel           bool
 	SSDStreaming                 bool
