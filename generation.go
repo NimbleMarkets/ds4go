@@ -46,8 +46,9 @@ type GenerateOptions struct {
 	// SampleControl, when non-nil, is consulted before each token is sampled.
 	// Returning true forces argmax (greedy) sampling for that token regardless
 	// of Temperature; configured Temperature>0 sampling applies otherwise. It is
-	// a no-op when Temperature<=0 (already argmax) and is never consulted on the
-	// speculative-decoding path, which only runs at Temperature<=0.
+	// a no-op when Temperature<=0 (already argmax). Speculative decoding honours
+	// it too: a token it forces greedy is verified by the argmax speculative
+	// path, so markup structure is never sampled through.
 	SampleControl func() bool
 }
 
@@ -144,9 +145,13 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	var rng = opts.Seed
 	out := make([]int, 0, maxTokens)
 
-	// Speculative decoding via MTP is only available in plain argmax mode.
+	// Speculative decoding via MTP. At positive temperature it needs the sampled
+	// entry point: verifying a sampled run with the argmax one would quietly
+	// ignore the sampling parameters, so an older libds4 falls back to ordinary
+	// token-at-a-time decoding instead.
 	useSpec := g.Engine != nil && g.Engine.HasMTP() && g.Engine.MTPDraftTokens() > 1 &&
-		opts.Temperature <= 0 && opts.ExcludeToken == 0
+		opts.ExcludeToken == 0 &&
+		(opts.Temperature <= 0 || g.Engine.SupportsSampledSpeculative())
 
 	i := 0
 	for i < maxTokens {
@@ -157,8 +162,11 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 			default:
 			}
 		}
+		// Consulted once per token: SampleControl drives both how this token is
+		// drawn and how a speculative block verifies it.
+		greedy := shouldSampleGreedy(opts)
 		var token int
-		if !shouldSampleGreedy(opts) {
+		if !greedy {
 			token = g.Session.Sample(opts.Temperature, opts.TopK, opts.TopP, opts.MinP, &rng)
 		} else if opts.ExcludeToken != 0 {
 			token = g.Session.ArgmaxExcluding(opts.ExcludeToken)
@@ -173,7 +181,19 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 			if draft > g.Engine.MTPDraftTokens() {
 				draft = g.Engine.MTPDraftTokens()
 			}
-			accepted, err := g.Session.EvalSpeculativeArgmax(token, draft, eos)
+			var accepted []int
+			var err error
+			if greedy {
+				accepted, err = g.Session.EvalSpeculativeArgmax(token, draft, eos)
+			} else {
+				accepted, err = g.Session.EvalSpeculative(token, draft, eos, ds4api.SpeculativeOptions{
+					Temperature: opts.Temperature,
+					TopK:        opts.TopK,
+					TopP:        opts.TopP,
+					MinP:        opts.MinP,
+					RNG:         &rng,
+				})
+			}
 			if err != nil {
 				return out, err
 			}

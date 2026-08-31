@@ -112,6 +112,14 @@ func (l *Library) SupportsSessionCancel() bool {
 	return l != nil && l.raw.ds4SessionSetCancel != nil
 }
 
+// SupportsSampledSpeculative reports whether the loaded library exports
+// ds4_session_eval_speculative, the positive-temperature counterpart to
+// ds4_session_eval_speculative_argmax. When false, speculative decoding is
+// only available in greedy mode.
+func (l *Library) SupportsSampledSpeculative() bool {
+	return l != nil && l.raw.ds4SessionEvalSpeculative != nil
+}
+
 // SupportsGLM reports whether the loaded library exports the GLM DSA entry
 // points. When false, the library predates upstream GLM 5.2 support and can
 // only run DeepSeek V4 shapes; Engine.IsGLMDSA is then always false and the
@@ -235,6 +243,11 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4SessionCopyLogits, "ds4_session_copy_logits")
 	mustRegister(&r.ds4SessionEval, "ds4_session_eval")
 	mustRegister(&r.ds4SessionEvalSpeculativeArgmax, "ds4_session_eval_speculative_argmax")
+	// Sampled speculative decoding arrived with upstream's exact stochastic
+	// DSpark work; older libds4 builds only have the argmax entry point.
+	if _, err := purego.Dlsym(l.handle, "ds4_session_eval_speculative"); err == nil {
+		mustRegister(&r.ds4SessionEvalSpeculative, "ds4_session_eval_speculative")
+	}
 	mustRegister(&r.ds4SessionInvalidate, "ds4_session_invalidate")
 	mustRegister(&r.ds4SessionRewind, "ds4_session_rewind")
 	mustRegister(&r.ds4SessionPos, "ds4_session_pos")

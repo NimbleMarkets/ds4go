@@ -340,3 +340,81 @@ func TestToolRegistryParseAssistantGLM(t *testing.T) {
 		t.Error("tool call ID is empty, want an assigned id")
 	}
 }
+
+// specMockEngine returns an engine with MTP speculative decoding available.
+func specMockEngine(t *testing.T) (*Engine, *ds4api.MockControls) {
+	t.Helper()
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(ds4api.EngineOptions{MTPPath: "mtp.gguf", MTPDraftTokens: 4})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	t.Cleanup(eng.Close)
+	return eng, ctl
+}
+
+// Speculative decoding used to be abandoned whenever Temperature > 0, because
+// only the argmax entry point was bound. With ds4_session_eval_speculative
+// available, a sampled run should still speculate.
+func TestGenerateSpeculatesAtPositiveTemperature(t *testing.T) {
+	eng, ctl := specMockEngine(t)
+	generateN(t, eng, GenerateOptions{MaxTokens: 6, StopOnEOS: true, Temperature: 0.8})
+
+	argmax, sampled := ctl.SpeculativeCalls()
+	if sampled == 0 {
+		t.Errorf("sampled speculative calls = 0 (argmax = %d): temperature run did not speculate", argmax)
+	}
+}
+
+// Greedy runs keep using the argmax entry point, which needs no sampler.
+func TestGenerateUsesArgmaxSpeculationWhenGreedy(t *testing.T) {
+	eng, ctl := specMockEngine(t)
+	generateN(t, eng, GenerateOptions{MaxTokens: 6, StopOnEOS: true, Temperature: 0})
+
+	argmax, sampled := ctl.SpeculativeCalls()
+	if argmax == 0 {
+		t.Errorf("argmax speculative calls = 0 (sampled = %d): greedy run did not speculate", sampled)
+	}
+	if sampled != 0 {
+		t.Errorf("greedy run made %d sampled speculative calls, want 0", sampled)
+	}
+}
+
+// SampleControl forces argmax for a token so DSML/GLM markup structure is
+// emitted greedily. Speculation must honour that rather than sampling through
+// the structure it is meant to pin down.
+func TestGenerateSpeculationHonoursSampleControl(t *testing.T) {
+	eng, ctl := specMockEngine(t)
+	generateN(t, eng, GenerateOptions{
+		MaxTokens:     6,
+		StopOnEOS:     true,
+		Temperature:   0.8,
+		SampleControl: func() bool { return true }, // always force greedy
+	})
+
+	argmax, sampled := ctl.SpeculativeCalls()
+	if sampled != 0 {
+		t.Errorf("made %d sampled speculative calls while SampleControl forced greedy, want 0 (argmax = %d)",
+			sampled, argmax)
+	}
+	if argmax == 0 {
+		t.Error("forced-greedy run did not speculate at all")
+	}
+}
+
+// A libds4 without the sampled entry point must still generate, falling back
+// to ordinary token-at-a-time sampling rather than erroring.
+func TestGenerateFallsBackWithoutSampledSpeculative(t *testing.T) {
+	lib, _ := ds4api.NewMockLibraryWithControls()
+	lib.DisableSampledSpeculative()
+	eng, err := lib.NewEngine(ds4api.EngineOptions{MTPPath: "mtp.gguf", MTPDraftTokens: 4})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+
+	got := generateN(t, eng, GenerateOptions{MaxTokens: 5, StopOnEOS: true, Temperature: 0.8})
+	if len(got) != 5 {
+		t.Errorf("generated %d tokens without sampled speculation, want 5", len(got))
+	}
+}

@@ -151,6 +151,18 @@ type EngineOptions struct {
 	MTPDraftTokens int
 	// MTPMargin controls speculative acceptance confidence.
 	MTPMargin float32
+	// Dspark enables DSpark speculative decoding. It needs a draft model, so
+	// set MTPPath alongside it.
+	Dspark bool
+	// DsparkStrict requires DSpark's stricter verification.
+	DsparkStrict bool
+	// DsparkExactSampling selects exact stochastic p/q acceptance instead of
+	// committing greedily verified draft tokens. It only affects
+	// positive-temperature generation.
+	DsparkExactSampling bool
+	// DsparkConfidenceThreshold overrides DSpark's acceptance confidence. A
+	// zero value leaves ds4's own default in place.
+	DsparkConfidenceThreshold float32
 	// DirectionalSteeringFile points at an optional directional steering file.
 	DirectionalSteeringFile string
 	// DirectionalSteeringAttn scales directional steering in attention blocks.

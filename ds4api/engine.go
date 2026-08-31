@@ -49,14 +49,21 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	listenHostBytes, listenHostPtr := cStringPointer(opts.Distributed.ListenHost)
 	coordHostBytes, coordHostPtr := cStringPointer(opts.Distributed.CoordinatorHost)
 	copts := cEngineOptions{
-		ModelPath:                    modelPtr,
-		MTPPath:                      mtpPtr,
-		Backend:                      opts.Backend,
-		NThreads:                     int32(opts.NThreads),
-		ContextSize:                  int32(opts.ContextSize),
-		PrefillChunk:                 opts.PrefillChunk,
-		MTPDraftTokens:               int32(opts.MTPDraftTokens),
-		MTPMargin:                    opts.MTPMargin,
+		ModelPath:                 modelPtr,
+		MTPPath:                   mtpPtr,
+		Backend:                   opts.Backend,
+		NThreads:                  int32(opts.NThreads),
+		ContextSize:               int32(opts.ContextSize),
+		PrefillChunk:              opts.PrefillChunk,
+		MTPDraftTokens:            int32(opts.MTPDraftTokens),
+		MTPMargin:                 opts.MTPMargin,
+		Dspark:                    opts.Dspark,
+		DsparkStrict:              opts.DsparkStrict,
+		DsparkExactSampling:       opts.DsparkExactSampling,
+		DsparkConfidenceThreshold: opts.DsparkConfidenceThreshold,
+		// ds4 only reads the threshold when its companion flag is set, so a
+		// caller-supplied value would otherwise be silently ignored.
+		DsparkConfidenceThresholdSet: opts.DsparkConfidenceThreshold != 0,
 		DirectionalSteeringFile:      steerPtr,
 		ExpertProfilePath:            expertProfilePtr,
 		DirectionalSteeringAttn:      opts.DirectionalSteeringAttn,
@@ -706,6 +713,13 @@ func (e *Engine) IsGLMDSA() bool {
 		return false
 	}
 	return e.lib.raw.ds4EngineIsGLMDSA(e.ptr)
+}
+
+// SupportsSampledSpeculative reports whether the loaded library can speculate
+// at positive temperature (ds4_session_eval_speculative). When false, only
+// greedy speculation is available; see [Library.SupportsSampledSpeculative].
+func (e *Engine) SupportsSampledSpeculative() bool {
+	return e != nil && e.lib.SupportsSampledSpeculative()
 }
 
 // GLMReasoningEffortText returns the GLM reasoning-effort system line for mode,

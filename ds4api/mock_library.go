@@ -70,10 +70,30 @@ const (
 // GLM, EOS is the only generation stop, and no thinking-control markers.  It
 // is safe to call these from any goroutine.
 type MockControls struct {
-	mu       sync.RWMutex
-	glm      bool
-	stops    map[int32]bool
-	thinking map[int32]bool
+	mu              sync.RWMutex
+	glm             bool
+	stops           map[int32]bool
+	thinking        map[int32]bool
+	specArgmaxCall  int
+	specSampledCall int
+}
+
+// SpeculativeCalls reports how many times each speculative entry point was
+// invoked, so tests can assert which path a generator took.
+func (c *MockControls) SpeculativeCalls() (argmax, sampled int) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.specArgmaxCall, c.specSampledCall
+}
+
+func (c *MockControls) countSpeculative(sampled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if sampled {
+		c.specSampledCall++
+		return
+	}
+	c.specArgmaxCall++
 }
 
 // SetGLM makes the mock engine report the GLM DSA family (ds4_engine_is_glm_dsa).
@@ -125,6 +145,15 @@ func tokenSet(tokens []int) map[int32]bool {
 		set[int32(t)] = true
 	}
 	return set
+}
+
+// DisableSampledSpeculative drops ds4_session_eval_speculative from a mock
+// library, modelling a libds4 build that predates upstream's exact stochastic
+// DSpark work.
+func (l *Library) DisableSampledSpeculative() {
+	if l != nil {
+		l.raw.ds4SessionEvalSpeculative = nil
+	}
 }
 
 // NewMockLibrary returns a Library whose C symbols are backed by trivial
@@ -313,7 +342,18 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		return 0
 	}
 	r.ds4SessionEval = mockSessionEval
-	r.ds4SessionEvalSpeculativeArgmax = mockSessionEvalSpeculativeArgmax
+	r.ds4SessionEvalSpeculativeArgmax = func(s uintptr, firstToken, maxTokens, eosToken int32,
+		accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32 {
+		ctl.countSpeculative(false)
+		return mockSessionEvalSpeculativeArgmax(s, firstToken, maxTokens, eosToken, accepted, acceptedCap, err, errLen)
+	}
+	r.ds4SessionEvalSpeculative = func(s uintptr, firstToken, maxTokens, eosToken int32,
+		temperature float32, topK int32, topP, minP float32, rng *uint64,
+		accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32 {
+		ctl.countSpeculative(true)
+		return mockSessionEvalSpeculative(s, firstToken, maxTokens, eosToken,
+			temperature, topK, topP, minP, rng, accepted, acceptedCap, err, errLen)
+	}
 	r.ds4SessionInvalidate = func(s uintptr) {}
 	r.ds4SessionRewind = func(s uintptr, pos int32) {}
 	r.ds4SessionPos = mockSessionPos
@@ -620,8 +660,36 @@ func mockFreeSession(p uintptr) {
 // Mock symbol implementations.
 // ---------------------------------------------------------------------------
 
+// mockEngineOptions records the last cEngineOptions handed to ds4_engine_open
+// so tests can assert that public options reach the C struct.
+var (
+	mockEngineOptionsMu   sync.Mutex
+	mockLastEngineOptions cEngineOptions
+)
+
+// lastMockEngineOptions returns the options from the most recent mock
+// ds4_engine_open call.
+func lastMockEngineOptions() cEngineOptions {
+	mockEngineOptionsMu.Lock()
+	defer mockEngineOptionsMu.Unlock()
+	return mockLastEngineOptions
+}
+
 func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
+	if opt != nil {
+		mockEngineOptionsMu.Lock()
+		mockLastEngineOptions = *opt
+		mockEngineOptionsMu.Unlock()
+	}
 	eng := &mockEngine{eosToken: 1, hasMTP: false, hasOutputHead: true, mtpDraft: 1, nextToken: 42}
+	// The real engine enables MTP when a draft model is supplied, so the mock
+	// does too: otherwise the speculative paths are unreachable in tests.
+	if opt != nil && opt.MTPPath != nil {
+		eng.hasMTP = true
+		if opt.MTPDraftTokens > 1 {
+			eng.mtpDraft = opt.MTPDraftTokens
+		}
+	}
 	if opt != nil {
 		eng.powerPercent = opt.PowerPercent
 		eng.contextSize = opt.ContextSize
@@ -762,6 +830,14 @@ func mockSessionEval(s uintptr, token int32, err unsafe.Pointer, errLen uintptr)
 	sess.evaluated = append(sess.evaluated, token)
 	sess.pos++
 	return 0
+}
+
+// mockSessionEvalSpeculative mirrors the argmax mock; the sampling parameters
+// do not change which drafts the mock accepts, only that the call is wired.
+func mockSessionEvalSpeculative(s uintptr, firstToken int32, maxTokens int32, eosToken int32,
+	temperature float32, topK int32, topP float32, minP float32, rng *uint64,
+	accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32 {
+	return mockSessionEvalSpeculativeArgmax(s, firstToken, maxTokens, eosToken, accepted, acceptedCap, err, errLen)
 }
 
 func mockSessionEvalSpeculativeArgmax(s uintptr, firstToken int32, maxTokens int32, eosToken int32, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32 {

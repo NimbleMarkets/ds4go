@@ -186,6 +186,7 @@ type rawSymbols struct {
 	ds4SessionCopyLogits                func(s uintptr, out unsafe.Pointer, cap int32) int32
 	ds4SessionEval                      func(s uintptr, token int32, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionEvalSpeculativeArgmax     func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalSpeculative           func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, temperature float32, topK int32, topP float32, minP float32, rng *uint64, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
 	ds4SessionInvalidate                func(s uintptr)
 	ds4SessionRewind                    func(s uintptr, pos int32)
 	ds4SessionPos                       func(s uintptr) int32

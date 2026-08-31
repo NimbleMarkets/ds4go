@@ -24,6 +24,12 @@ var ErrDistributedNotSupported = errors.New("ds4: distributed inference is not s
 // libds4 build does not export ds4_session_set_cancel.
 var ErrCancelNotSupported = errors.New("ds4: session cancellation is not supported by the loaded library (missing symbol)")
 
+// ErrSpeculativeSamplingNotSupported is returned by Session.EvalSpeculative
+// when the loaded libds4 build predates ds4_session_eval_speculative. Callers
+// can check with errors.Is and fall back to greedy speculation or plain
+// sampling.
+var ErrSpeculativeSamplingNotSupported = errors.New("ds4: sampled speculative decoding is not supported by the loaded library (missing symbol)")
+
 // ErrSessionSyncInterrupted is returned when ds4_session_sync stops because
 // the installed cancel callback requested cooperative cancellation.
 var ErrSessionSyncInterrupted = errors.New("ds4: session sync interrupted")
@@ -811,4 +817,60 @@ func (s *Session) LoadLayerPayload(fp uintptr, payloadBytes uint64, tokens []int
 	code := s.lib.raw.ds4SessionLoadLayerPayload(s.ptr, fp, payloadBytes, tokensPtr, uint32(len(tokens)), layerStart, layerEnd, ptr, n)
 	runtime.KeepAlive(tokens)
 	return errorFromBuffer("ds4_session_load_layer_payload", code, buf)
+}
+
+// SpeculativeOptions carries the sampling parameters for [Session.EvalSpeculative].
+// They mirror [Session.Sample]: a non-positive Temperature makes the verifier
+// greedy, in which case [Session.EvalSpeculativeArgmax] is the cheaper call.
+type SpeculativeOptions struct {
+	Temperature float32
+	TopK        int
+	TopP        float32
+	MinP        float32
+	// RNG seeds and advances ds4's sampler. Passing nil uses a zero seed,
+	// which is valid and deterministic.
+	RNG *uint64
+}
+
+// EvalSpeculative evaluates an already-sampled token and speculatively extends
+// it under the given sampling parameters (ds4_session_eval_speculative), the
+// positive-temperature counterpart to [Session.EvalSpeculativeArgmax]. It
+// returns the accepted tokens, beginning with firstToken.
+//
+// Returns ErrSpeculativeSamplingNotSupported on libds4 builds that predate the
+// entry point; callers can check [Library.SupportsSampledSpeculative] first.
+func (s *Session) EvalSpeculative(firstToken, maxTokens, eosToken int, opts SpeculativeOptions) ([]int, error) {
+	unlock, err := s.require()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if maxTokens <= 0 {
+		return nil, nil
+	}
+	if s.lib.raw.ds4SessionEvalSpeculative == nil {
+		return nil, ErrSpeculativeSamplingNotSupported
+	}
+	rng := opts.RNG
+	if rng == nil {
+		var zero uint64
+		rng = &zero
+	}
+	accepted := make([]int32, maxTokens)
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionEvalSpeculative(s.ptr, int32(firstToken), int32(maxTokens),
+		int32(eosToken), opts.Temperature, int32(opts.TopK), opts.TopP, opts.MinP, rng,
+		unsafe.Pointer(&accepted[0]), int32(len(accepted)), ptr, n)
+	if code < 0 {
+		return nil, errorFromBuffer("ds4_session_eval_speculative", code, buf)
+	}
+	count := int(code)
+	if count > len(accepted) {
+		count = len(accepted)
+	}
+	out := make([]int, count)
+	for i := range out {
+		out[i] = int(accepted[i])
+	}
+	return out, nil
 }
