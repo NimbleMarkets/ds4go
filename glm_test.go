@@ -1,6 +1,8 @@
 package ds4
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
@@ -416,5 +418,171 @@ func TestGenerateFallsBackWithoutSampledSpeculative(t *testing.T) {
 	got := generateN(t, eng, GenerateOptions{MaxTokens: 5, StopOnEOS: true, Temperature: 0.8})
 	if len(got) != 5 {
 		t.Errorf("generated %d tokens without sampled speculation, want 5", len(got))
+	}
+}
+
+// Upstream drives GLM's embedded MTP through the same speculative entry
+// points, gated on mtp_draft_tokens > 1 alone: has_mtp stays false because no
+// external support model is loaded. The Go gate used to require HasMTP, so
+// GLM MTP could never engage.
+func TestGenerateSpeculatesWithEmbeddedGLMMTP(t *testing.T) {
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	ctl.SetGLM(true)
+	eng, err := lib.NewEngine(ds4api.EngineOptions{GLMMTP: true})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	if eng.HasMTP() {
+		t.Fatal("mock reports HasMTP for embedded GLM MTP; the gate under test would be vacuous")
+	}
+	generateN(t, eng, GenerateOptions{MaxTokens: 6, StopOnEOS: true, Temperature: 0.8})
+	argmax, sampled := ctl.SpeculativeCalls()
+	if argmax+sampled == 0 {
+		t.Error("embedded GLM MTP run did not speculate")
+	}
+}
+
+// Upstream 5b3cc8b: a stop token inside an accepted speculative block ends the
+// turn, and the draft tokens evaluated past it are discarded from the session
+// so Pos() agrees with the tokens actually kept.
+func TestContinueRewindsPastStopInsideSpeculativeBlock(t *testing.T) {
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(ds4api.EngineOptions{MTPPath: "mtp.gguf", MTPDraftTokens: 4})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	sess, err := eng.NewSession(128)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+	prompt := []int{11, 12, 13}
+	if err := sess.Sync(prompt); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	// The mock emits nextToken+pos, so the third generated token is
+	// predictable; make it a stop that is not EOS (the mock's speculative
+	// verifier only halts on EOS, like DSpark before 7a8c1b2).
+	first := sess.Argmax()
+	stop := first + 2
+	ctl.SetStopTokens(stop)
+
+	got, err := (Generator{Engine: eng, Session: sess}).Continue(GenerateOptions{MaxTokens: 8, StopOnEOS: true})
+	if err != nil {
+		t.Fatalf("Continue: %v", err)
+	}
+	if len(got) != 2 || got[0] != first || got[1] != first+1 {
+		t.Fatalf("generated %v, want [%d %d] then stop", got, first, first+1)
+	}
+	if want := len(prompt) + 2; sess.Pos() != want {
+		t.Errorf("Pos() = %d, want %d (draft past the stop discarded)", sess.Pos(), want)
+	}
+	if kept := sess.Tokens().Slice(); len(kept) != len(prompt)+2 || kept[len(kept)-1] != first+1 {
+		t.Errorf("session tokens = %v, want prompt plus the two kept tokens", kept)
+	}
+	if sess.Argmax() < 0 {
+		t.Error("session left without a valid checkpoint after the stop rewind")
+	}
+}
+
+// Upstream 930ab73: under exact sampling at positive temperature, a block whose
+// later tokens were drafted under the old parser mode is cut at the boundary
+// once SampleControl flips, the boundary token is re-evaluated, and the rest is
+// sampled afresh under the new mode. Opportunistic drafts are exempt.
+func TestContinueResamplesAtModeFlipUnderExactSampling(t *testing.T) {
+	run := func(t *testing.T, exact bool) (tokens []int, rewinds int, argmax, sampled int) {
+		lib, ctl := ds4api.NewMockLibraryWithControls()
+		eng, err := lib.NewEngine(ds4api.EngineOptions{MTPPath: "mtp.gguf", MTPDraftTokens: 4, DsparkExactSampling: exact})
+		if err != nil {
+			t.Fatalf("NewEngine: %v", err)
+		}
+		defer eng.Close()
+		seen := 0
+		opts := GenerateOptions{
+			MaxTokens:   8,
+			StopOnEOS:   true,
+			Temperature: 0.8,
+			// Sampled for the first two tokens, greedy afterwards: the flip
+			// lands inside the first four-token block.
+			SampleControl: func() bool { return seen >= 2 },
+			OnToken:       func(int) { seen++ },
+		}
+		tokens = generateN(t, eng, opts)
+		argmax, sampled = ctl.SpeculativeCalls()
+		return tokens, ctl.RewindCalls(), argmax, sampled
+	}
+
+	tokens, rewinds, argmax, sampled := run(t, true)
+	if len(tokens) != 8 {
+		t.Fatalf("exact: generated %d tokens, want 8", len(tokens))
+	}
+	for i := 1; i < len(tokens); i++ {
+		if tokens[i] != tokens[i-1]+1 {
+			t.Fatalf("exact: tokens %v are not contiguous; the re-evaluated boundary lost its position", tokens)
+		}
+	}
+	if rewinds == 0 {
+		t.Error("exact: no rewind at the greedy/sampled boundary")
+	}
+	if sampled == 0 || argmax == 0 {
+		t.Errorf("exact: speculative calls sampled=%d argmax=%d, want both modes used", sampled, argmax)
+	}
+
+	_, rewinds, _, _ = run(t, false)
+	if rewinds != 0 {
+		t.Errorf("opportunistic: %d rewinds at the mode flip, want 0", rewinds)
+	}
+}
+
+// When the caller ends the turn from OnToken (the tool loop cancels its round
+// context once a tool block closes), the draft tokens already evaluated past
+// that token are discarded, mirroring upstream's rewind on a completed tool
+// call mid-block.
+func TestContinueDiscardsDraftAfterCancelInsideSpeculativeBlock(t *testing.T) {
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(ds4api.EngineOptions{MTPPath: "mtp.gguf", MTPDraftTokens: 4})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	sess, err := eng.NewSession(128)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+	prompt := []int{11, 12, 13}
+	if err := sess.Sync(prompt); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seen := 0
+	got, err := (Generator{Engine: eng, Session: sess}).Continue(GenerateOptions{
+		MaxTokens: 8,
+		StopOnEOS: true,
+		Context:   ctx,
+		OnToken: func(int) {
+			seen++
+			if seen == 2 {
+				cancel()
+			}
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Continue error = %v, want context.Canceled", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("generated %v, want exactly the two tokens before the cancel", got)
+	}
+	if want := len(prompt) + 2; sess.Pos() != want {
+		t.Errorf("Pos() = %d, want %d (draft past the cancel discarded)", sess.Pos(), want)
+	}
+	if ctl.RewindCalls() == 0 {
+		t.Error("no rewind after the mid-block cancel")
+	}
+	if sess.Argmax() < 0 {
+		t.Error("session left without a valid checkpoint after the cancel rewind")
 	}
 }

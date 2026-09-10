@@ -125,3 +125,143 @@ func TestSessionDirectionalSteeringFFNUnsupported(t *testing.T) {
 }
 
 var _ = unsafe.Pointer(nil)
+
+// GLM's embedded MTP block is enabled through glm_mtp / glm_mtp_timing, which
+// the Go options never exposed even though the C mirror carried them.
+func TestNewEngineSetsGLMMTP(t *testing.T) {
+	lib := NewMockLibrary()
+	eng, err := lib.NewEngine(EngineOptions{GLMMTP: true, GLMMTPTiming: true})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	got := lastMockEngineOptions()
+	if !got.GLMMTP || !got.GLMMTPTiming {
+		t.Fatalf("glm_mtp=%v glm_mtp_timing=%v, want both true", got.GLMMTP, got.GLMMTPTiming)
+	}
+	// Upstream reports the embedded block through mtp_draft_tokens > 1 while
+	// has_mtp stays false (that needs an external support model).
+	if eng.HasMTP() {
+		t.Error("HasMTP() = true for embedded GLM MTP, want false")
+	}
+	if got := eng.MTPDraftTokens(); got <= 1 {
+		t.Errorf("MTPDraftTokens() = %d, want > 1 with embedded MTP", got)
+	}
+}
+
+// ds4_engine_mtp_exact_sampling (upstream 930ab73) reports whether exact
+// stochastic acceptance is active for DSpark or the GLM MTP block.
+func TestEngineMTPExactSampling(t *testing.T) {
+	lib := NewMockLibrary()
+	eng, err := lib.NewEngine(EngineOptions{DsparkExactSampling: true})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	if !eng.MTPExactSampling() {
+		t.Error("MTPExactSampling() = false with DsparkExactSampling set, want true")
+	}
+	lib.raw.ds4EngineMTPExactSampling = nil
+	if eng.MTPExactSampling() {
+		t.Error("MTPExactSampling() = true without the symbol, want false")
+	}
+}
+
+// Upstream 233eeb8: a plain rewind leaves DeepSeek without a valid checkpoint,
+// so argmax returns -1 and common_prefix returns 0 until the retained prefix
+// is synced again. GLM keeps its state.
+func TestSessionRewindInvalidatesDeepSeekCheckpoint(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	sess, err := eng.NewSession(64)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+	prompt := []int{11, 12, 13, 14, 15}
+	if err := sess.Sync(prompt); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if got := sess.Argmax(); got < 0 {
+		t.Fatalf("Argmax() after sync = %d, want a token", got)
+	}
+	sess.Rewind(3)
+	if got := sess.Pos(); got != 3 {
+		t.Fatalf("Pos() after Rewind(3) = %d, want 3", got)
+	}
+	if got := sess.Argmax(); got != -1 {
+		t.Errorf("Argmax() after DeepSeek rewind = %d, want -1 (no checkpoint)", got)
+	}
+	retained := sess.Tokens()
+	if got := retained.Slice(); len(got) != 3 || got[0] != 11 || got[2] != 13 {
+		t.Errorf("Tokens() after rewind = %v, want [11 12 13]", got)
+	}
+	if got := sess.CommonPrefix(retained); got != 0 {
+		t.Errorf("CommonPrefix() after DeepSeek rewind = %d, want 0", got)
+	}
+	if err := sess.Eval(99); err == nil {
+		t.Error("Eval() after DeepSeek rewind = nil, want checkpoint error")
+	}
+
+	ctl.SetGLM(true)
+	if err := sess.Sync(prompt); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	sess.Rewind(2)
+	if got := sess.Argmax(); got < 0 {
+		t.Errorf("Argmax() after GLM rewind = %d, want a token (state retained)", got)
+	}
+	if got := sess.CommonPrefix(sess.Tokens()); got != 2 {
+		t.Errorf("CommonPrefix() after GLM rewind = %d, want 2", got)
+	}
+}
+
+// RewindSynced mirrors upstream agent_worker_rewind / server_generation_rewind:
+// rewind, then re-sync the retained prefix only when the checkpoint was lost.
+func TestSessionRewindSyncedRestoresCheckpoint(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	sess, err := eng.NewSession(64)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+	if err := sess.Sync([]int{11, 12, 13, 14, 15}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if err := sess.RewindSynced(3); err != nil {
+		t.Fatalf("RewindSynced(3): %v", err)
+	}
+	if got := sess.Pos(); got != 3 {
+		t.Errorf("Pos() = %d, want 3", got)
+	}
+	if got := sess.Argmax(); got < 0 {
+		t.Errorf("Argmax() after RewindSynced = %d, want a token", got)
+	}
+	if got := ctl.SyncCalls(); got != 2 {
+		t.Errorf("sync calls = %d, want 2 (initial + DeepSeek rebuild)", got)
+	}
+	if err := sess.Eval(99); err != nil {
+		t.Errorf("Eval() after RewindSynced: %v", err)
+	}
+
+	// GLM keeps its recurrent state on rewind, so no rebuild is issued.
+	ctl.SetGLM(true)
+	if err := sess.RewindSynced(2); err != nil {
+		t.Fatalf("RewindSynced(2) on GLM: %v", err)
+	}
+	if got := ctl.SyncCalls(); got != 2 {
+		t.Errorf("sync calls after GLM rewind = %d, want 2 (no rebuild)", got)
+	}
+	if got := sess.Pos(); got != 2 {
+		t.Errorf("Pos() = %d, want 2", got)
+	}
+}

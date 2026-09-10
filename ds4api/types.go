@@ -154,6 +154,14 @@ type EngineOptions struct {
 	MTPDraftTokens int
 	// MTPMargin controls speculative acceptance confidence.
 	MTPMargin float32
+	// GLMMTP enables GLM's model-embedded next-token predictor for speculative
+	// decoding (upstream --mtp on a GLM checkpoint). No external MTPPath is
+	// needed; libds4 rejects the option on models without embedded MTP weights.
+	// When enabled, Engine.MTPDraftTokens reports > 1 while HasMTP stays false.
+	GLMMTP bool
+	// GLMMTPTiming enables GLMMTP and prints acceptance/timing counters
+	// (upstream --mtp-timing).
+	GLMMTPTiming bool
 	// Dspark enables DSpark speculative decoding. It needs a draft model, so
 	// set MTPPath alongside it.
 	Dspark bool

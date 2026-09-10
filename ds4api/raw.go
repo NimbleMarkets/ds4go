@@ -173,6 +173,7 @@ type rawSymbols struct {
 	ds4SessionPower                     func(s uintptr) int32
 	ds4SessionSetPower                  func(s uintptr, powerPercent int32) int32
 	ds4SessionDirectionalSteeringFFN    func(s uintptr) float32
+	ds4EngineMTPExactSampling           func(e uintptr) bool
 	ds4SessionSetDirectionalSteeringFFN func(s uintptr, scale float32) int32
 	ds4SessionSetProgress               func(s uintptr, fn uintptr, ud uintptr)
 	ds4SessionSetDisplayProgress        func(s uintptr, fn uintptr, ud uintptr)

@@ -305,7 +305,9 @@ func (s *Session) CommonPrefix(prompt *Tokens) int {
 	return int(s.lib.raw.ds4SessionCommonPrefix(s.ptr, prompt.cptr()))
 }
 
-// Argmax returns the argmax token id for the current logits.
+// Argmax returns the argmax token id for the current logits, or -1 when the
+// session has no valid checkpoint (for example after a DeepSeek Rewind that
+// was not followed by a sync).
 func (s *Session) Argmax() int {
 	libCallMu.Lock()
 	defer libCallMu.Unlock()
@@ -452,6 +454,14 @@ func (s *Session) Invalidate() {
 }
 
 // Rewind rewinds the session to token position pos.
+// Rewind calls ds4_session_rewind, keeping the token prefix [0, pos) and
+// discarding everything after it. Session.Tokens still reports the retained
+// prefix, but since upstream ds4 233eeb8 the checkpoint is only kept valid for
+// GLM (5.3 only when pos is its MTP rollback point): on DeepSeek the
+// compressor frontier cannot be truncated, so Argmax and Sample return -1,
+// Eval fails with "decode requires a synchronized checkpoint", and
+// CommonPrefix returns 0 until the retained prefix is synced again. Use
+// RewindSynced unless you re-sync yourself.
 func (s *Session) Rewind(pos int) {
 	if s == nil {
 		return
@@ -461,6 +471,32 @@ func (s *Session) Rewind(pos int) {
 	if s.ptr != 0 {
 		s.lib.raw.ds4SessionRewind(s.ptr, int32(pos))
 	}
+}
+
+// RewindSynced rewinds to pos and then restores a valid checkpoint for the
+// retained prefix when the rewind lost it, mirroring upstream's
+// agent_worker_rewind / server_generation_rewind: after ds4_session_rewind the
+// retained tokens are copied and, if ds4_session_common_prefix no longer
+// covers them, synced again. A rewind at or past the current position is a
+// no-op.
+func (s *Session) RewindSynced(pos int) error {
+	if s == nil {
+		return errors.New("ds4: nil session")
+	}
+	s.Rewind(pos)
+	retained := s.Tokens()
+	if retained == nil {
+		return errors.New("ds4: session tokens unavailable after rewind")
+	}
+	if s.CommonPrefix(retained) == retained.Len() {
+		return nil
+	}
+	prefix, err := newTokensWithLibrary(s.lib, retained.Slice())
+	if err != nil {
+		return err
+	}
+	defer prefix.Free()
+	return s.SyncTokens(prefix)
 }
 
 // Pos returns the current session token position.

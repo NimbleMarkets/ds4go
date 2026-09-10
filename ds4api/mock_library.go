@@ -76,6 +76,29 @@ type MockControls struct {
 	thinking        map[int32]bool
 	specArgmaxCall  int
 	specSampledCall int
+	syncCalls       int
+	rewindCalls     int
+}
+
+// SyncCalls reports how many ds4_session_sync calls the mock has served, so
+// tests can tell a rewind that rebuilt its prefix from one that kept state.
+func (c *MockControls) SyncCalls() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.syncCalls
+}
+
+// RewindCalls reports how many ds4_session_rewind calls the mock has served.
+func (c *MockControls) RewindCalls() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.rewindCalls
+}
+
+func (c *MockControls) count(field *int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	*field++
 }
 
 // SpeculativeCalls reports how many times each speculative entry point was
@@ -311,12 +334,26 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 			sess.cancelID = ud
 		}
 	}
-	r.ds4SessionSync = mockSessionSync
+	r.ds4SessionSync = func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32 {
+		ctl.count(&ctl.syncCalls)
+		return mockSessionSync(s, prompt, err, errLen)
+	}
 	r.ds4SessionRewriteRequiresRebuild = func(liveLen int32, canonicalLen int32, common int32) bool { return true }
 	r.ds4SessionRewriteFromCommon = func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult {
 		return SessionRewriteError
 	}
-	r.ds4SessionCommonPrefix = func(s uintptr, prompt *cTokens) int32 { return 0 }
+	r.ds4SessionCommonPrefix = func(s uintptr, prompt *cTokens) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.checkpointInvalid || prompt == nil || prompt.V == nil {
+			return 0
+		}
+		src := (*mockTokensSlice(prompt.V))[:prompt.Len]
+		n := 0
+		for n < len(src) && n < len(sess.evaluated) && src[n] == sess.evaluated[n] {
+			n++
+		}
+		return int32(n)
+	}
 	r.ds4SessionArgmax = mockSessionArgmax
 	r.ds4SessionArgmaxExcluding = func(s uintptr, excludedID int32) int32 { return mockSessionArgmax(s) }
 	r.ds4SessionSample = mockSessionSample
@@ -374,7 +411,25 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 			temperature, topK, topP, minP, rng, accepted, acceptedCap, err, errLen)
 	}
 	r.ds4SessionInvalidate = func(s uintptr) {}
-	r.ds4SessionRewind = func(s uintptr, pos int32) {}
+	r.ds4SessionRewind = func(s uintptr, pos int32) {
+		ctl.count(&ctl.rewindCalls)
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return
+		}
+		if pos < 0 {
+			pos = 0
+		}
+		if pos >= int32(len(sess.evaluated)) {
+			return
+		}
+		sess.evaluated = sess.evaluated[:pos]
+		sess.pos = pos
+		// DeepSeek compressors cannot be rolled back; GLM restores its state.
+		if !ctl.isGLM() {
+			sess.checkpointInvalid = true
+		}
+	}
 	r.ds4SessionPos = mockSessionPos
 	r.ds4SessionCtx = mockSessionCtx
 
@@ -383,6 +438,12 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r.ds4EngineHasOutputHead = mockEngineHasOutputHead
 	r.ds4EngineHasMTP = mockEngineHasMTP
 	r.ds4EngineMTPDraftTokens = mockEngineMTPDraftTokens
+	r.ds4EngineMTPExactSampling = func(e uintptr) bool {
+		if eng := mockEnginePtr(e); eng != nil {
+			return eng.exactSampling
+		}
+		return false
+	}
 	r.ds4EnginePower = func(e uintptr) int32 {
 		if eng := mockEnginePtr(e); eng != nil {
 			return eng.powerPercent
@@ -421,10 +482,22 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 
 	// Session persistence.
 	r.ds4SessionTokens = func(s uintptr) *cTokens {
-		if sess := mockSessionPtr(s); sess != nil {
-			return &sess.tokenSnapshot
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return nil
 		}
-		return nil
+		// Refresh the borrowed snapshot in place so earlier borrows stay valid.
+		if sess.tokenSnapshot.V == nil {
+			sess.tokenSnapshot.V = mockTokensAlloc()
+		}
+		if len(sess.evaluated) > mockTokenVecCap {
+			panic("mock token vector overflow")
+		}
+		snap := mockTokensSlice(sess.tokenSnapshot.V)
+		*snap = append((*snap)[:0], sess.evaluated...)
+		sess.tokenSnapshot.Len = int32(len(*snap))
+		sess.tokenSnapshot.Cap = int32(cap(*snap))
+		return &sess.tokenSnapshot
 	}
 	r.ds4SessionPayloadBytes = func(s uintptr) uint64 { return 0 }
 	r.ds4SessionSavePayload = func(s uintptr, fp uintptr, err unsafe.Pointer, errLen uintptr) int32 { return 0 }
@@ -614,6 +687,7 @@ type mockEngine struct {
 	nextToken                    int32
 	powerPercent                 int32
 	steeringFFN                  float32
+	exactSampling                bool
 	contextSize                  int32
 	placementCtxHint             int32
 	placementSessionCountHint    int32
@@ -621,12 +695,15 @@ type mockEngine struct {
 }
 
 type mockSession struct {
-	engine        *mockEngine
-	pos           int32
-	evaluated     []int32
-	ctxSize       int32
-	tokenSnapshot cTokens
-	cancelID      uintptr
+	engine    *mockEngine
+	pos       int32
+	evaluated []int32
+	// checkpointInvalid mirrors !s->checkpoint_valid after a DeepSeek rewind:
+	// sampling returns -1 and eval fails until the prefix is synced again.
+	checkpointInvalid bool
+	ctxSize           int32
+	tokenSnapshot     cTokens
+	cancelID          uintptr
 }
 
 var (
@@ -710,7 +787,13 @@ func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
 			eng.mtpDraft = opt.MTPDraftTokens
 		}
 	}
+	// GLM's embedded MTP block: upstream reports mtp_draft_tokens == 2 while
+	// has_mtp stays false (that needs an external support model).
+	if opt != nil && (opt.GLMMTP || opt.GLMMTPTiming) && opt.MTPPath == nil {
+		eng.mtpDraft = 2
+	}
 	if opt != nil {
+		eng.exactSampling = opt.DsparkExactSampling
 		eng.powerPercent = opt.PowerPercent
 		eng.steeringFFN = opt.DirectionalSteeringFFN
 		eng.contextSize = opt.ContextSize
@@ -827,13 +910,27 @@ func mockSessionSync(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uint
 		sess.evaluated = append([]int32(nil), src[:prompt.Len]...)
 		sess.pos = int32(len(sess.evaluated))
 	}
+	sess.checkpointInvalid = false
 	return 0
+}
+
+// mockWriteError copies msg into a libds4-style error buffer.
+func mockWriteError(err unsafe.Pointer, errLen uintptr, msg string) {
+	if err == nil || errLen == 0 {
+		return
+	}
+	buf := unsafe.Slice((*byte)(err), int(errLen))
+	n := copy(buf[:len(buf)-1], msg)
+	buf[n] = 0
 }
 
 func mockSessionArgmax(s uintptr) int32 {
 	sess := mockSessionPtr(s)
 	if sess == nil {
 		return 0
+	}
+	if sess.checkpointInvalid {
+		return -1
 	}
 	return sess.engine.nextToken + sess.pos
 }
@@ -847,6 +944,10 @@ func mockSessionEval(s uintptr, token int32, err unsafe.Pointer, errLen uintptr)
 	sess := mockSessionPtr(s)
 	if sess == nil {
 		return -1
+	}
+	if sess.checkpointInvalid {
+		mockWriteError(err, errLen, "decode requires a synchronized checkpoint")
+		return 1
 	}
 	sess.evaluated = append(sess.evaluated, token)
 	sess.pos++

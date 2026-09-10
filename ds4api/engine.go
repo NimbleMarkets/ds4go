@@ -59,6 +59,8 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 		PrefillChunk:              opts.PrefillChunk,
 		MTPDraftTokens:            int32(opts.MTPDraftTokens),
 		MTPMargin:                 opts.MTPMargin,
+		GLMMTP:                    opts.GLMMTP,
+		GLMMTPTiming:              opts.GLMMTPTiming,
 		Dspark:                    opts.Dspark,
 		DsparkStrict:              opts.DsparkStrict,
 		DsparkExactSampling:       opts.DsparkExactSampling,
@@ -825,6 +827,21 @@ func (e *Engine) HasMTP() bool {
 		return false
 	}
 	return e.lib.raw.ds4EngineHasMTP(e.ptr)
+}
+
+// MTPExactSampling calls ds4_engine_mtp_exact_sampling: whether exact
+// stochastic p/q acceptance is active for DSpark or GLM's embedded MTP block
+// (EngineOptions.DsparkExactSampling). Under exact sampling, a speculative
+// block drafted under one parser mode must be resampled once the mode flips;
+// opportunistic drafts match greedy continuation in either mode and need no
+// resample. It returns false when the loaded library predates the symbol.
+func (e *Engine) MTPExactSampling() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineMTPExactSampling == nil {
+		return false
+	}
+	return e.lib.raw.ds4EngineMTPExactSampling(e.ptr)
 }
 
 // MTPDraftTokens returns the configured MTP draft length.

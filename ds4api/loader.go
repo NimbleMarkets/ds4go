@@ -288,6 +288,9 @@ func (l *Library) register() (err error) {
 	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering"); err == nil {
 		mustRegister(&r.ds4SessionSetDirectionalSteering, "ds4_session_set_directional_steering")
 	}
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_mtp_exact_sampling"); err == nil {
+		mustRegister(&r.ds4EngineMTPExactSampling, "ds4_engine_mtp_exact_sampling")
+	}
 	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering_ffn"); err == nil {
 		mustRegister(&r.ds4SessionDirectionalSteeringFFN, "ds4_session_directional_steering_ffn")
 		mustRegister(&r.ds4SessionSetDirectionalSteeringFFN, "ds4_session_set_directional_steering_ffn")

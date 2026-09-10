@@ -145,13 +145,24 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 	var rng = opts.Seed
 	out := make([]int, 0, maxTokens)
 
-	// Speculative decoding via MTP. At positive temperature it needs the sampled
-	// entry point: verifying a sampled run with the argmax one would quietly
-	// ignore the sampling parameters, so an older libds4 falls back to ordinary
+	// Speculative decoding via MTP, gated like upstream's clients on
+	// mtp_draft_tokens > 1 alone: an external DeepSeek support model and GLM's
+	// embedded block both report a draft length, while HasMTP is only true for
+	// the external model. At positive temperature it needs the sampled entry
+	// point: verifying a sampled run with the argmax one would quietly ignore
+	// the sampling parameters, so an older libds4 falls back to ordinary
 	// token-at-a-time decoding instead.
-	useSpec := g.Engine != nil && g.Engine.HasMTP() && g.Engine.MTPDraftTokens() > 1 &&
+	useSpec := g.Engine != nil && g.Engine.MTPDraftTokens() > 1 &&
 		opts.ExcludeToken == 0 &&
 		(opts.Temperature <= 0 || g.Engine.SupportsSampledSpeculative())
+	// Under exact stochastic acceptance, draft tokens past a greedy/sampled
+	// mode flip were proposed under the old distribution and must be
+	// resampled. Opportunistic drafts match greedy continuation in either
+	// mode, so they are exempt (upstream 930ab73).
+	exactSampling := useSpec && opts.Temperature > 0 && g.Engine.MTPExactSampling()
+	cancelled := func() bool {
+		return opts.Context != nil && opts.Context.Err() != nil
+	}
 
 	i := 0
 	for i < maxTokens {
@@ -173,6 +184,11 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 		} else {
 			token = g.Session.Argmax()
 		}
+		if token < 0 {
+			// libds4 reports -1 when the session has no synchronized
+			// checkpoint (for example after a bare Rewind on DeepSeek).
+			return out, errors.New("ds4go: session has no synchronized checkpoint; sync the prompt before generating")
+		}
 		if isStop(token) {
 			break
 		}
@@ -181,6 +197,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 			if draft > g.Engine.MTPDraftTokens() {
 				draft = g.Engine.MTPDraftTokens()
 			}
+			blockStart := g.Session.Pos()
 			var accepted []int
 			var err error
 			if greedy {
@@ -209,8 +226,14 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 				}
 				i++
 			} else {
-				for _, t := range accepted {
+				for ti, t := range accepted {
 					if isStop(t) {
+						// The stop and any draft past it were evaluated into
+						// the session; discard them so Pos agrees with the
+						// tokens kept (upstream 5b3cc8b).
+						if err := g.Session.RewindSynced(blockStart + ti); err != nil {
+							return out, err
+						}
 						return out, nil
 					}
 					out = append(out, t)
@@ -218,6 +241,29 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 						opts.OnToken(t)
 					}
 					i++
+					if ti+1 >= len(accepted) {
+						break
+					}
+					if cancelled() {
+						// The caller stopped the turn on this token (a closed
+						// tool block, say); drop the rest of the block.
+						if err := g.Session.RewindSynced(blockStart + ti + 1); err != nil {
+							return out, err
+						}
+						return out, opts.Context.Err()
+					}
+					if exactSampling && shouldSampleGreedy(opts) != greedy {
+						// Later tokens were proposed under the old parser mode.
+						// Re-evaluate this boundary token to restore its
+						// logits, then sample the suffix under the new mode.
+						if err := g.Session.RewindSynced(blockStart + ti); err != nil {
+							return out, err
+						}
+						if err := g.Session.Eval(t); err != nil {
+							return out, err
+						}
+						break
+					}
 				}
 			}
 		} else {
