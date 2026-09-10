@@ -56,6 +56,7 @@ type cTPOptions struct {
 type cEngineOptions struct {
 	ModelPath                    unsafe.Pointer
 	MTPPath                      unsafe.Pointer
+	VisionPath                   unsafe.Pointer
 	Backend                      Backend
 	NThreads                     int32
 	ContextSize                  int32
@@ -137,7 +138,7 @@ type rawSymbols struct {
 	ds4SetStderrFd                      func(fd int32)
 	ds4AbortSet                         func(fn uintptr, ud uintptr)
 	ds4EngineGenerateArgmax             func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32
-	ds4EngineCollectIMatrix             func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32) int32
+	ds4EngineCollectIMatrix             func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32, minExpertSamples int32) int32
 	ds4EngineDumpTokens                 func(e uintptr, tokens *cTokens)
 	ds4DumpTextTokenization             func(modelPath string, text string, fp uintptr) int32
 	ds4EngineHeadTest                   func(e uintptr, prompt *cTokens) int32
@@ -171,6 +172,8 @@ type rawSymbols struct {
 	ds4SessionFree                      func(s uintptr)
 	ds4SessionPower                     func(s uintptr) int32
 	ds4SessionSetPower                  func(s uintptr, powerPercent int32) int32
+	ds4SessionDirectionalSteeringFFN    func(s uintptr) float32
+	ds4SessionSetDirectionalSteeringFFN func(s uintptr, scale float32) int32
 	ds4SessionSetProgress               func(s uintptr, fn uintptr, ud uintptr)
 	ds4SessionSetDisplayProgress        func(s uintptr, fn uintptr, ud uintptr)
 	ds4SessionSetCancel                 func(s uintptr, fn uintptr, ud uintptr)

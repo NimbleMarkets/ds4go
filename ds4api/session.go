@@ -624,6 +624,11 @@ func (s *Session) LoadSnapshot(data []byte) error {
 
 // SetDirectionalSteering dynamically updates the directional steering configurations for this session.
 // If the underlying libds4 shared library does not support dynamic steering, this returns an error.
+//
+// Deprecated: upstream ds4 never exported ds4_session_set_directional_steering,
+// so this always returns ErrSteeringNotSupported against upstream builds. Use
+// SetDirectionalSteeringFFN, which binds the exported
+// ds4_session_set_directional_steering_ffn.
 func (s *Session) SetDirectionalSteering(file string, mode SteeringMode, ffn float32, attn float32, threshold float32, scope SteeringScope) error {
 	unlock, err := s.require()
 	if err != nil {
@@ -640,6 +645,35 @@ func (s *Session) SetDirectionalSteering(file string, mode SteeringMode, ffn flo
 	code := s.lib.raw.ds4SessionSetDirectionalSteering(s.ptr, filePtr, int32(mode), ffn, attn, threshold, int32(scope), errPtr, n)
 	runtime.KeepAlive(b)
 	return errorFromBuffer("ds4_session_set_directional_steering", code, buf)
+}
+
+// DirectionalSteeringFFN calls ds4_session_directional_steering_ffn and
+// returns the session's current FFN steering scale. It returns 0 when the
+// loaded library predates the symbol.
+func (s *Session) DirectionalSteeringFFN() float32 {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionDirectionalSteeringFFN == nil {
+		return 0
+	}
+	return s.lib.raw.ds4SessionDirectionalSteeringFFN(s.ptr)
+}
+
+// SetDirectionalSteeringFFN calls ds4_session_set_directional_steering_ffn,
+// changing the FFN steering scale for future evaluation without rebuilding
+// the existing KV state. libds4 accepts finite scales in [-100, 100] and
+// rejects live changes on distributed or tensor-parallel sessions. It returns
+// ErrSteeringNotSupported when the loaded library lacks the symbol.
+func (s *Session) SetDirectionalSteeringFFN(scale float32) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionSetDirectionalSteeringFFN == nil {
+		return ErrSteeringNotSupported
+	}
+	return ds4Error("ds4_session_set_directional_steering_ffn", s.lib.raw.ds4SessionSetDirectionalSteeringFFN(s.ptr, scale))
 }
 
 // IsDistributed returns whether the session is operating in distributed mode.

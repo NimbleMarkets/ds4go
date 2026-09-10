@@ -97,6 +97,14 @@ func (l *Library) SupportsDynamicSteering() bool {
 	return l != nil && l.raw.ds4SessionSetDirectionalSteering != nil
 }
 
+// SupportsLiveSteeringFFN reports whether the loaded library exports
+// ds4_session_set_directional_steering_ffn (upstream commit 87495f6), which
+// changes the FFN steering scale for future evaluation without rebuilding the
+// session's KV state.
+func (l *Library) SupportsLiveSteeringFFN() bool {
+	return l != nil && l.raw.ds4SessionSetDirectionalSteeringFFN != nil
+}
+
 // SupportsDistributed reports whether the loaded library exports the distributed
 // inference and layer-slice entry points. When false, the distributed session
 // methods return ErrDistributedNotSupported and callers should fall back to
@@ -279,6 +287,10 @@ func (l *Library) register() (err error) {
 
 	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering"); err == nil {
 		mustRegister(&r.ds4SessionSetDirectionalSteering, "ds4_session_set_directional_steering")
+	}
+	if _, err := purego.Dlsym(l.handle, "ds4_session_set_directional_steering_ffn"); err == nil {
+		mustRegister(&r.ds4SessionDirectionalSteeringFFN, "ds4_session_directional_steering_ffn")
+		mustRegister(&r.ds4SessionSetDirectionalSteeringFFN, "ds4_session_set_directional_steering_ffn")
 	}
 
 	if _, err := purego.Dlsym(l.handle, "ds4_engine_layer_count"); err == nil {

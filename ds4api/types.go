@@ -131,6 +131,9 @@ type EngineOptions struct {
 	ModelPath string
 	// MTPPath is the optional MTP draft model path.
 	MTPPath string
+	// VisionPath is the optional vision encoder GGUF for the selected model
+	// (upstream --vision). libds4 requires it to match the language model.
+	VisionPath string
 	// Backend selects Metal, CUDA, or CPU according to the libds4 build.
 	Backend Backend
 	// NThreads controls CPU worker threads when the backend uses them.

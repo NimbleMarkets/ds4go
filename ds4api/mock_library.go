@@ -202,7 +202,7 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r.ds4EngineGenerateArgmax = func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32 {
 		return 0
 	}
-	r.ds4EngineCollectIMatrix = func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32) int32 {
+	r.ds4EngineCollectIMatrix = func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32, minExpertSamples int32) int32 {
 		return 0
 	}
 	r.ds4EngineDumpTokens = func(e uintptr, tokens *cTokens) {}
@@ -283,6 +283,25 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 			return 1
 		}
 		sess.engine.powerPercent = powerPercent
+		return 0
+	}
+	r.ds4SessionDirectionalSteeringFFN = func(s uintptr) float32 {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.engine == nil {
+			return 0
+		}
+		return sess.engine.steeringFFN
+	}
+	r.ds4SessionSetDirectionalSteeringFFN = func(s uintptr, scale float32) int32 {
+		// ds4.c rejects non-finite scales and magnitudes above 100.
+		if scale != scale || scale < -100 || scale > 100 {
+			return 1
+		}
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.engine == nil {
+			return 1
+		}
+		sess.engine.steeringFFN = scale
 		return 0
 	}
 	r.ds4SessionSetProgress = func(s uintptr, fn uintptr, ud uintptr) {}
@@ -594,6 +613,7 @@ type mockEngine struct {
 	mtpDraft                     int32
 	nextToken                    int32
 	powerPercent                 int32
+	steeringFFN                  float32
 	contextSize                  int32
 	placementCtxHint             int32
 	placementSessionCountHint    int32
@@ -692,6 +712,7 @@ func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
 	}
 	if opt != nil {
 		eng.powerPercent = opt.PowerPercent
+		eng.steeringFFN = opt.DirectionalSteeringFFN
 		eng.contextSize = opt.ContextSize
 		eng.placementCtxHint = opt.PlacementCtxHint
 		eng.placementSessionCountHint = opt.PlacementSessionCountHint

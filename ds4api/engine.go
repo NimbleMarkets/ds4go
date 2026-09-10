@@ -44,6 +44,7 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 
 	modelBytes, modelPtr := cStringPointer(opts.ModelPath)
 	mtpBytes, mtpPtr := cStringPointer(opts.MTPPath)
+	visionBytes, visionPtr := cStringPointer(opts.VisionPath)
 	steerBytes, steerPtr := cStringPointer(opts.DirectionalSteeringFile)
 	expertProfileBytes, expertProfilePtr := cStringPointer(opts.ExpertProfilePath)
 	listenHostBytes, listenHostPtr := cStringPointer(opts.Distributed.ListenHost)
@@ -51,6 +52,7 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	copts := cEngineOptions{
 		ModelPath:                 modelPtr,
 		MTPPath:                   mtpPtr,
+		VisionPath:                visionPtr,
 		Backend:                   opts.Backend,
 		NThreads:                  int32(opts.NThreads),
 		ContextSize:               int32(opts.ContextSize),
@@ -108,6 +110,7 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	code := l.raw.ds4EngineOpen(&out, &copts)
 	runtime.KeepAlive(modelBytes)
 	runtime.KeepAlive(mtpBytes)
+	runtime.KeepAlive(visionBytes)
 	runtime.KeepAlive(steerBytes)
 	runtime.KeepAlive(expertProfileBytes)
 	runtime.KeepAlive(listenHostBytes)
@@ -392,14 +395,22 @@ func (l *Library) SetAbortFunc(fn AbortFunc) error {
 	return nil
 }
 
-// CollectIMatrix calls ds4_engine_collect_imatrix.
+// CollectIMatrix calls ds4_engine_collect_imatrix with no minimum per-expert
+// sample count, matching the upstream CLI default.
 func (e *Engine) CollectIMatrix(datasetPath, outputPath string, ctxSize, maxPrompts, maxTokens int) error {
+	return e.CollectIMatrixWithMinExpertSamples(datasetPath, outputPath, ctxSize, maxPrompts, maxTokens, 0)
+}
+
+// CollectIMatrixWithMinExpertSamples calls ds4_engine_collect_imatrix.
+// minExpertSamples > 0 keeps collecting until every routed expert has that
+// many samples (upstream --imatrix-min-expert-samples).
+func (e *Engine) CollectIMatrixWithMinExpertSamples(datasetPath, outputPath string, ctxSize, maxPrompts, maxTokens, minExpertSamples int) error {
 	unlock, err := e.require()
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	code := e.lib.raw.ds4EngineCollectIMatrix(e.ptr, datasetPath, outputPath, int32(ctxSize), int32(maxPrompts), int32(maxTokens))
+	code := e.lib.raw.ds4EngineCollectIMatrix(e.ptr, datasetPath, outputPath, int32(ctxSize), int32(maxPrompts), int32(maxTokens), int32(minExpertSamples))
 	return ds4Error("ds4_engine_collect_imatrix", code)
 }
 
