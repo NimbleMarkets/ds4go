@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // The installer redraws with a bare "\r", so a frame wider than the terminal
@@ -23,7 +23,7 @@ func TestInstallProgressFitsTerminalWidth(t *testing.T) {
 		if frame == "" {
 			continue
 		}
-		if w := lipgloss.Width(frame); w > defaultProgressColumns {
+		if w := ansi.StringWidth(frame); w > defaultProgressColumns {
 			t.Errorf("frame visible width = %d, want <= %d", w, defaultProgressColumns)
 		}
 	}
@@ -39,7 +39,7 @@ func TestInstallProgressPadsByDisplayWidth(t *testing.T) {
 
 	frames := strings.Split(buf.String(), "\r")
 	last := frames[len(frames)-1]
-	if w := lipgloss.Width(last); w != defaultProgressColumns {
+	if w := ansi.StringWidth(last); w != defaultProgressColumns {
 		t.Errorf("padded frame width = %d, want exactly %d", w, defaultProgressColumns)
 	}
 }

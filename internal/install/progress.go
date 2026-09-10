@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -101,7 +101,7 @@ func (p *downloadProgress) render(force bool) {
 	msg := p.line()
 	// Pad by display width: len() counts ANSI escape bytes, so byte-based
 	// padding never clears the previous frame.
-	if w := lipgloss.Width(msg); w < p.width {
+	if w := ansi.StringWidth(msg); w < p.width {
 		msg += strings.Repeat(" ", p.width-w)
 	}
 	fmt.Fprintf(p.out, "\r%s", msg)

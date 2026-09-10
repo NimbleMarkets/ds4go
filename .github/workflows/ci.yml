@@ -18,10 +18,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Verify go.mod is tidy
+      - name: Verify Go modules are tidy
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum
+          go -C cmd mod tidy
+          git diff --exit-code -- go.mod go.sum cmd/go.mod cmd/go.sum go.work.sum
 
       - name: Check formatting
         run: |
@@ -33,19 +34,19 @@ jobs:
           fi
 
       - name: Build
-        run: go build ./...
+        run: go build ./... ./cmd/...
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... ./cmd/...
 
       - name: Test
-        run: go test ./... -race
+        run: go test ./... ./cmd/... -race
 
       - name: Cross-compile (darwin/arm64)
-        run: GOOS=darwin GOARCH=arm64 go build ./...
+        run: GOOS=darwin GOARCH=arm64 go build ./... ./cmd/...
 
       - name: Cross-compile (linux/amd64)
-        run: GOOS=linux GOARCH=amd64 go build ./...
+        run: GOOS=linux GOARCH=amd64 go build ./... ./cmd/...
 
   # Validate the release config so a broken .goreleaser.yaml is caught on PRs
   # rather than at tag time.
