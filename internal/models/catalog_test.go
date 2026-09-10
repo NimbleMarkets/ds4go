@@ -241,3 +241,55 @@ func TestCuratedSizesMatchPublishedObjects(t *testing.T) {
 		}
 	}
 }
+
+// GLM 5.3 Flash (antirez/glm-5.3-flash-gguf) and the full GLM 5.3 checkpoint
+// (antirez/glm-5.3-gguf) mirror upstream download_model.sh's glm53-q2,
+// glm53-q4, and glm53-full-q2 targets. Sizes are GiB from x-linked-size and
+// hashes from x-linked-etag on the resolve URL.
+func TestCuratedGLM53Models(t *testing.T) {
+	want := map[string]struct {
+		file   string
+		repo   string
+		sizeGB float64
+		sha    string
+	}{
+		"glm53-q2": {"GLM-5.3-Flash-Q2.gguf", glm53FlashRepo, 89.9,
+			"e81fd6241c6e55a64e1e14e47a3eab61a173fa8d7e4b5c1d1848827119705b32"},
+		"glm53-q4": {"GLM-5.3-Flash-Q4_K.gguf", glm53FlashRepo, 177.8,
+			"c7a0d950363238dd7804782c88340d737775aba53a15f8d4fdcc34e984f25221"},
+		"glm53-full-q2": {"GLM-5.3-UD-IQ2_XXS_RoutedIQ2XXS_blk78Q2K.gguf", glm53FullRepo, 196.6,
+			"059b36accd4c9acf73099da9f703b574d627869d619b7c4c316aa856e33d472e"},
+	}
+
+	found := map[string]bool{}
+	for _, m := range Curated() {
+		w, ok := want[m.Alias]
+		if !ok {
+			continue
+		}
+		found[m.Alias] = true
+		if m.FileName != w.file {
+			t.Errorf("%s FileName = %q, want %q", m.Alias, m.FileName, w.file)
+		}
+		if m.Repo != w.repo {
+			t.Errorf("%s Repo = %q, want %q", m.Alias, m.Repo, w.repo)
+		}
+		if m.SizeGB != w.sizeGB {
+			t.Errorf("%s SizeGB = %v, want %v", m.Alias, m.SizeGB, w.sizeGB)
+		}
+		if m.SHA256 != w.sha {
+			t.Errorf("%s SHA256 = %q, want %q", m.Alias, m.SHA256, w.sha)
+		}
+		if !m.GLM {
+			t.Errorf("%s GLM = false, want true (embedded MTP, GLM tool syntax)", m.Alias)
+		}
+		if got := modelDownloadURL(m); got != "https://huggingface.co/"+w.repo+"/resolve/main/"+w.file {
+			t.Errorf("%s download URL = %q", m.Alias, got)
+		}
+	}
+	for alias := range want {
+		if !found[alias] {
+			t.Errorf("curated catalog is missing %q", alias)
+		}
+	}
+}

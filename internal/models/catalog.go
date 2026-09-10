@@ -49,6 +49,11 @@ const (
 	// canonical lower-case name that answers directly.
 	glmRepo = "antirez/glm-5.2-gguf"
 
+	// glm53FlashRepo hosts the GLM 5.3 Flash quants (ds4's glm53-q2 / glm53-q4
+	// targets); glm53FullRepo hosts the full GLM 5.3 checkpoint (glm53-full-q2).
+	glm53FlashRepo = "antirez/glm-5.3-flash-gguf"
+	glm53FullRepo  = "antirez/glm-5.3-gguf"
+
 	// DefaultModelSymlink is the name of the active-model symlink in ModelsDir.
 	DefaultModelSymlink = "ds4flash.gguf"
 
@@ -163,6 +168,36 @@ var curated = []Model{
 		RecommendedRAM: ">=512 GB",
 		SHA256:         "7160879c87756236eea16ec6bfeb19288d16fa94dcfcef3a5ed5f38b1383d3a5",
 		Notes:          "GLM 5.2 routed Q4_K; highest quality, largest footprint",
+	},
+	{
+		Alias:          "glm53-q2",
+		FileName:       "GLM-5.3-Flash-Q2.gguf",
+		Repo:           glm53FlashRepo,
+		GLM:            true,
+		SizeGB:         89.9,
+		RecommendedRAM: "128 GB",
+		SHA256:         "e81fd6241c6e55a64e1e14e47a3eab61a173fa8d7e4b5c1d1848827119705b32",
+		Notes:          "GLM 5.3 Flash imatrix IQ2_XXS/Q2_K experts; one 128 GB Mac or DGX Spark, embedded MTP",
+	},
+	{
+		Alias:          "glm53-q4",
+		FileName:       "GLM-5.3-Flash-Q4_K.gguf",
+		Repo:           glm53FlashRepo,
+		GLM:            true,
+		SizeGB:         177.8,
+		RecommendedRAM: ">=192 GB",
+		SHA256:         "c7a0d950363238dd7804782c88340d737775aba53a15f8d4fdcc34e984f25221",
+		Notes:          "GLM 5.3 Flash Q4_K; larger Mac, two 128 GB Macs, or SSD streaming",
+	},
+	{
+		Alias:          "glm53-full-q2",
+		FileName:       "GLM-5.3-UD-IQ2_XXS_RoutedIQ2XXS_blk78Q2K.gguf",
+		Repo:           glm53FullRepo,
+		GLM:            true,
+		SizeGB:         196.6,
+		RecommendedRAM: ">=256 GB",
+		SHA256:         "059b36accd4c9acf73099da9f703b574d627869d619b7c4c316aa856e33d472e",
+		Notes:          "full GLM 5.3 routed IQ2_XXS with Q2_K block 78; large machine or --ssd-streaming",
 	},
 	{
 		Alias:          "q2-imatrix-0731",

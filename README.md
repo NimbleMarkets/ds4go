@@ -11,7 +11,8 @@
 
 [`ds4`](https://github.com/antirez/ds4) itself is an inference engine focused on
 large mixture-of-experts models, including
-[*DeepSeek V4 Flash*](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) and
+[*DeepSeek V4 Flash*](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash),
+[*GLM 5.3 Flash*](https://huggingface.co/antirez/glm-5.3-flash-gguf), and
 [*GLM 5.2*](https://huggingface.co/antirez/glm-5.2-gguf). These models target
 machines with substantial GPU-accessible memory.
 
@@ -65,12 +66,16 @@ $DS4_DIR/lib/      native shared libraries
 $DS4_DIR/models/   GGUF model files
 ```
 
-Manage curated DeepSeek V4 Flash and GLM 5.2 models with:
+Manage curated DeepSeek V4 Flash, GLM 5.3, and GLM 5.2 models with:
 
 ```sh
 ds4go model list
 ds4go model download q2-imatrix
 ds4go model set q2-imatrix
+
+# GLM 5.3 Flash fits one 128 GB machine; glm53-q4 and glm53-full-q2 need more
+ds4go model download glm53-q2
+ds4go model set glm53-q2
 
 # GLM 5.2 catalog aliases include glm-iq2xxs, glm-q2, and glm-q4
 ds4go model download glm-iq2xxs
@@ -80,7 +85,7 @@ ds4go model set glm-iq2xxs
 The default model path for commands and examples is
 `$DS4_DIR/models/ds4flash.gguf`.
 
-DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM 5.2's
+DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM's
 optional next-token predictor is embedded in the base model instead, and
 `libds4` rejects an external MTP path for GLM. When a curated GLM model is
 selected directly or through the active-model link, ds4go therefore suppresses
