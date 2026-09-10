@@ -9,44 +9,26 @@ import (
 // mid-stanza. RepairCompletion must append the missing closing tags so the
 // block parses, mirroring upstream ds4's try_repair_dsml.
 
-func TestRepairCompletionUnclosedParameter(t *testing.T) {
+// Upstream 759dd7c: a truncated parameter or invoke is not repaired. A closed
+// value may still be a truncated shell command, and closing it would invent an
+// executable action. Only the enclosing wrapper is ever supplied.
+func TestRepairCompletionRefusesUnclosedParameter(t *testing.T) {
 	text := "I'll list the files.\n\n<｜DSML｜tool_calls>\n" +
 		"<｜DSML｜invoke name=\"bash\">\n" +
 		"<｜DSML｜parameter name=\"command\" string=\"true\">ls -la"
 	repaired, ok := RepairCompletion(text)
-	if !ok {
-		t.Fatal("RepairCompletion did not repair a truncated parameter")
-	}
-	want := text + "</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
-	if repaired != want {
-		t.Fatalf("repaired = %q, want %q", repaired, want)
-	}
-	msg, err := ParseCompletion(repaired, false)
-	if err != nil {
-		t.Fatalf("ParseCompletion(repaired): %v", err)
-	}
-	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Name != "bash" {
-		t.Fatalf("repaired parse = %+v, want one bash call", msg.ToolCalls)
-	}
-	if msg.ToolCalls[0].Arguments != `{"command": "ls -la"}` {
-		t.Fatalf("arguments = %q", msg.ToolCalls[0].Arguments)
+	if ok || repaired != text {
+		t.Fatalf("truncated parameter repaired: ok=%v repaired=%q", ok, repaired)
 	}
 }
 
-func TestRepairCompletionUnclosedInvoke(t *testing.T) {
+func TestRepairCompletionRefusesUnclosedInvoke(t *testing.T) {
 	text := "\n\n<｜DSML｜tool_calls>\n" +
 		"<｜DSML｜invoke name=\"bash\">\n" +
 		"<｜DSML｜parameter name=\"command\" string=\"true\">pwd</｜DSML｜parameter>\n"
 	repaired, ok := RepairCompletion(text)
-	if !ok {
-		t.Fatal("RepairCompletion did not repair a truncated invoke")
-	}
-	if want := text + "</｜DSML｜invoke></｜DSML｜tool_calls>"; repaired != want {
-		t.Fatalf("repaired = %q, want %q", repaired, want)
-	}
-	msg, err := ParseCompletion(repaired, false)
-	if err != nil || len(msg.ToolCalls) != 1 {
-		t.Fatalf("repaired parse = %+v, err %v", msg.ToolCalls, err)
+	if ok || repaired != text {
+		t.Fatalf("truncated invoke repaired: ok=%v repaired=%q", ok, repaired)
 	}
 }
 
@@ -107,12 +89,12 @@ func TestRepairCompletionIgnoresTagsInsideReasoning(t *testing.T) {
 	// And the converse: a truncated block after </think> is repaired using
 	// only the post-think counts.
 	truncated := "<think>quoting <｜DSML｜tool_calls> twice <｜DSML｜tool_calls></think>" +
-		"\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"bash\">\n"
+		"\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"bash\">\n</｜DSML｜invoke>\n"
 	repaired, ok = RepairCompletion(truncated)
 	if !ok {
 		t.Fatal("truncated post-think block not repaired")
 	}
-	if want := truncated + "</｜DSML｜invoke></｜DSML｜tool_calls>"; repaired != want {
+	if want := truncated + "</｜DSML｜tool_calls>"; repaired != want {
 		t.Fatalf("repaired = %q, want %q", repaired, want)
 	}
 }
@@ -122,12 +104,12 @@ func TestRepairCompletionShortDialect(t *testing.T) {
 	// normalization (matching ParseCompletion), so the repair is applied in
 	// canonical form and must parse.
 	text := "\n\n<DSML｜tool_calls>\n<DSML｜invoke name=\"bash\">\n" +
-		"<DSML｜parameter name=\"command\" string=\"true\">pwd"
+		"<DSML｜parameter name=\"command\" string=\"true\">pwd</DSML｜parameter>\n</DSML｜invoke>\n"
 	repaired, ok := RepairCompletion(text)
 	if !ok {
 		t.Fatal("short dialect not repaired")
 	}
-	if !strings.HasSuffix(repaired, "</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>") {
+	if !strings.HasSuffix(repaired, "</｜DSML｜invoke>\n</｜DSML｜tool_calls>") {
 		t.Fatalf("repaired = %q, want canonical closers appended", repaired)
 	}
 	msg, err := ParseCompletion(repaired, false)
@@ -138,12 +120,12 @@ func TestRepairCompletionShortDialect(t *testing.T) {
 
 func TestRepairCompletionPlainDialect(t *testing.T) {
 	text := "\n\n<tool_calls>\n<invoke name=\"bash\">\n" +
-		"<parameter name=\"command\" string=\"true\">pwd"
+		"<parameter name=\"command\" string=\"true\">pwd</parameter>\n</invoke>\n"
 	repaired, ok := RepairCompletion(text)
 	if !ok {
 		t.Fatal("plain dialect not repaired")
 	}
-	if want := text + "</parameter></invoke></tool_calls>"; repaired != want {
+	if want := text + "</tool_calls>"; repaired != want {
 		t.Fatalf("repaired = %q, want %q", repaired, want)
 	}
 }
@@ -153,7 +135,8 @@ func TestRepairCompletionComposesWithMarkerNormalization(t *testing.T) {
 	// then repair closes the block, and the result parses.
 	text := "\n\n<｜DSML｜tool_calls>\n" +
 		"<｜DSMI｜invoke name=\"bash\">\n" +
-		"<｜DSML｜parameter name=\"command\" string=\"true\">pwd"
+		"<｜DSML｜parameter name=\"command\" string=\"true\">pwd</｜DSML｜parameter>\n" +
+		"</｜DSMI｜invoke>\n"
 	repaired, ok := RepairCompletion(text)
 	if !ok {
 		t.Fatal("typo'd truncated block not repaired")
@@ -173,7 +156,8 @@ func TestRepairCompletionWithThinkingReparse(t *testing.T) {
 	text := "<think>need to check the directory</think>" +
 		"\n\n<｜DSML｜tool_calls>\n" +
 		"<｜DSML｜invoke name=\"bash\">\n" +
-		"<｜DSML｜parameter name=\"command\" string=\"true\">ls"
+		"<｜DSML｜parameter name=\"command\" string=\"true\">ls</｜DSML｜parameter>\n" +
+		"</｜DSML｜invoke>\n"
 	repaired, ok := RepairCompletion(text)
 	if !ok {
 		t.Fatal("truncated stanza after closed thinking not repaired")

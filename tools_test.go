@@ -242,13 +242,15 @@ func TestToolRegistryParseAssistantStoresReplay(t *testing.T) {
 	}
 }
 
-func TestToolRegistryParseAssistantRepairsTruncatedBlock(t *testing.T) {
+func TestToolRegistryParseAssistantRepairsTruncatedWrapper(t *testing.T) {
 	reg := NewToolRegistry()
-	// Generation that hit the token limit mid-parameter: without repair the
-	// strict parse degrades this to plain content and the call is dropped.
+	// Generation that hit the token limit after the last invoke closed but
+	// before the wrapper: without repair the strict parse degrades this to
+	// plain content and the call is dropped.
 	truncated := "checking\n\n<｜DSML｜tool_calls>\n" +
 		"<｜DSML｜invoke name=\"bash\">\n" +
-		"<｜DSML｜parameter name=\"command\" string=\"true\">ls -la"
+		"<｜DSML｜parameter name=\"command\" string=\"true\">ls -la</｜DSML｜parameter>\n" +
+		"</｜DSML｜invoke>\n"
 	msg, err := reg.ParseAssistant(truncated, false)
 	if err != nil {
 		t.Fatalf("ParseAssistant: %v", err)
@@ -262,6 +264,29 @@ func TestToolRegistryParseAssistantRepairsTruncatedBlock(t *testing.T) {
 	exact, ok := reg.ReplayStore().Lookup(msg.ToolCalls[0].ID)
 	if !ok || !strings.HasSuffix(exact, "</｜DSML｜tool_calls>") {
 		t.Fatalf("expected repaired replay block, got %q", exact)
+	}
+}
+
+func TestToolRegistryParseAssistantLeavesTruncatedParameterRaw(t *testing.T) {
+	reg := NewToolRegistry()
+	// Upstream 759dd7c: a value cut off by the token limit may be a partial
+	// shell command. Closing it would invent an executable action, so the
+	// completion degrades to raw content instead of a recovered call.
+	truncated := "checking\n\n<｜DSML｜tool_calls>\n" +
+		"<｜DSML｜invoke name=\"bash\">\n" +
+		"<｜DSML｜parameter name=\"command\" string=\"true\">rm -rf ./build"
+	msg, err := reg.ParseAssistant(truncated, false)
+	if err != nil {
+		t.Fatalf("ParseAssistant: %v", err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Fatalf("truncated parameter was turned into a call: %+v", msg.ToolCalls)
+	}
+	if !strings.Contains(msg.Content, "rm -rf ./build") {
+		t.Fatalf("content = %q, want the raw truncated text preserved", msg.Content)
+	}
+	if msg.MalformedReason == "" {
+		t.Fatal("MalformedReason empty, want the truncation reported so the loop can retry")
 	}
 }
 

@@ -251,8 +251,9 @@ func jsonIsObject(b []byte) bool {
 // RenderToolResult wraps one tool result payload the way DeepSeek/ds4 expect
 // tool outputs to appear in the next user turn. Tool output is treated as data:
 // normal '<', '>', '&', DSML text, and control-token-looking text are preserved.
-// Only the exact </tool_result> sentinel is escaped so the payload cannot break
-// out of the wrapper.
+// Only the </tool_result> sentinel, and an already-escaped spelling of it that
+// would otherwise decode back into the sentinel, are escaped so the payload
+// cannot break out of the wrapper and the escape stays reversible.
 //
 // DeepSeek V4's rendered DSML format does not include a tool name or call ID in
 // <tool_result>; result correlation is positional. When returning results for

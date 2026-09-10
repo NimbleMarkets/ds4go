@@ -145,6 +145,8 @@ func dsmlEscapeAttr(s string) string {
 	return b.String()
 }
 
+// dsmlUnescapeText decodes XML entities in tag attributes. Argument and tool
+// result bodies are literal data and use unescapeToolText instead.
 func dsmlUnescapeText(s string) string {
 	replacer := strings.NewReplacer(
 		"&amp;", "&",
@@ -157,7 +159,7 @@ func dsmlUnescapeText(s string) string {
 }
 
 func escapeParameterText(s string) string {
-	return strings.ReplaceAll(s, parameterEndToken, "&lt;/"+dsmlMarker+"parameter>")
+	return escapeToolText(s, parameterEndToken)
 }
 
 func escapeJSONLiteral(s string) string {
@@ -165,7 +167,7 @@ func escapeJSONLiteral(s string) string {
 }
 
 func escapeToolResultText(s string) string {
-	return strings.ReplaceAll(s, toolResultEnd, "&lt;/tool_result>")
+	return escapeToolText(s, toolResultEnd)
 }
 
 // boolStr renders a Go bool as the lowercase word DSML expects.

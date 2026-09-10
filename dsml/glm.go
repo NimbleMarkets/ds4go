@@ -133,7 +133,7 @@ func renderGLMToolCalls(calls []ToolCall) (string, error) {
 				value = buf.String()
 			}
 			b.WriteString(glmArgKeyStart)
-			b.WriteString(p.key)
+			b.WriteString(escapeToolText(p.key, glmArgKeyEnd))
 			b.WriteString(glmArgKeyEnd)
 			b.WriteString(glmArgValueStart)
 			b.WriteString(escapeGLMArgValue(value))
@@ -145,10 +145,11 @@ func renderGLMToolCalls(calls []ToolCall) (string, error) {
 }
 
 // escapeGLMArgValue protects the closing sentinel so an argument value cannot
-// terminate its own <arg_value> element early, mirroring how ds4 escapes the
-// exact closing tag in wrapped payloads.
+// terminate its own <arg_value> element early, mirroring ds4's
+// append_glm_arg_value_text: only the delimiter and its escaped spellings
+// are rewritten, so other entities stay literal.
 func escapeGLMArgValue(s string) string {
-	return strings.ReplaceAll(s, glmArgValueEnd, "&lt;/arg_value>")
+	return escapeToolText(s, glmArgValueEnd)
 }
 
 // parseGLMCompletion is ParseCompletion for the GLM grammar. The thinking
@@ -160,7 +161,7 @@ func parseGLMCompletion(text string, thinking bool) (ParsedMessage, error) {
 	contentBase := 0
 
 	if thinking {
-		if end := strings.LastIndex(text, thinkingEndToken); end >= 0 {
+		if end := lastStructuralIndex(text, thinkingEndToken); end >= 0 {
 			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text[:end], thinkingStartToken))
 			searchFrom = end + len(thinkingEndToken)
 			contentBase = searchFrom
@@ -269,7 +270,7 @@ func glmParseOneCall(index int, text string) (ToolCall, int, error) {
 		if keyEnd < 0 {
 			return call, 0, errors.New("unterminated <arg_key> in GLM tool call")
 		}
-		key := strings.TrimSpace(text[index:keyEnd])
+		key := unescapeToolText(strings.TrimSpace(text[index:keyEnd]), glmArgKeyEnd)
 		if key == "" {
 			return call, 0, errors.New("empty <arg_key> in GLM tool call")
 		}
@@ -287,7 +288,7 @@ func glmParseOneCall(index int, text string) (ToolCall, int, error) {
 			return call, 0, errors.New("unterminated <arg_value> in GLM tool call")
 		}
 		// GLM argument values are always strings (ds4 sets param_is_string).
-		args.set(key, text[index:valueEnd], true)
+		args.set(key, unescapeToolText(text[index:valueEnd], glmArgValueEnd), true)
 		index = valueEnd + len(glmArgValueEnd)
 	}
 

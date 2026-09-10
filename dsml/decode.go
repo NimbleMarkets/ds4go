@@ -87,7 +87,7 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 	contentBase := 0
 
 	if thinking {
-		if end := strings.LastIndex(text, thinkingEndToken); end >= 0 {
+		if end := lastStructuralIndex(text, thinkingEndToken); end >= 0 {
 			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text[:end], "<think>"))
 			searchFrom = end + len(thinkingEndToken)
 			contentBase = searchFrom
@@ -163,7 +163,7 @@ func rawCompletionMessage(text, reason string, thinking bool) ParsedMessage {
 	msg := ParsedMessage{Role: "assistant", MalformedReason: reason}
 	base := 0
 	if thinking {
-		if end := strings.LastIndex(text, thinkingEndToken); end >= 0 {
+		if end := lastStructuralIndex(text, thinkingEndToken); end >= 0 {
 			msg.ReasoningContent = strings.TrimSpace(strings.TrimPrefix(text[:end], thinkingStartToken))
 			base = end + len(thinkingEndToken)
 		} else {
@@ -287,7 +287,7 @@ func parseToolCalls(start int, rawStart int, text string, syn dsmlSyntax, implic
 			}
 			raw := text[valueStart : valueStart+valueEnd]
 			if isString {
-				args.set(paramName, dsmlUnescapeText(raw), true)
+				args.set(paramName, unescapeToolText(raw, syn.paramEnd), true)
 			} else {
 				args.set(paramName, raw, false)
 			}

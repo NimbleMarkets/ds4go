@@ -511,7 +511,7 @@ func (d *StreamDecoder) processInParameterValue(events *[]StreamEvent) {
 		frag.WriteString(toJSONString(d.paramName))
 		frag.WriteString(": ")
 		if d.paramIsString {
-			frag.WriteString(toJSONString(dsmlUnescapeText(raw)))
+			frag.WriteString(toJSONString(unescapeToolText(raw, d.syntax.paramEnd)))
 		} else {
 			frag.WriteString(raw)
 		}
@@ -522,7 +522,7 @@ func (d *StreamDecoder) processInParameterValue(events *[]StreamEvent) {
 		})
 	}
 
-	d.pendingArgs.set(d.paramName, dsmlUnescapeText(raw), d.paramIsString)
+	d.pendingArgs.set(d.paramName, unescapeToolText(raw, d.syntax.paramEnd), d.paramIsString)
 	d.state = stateInInvokeBody
 }
 
@@ -747,7 +747,7 @@ func (d *StreamDecoder) processGLMArgKey(events *[]StreamEvent) {
 	if end < 0 {
 		return // key still arriving
 	}
-	key := strings.TrimSpace(string(body[:end]))
+	key := unescapeToolText(strings.TrimSpace(string(body[:end])), glmArgKeyEnd)
 	if key == "" {
 		d.enterRawMode(events)
 		return
@@ -772,11 +772,9 @@ func (d *StreamDecoder) processGLMArgValue(events *[]StreamEvent) {
 	if end < 0 {
 		return // value still arriving; held whole so the close tag is never split
 	}
-	// No entity unescaping: ds4's GLM parser does none, and the GLM tools
-	// prompt never asks the model to escape, so an entity in an argument is
-	// literal payload. DSML is the exception -- its prompt documents escaping
-	// the closing parameter tag -- and it keeps unescaping on its own path.
-	value := string(d.buf[:end])
+	// Only the escaped closing delimiter is decoded (ds4_tool_text_unescape);
+	// every other entity in an argument is literal payload.
+	value := unescapeToolText(string(d.buf[:end]), glmArgValueEnd)
 	d.pendingArgs.set(d.paramName, value, true)
 	d.pendingEvents = append(d.pendingEvents, StreamEvent{
 		Type:  EventToolCallArgumentsDelta,
