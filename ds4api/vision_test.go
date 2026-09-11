@@ -166,6 +166,37 @@ func TestChatAppendMultimodalMessageMovesEmbeddingsIntoSpans(t *testing.T) {
 	}
 }
 
+func TestChatAppendMultimodalMessageFailureLeavesHandlesFreeable(t *testing.T) {
+	eng, ctl := visionEngine(t)
+	ctl.SetMultimodalAppendFailAt(1)
+	tokens, _ := eng.NewTokens(nil)
+	defer tokens.Free()
+	a, _ := eng.VisionEncodeMemory([]byte("aaaa"))  // 1 row
+	b, _ := eng.VisionEncodeMemory([]byte("bbbbb")) // 2 rows
+	origA := a.state.c.Data
+	before := tokens.Len()
+	spans, err := eng.ChatAppendMultimodalMessage(tokens, "user", []string{"x", "y", "z"}, []*VisionEmbedding{a, b})
+	if err == nil {
+		FreeVisionSpans(spans)
+		t.Fatal("append succeeded with the second image set to fail")
+	}
+	if got := tokens.Len(); got != before {
+		t.Errorf("tokens = %d after a failed append, want %d (rewound)", got, before)
+	}
+	// libds4 replaced a's buffer while appending it and freed the original,
+	// then handed the replacement back through the embeddings array. The Go
+	// handle must adopt it: pointing at the freed original means Free (or the
+	// cleanup) double-frees, and the replacement leaks.
+	if a.state.c.Data == nil || a.state.c.Data == origA {
+		t.Fatalf("first handle data = %p after the failed append, want the replacement (orig %p)", a.state.c.Data, origA)
+	}
+	if a.TokenCount() != 1 || b.TokenCount() != 2 {
+		t.Errorf("token counts = %d,%d after the failed append, want 1,2", a.TokenCount(), b.TokenCount())
+	}
+	a.Free()
+	b.Free()
+}
+
 func TestChatAppendMultimodalMessageRequiresMatchingParts(t *testing.T) {
 	eng, _ := visionEngine(t)
 	tokens, _ := eng.NewTokens(nil)

@@ -119,6 +119,28 @@ func TestImageEncoderSetLimitsKeepsEntriesWithinTheNewLimit(t *testing.T) {
 	}
 }
 
+func TestImageEncoderZeroEntryLimitCachesNothing(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	enc := NewImageEncoder(eng)
+	enc.SetLimits(0, DefaultImageCacheBytes)
+	emb, err := enc.Encode(ImageInput{Data: []byte("one")})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if emb.TokenCount() == 0 {
+		t.Fatal("Encode returned an empty embedding")
+	}
+	emb.Free()
+	// Eviction makes room for the incoming entry, but a zero limit means the
+	// cache may hold nothing at all, so the entry must not be inserted.
+	if entries, bytes := enc.Stats(); entries != 0 || bytes != 0 {
+		t.Fatalf("cache holds %d entries / %d bytes after SetLimits(0, ...), want none", entries, bytes)
+	}
+	if enc.cached([]byte("one")) {
+		t.Error("image was cached under a zero entry limit")
+	}
+}
+
 // TestImageEncoderSetLimitsRacesEncode runs SetLimits against concurrent
 // Encodes; run with -race, the assertion is that the limit fields are not
 // read outside the mutex that guards them.

@@ -289,6 +289,14 @@ func (e *Engine) ChatAppendMultimodalMessage(tokens *Tokens, role string, textPa
 		parts.ptrs, unsafe.Pointer(&embs[0]), uintptr(len(images)), unsafe.Pointer(&spans[0]), errPtr, n)
 	runtime.KeepAlive(embs)
 	if ok == 0 {
+		// libds4 unwinds a partial append by handing the already-moved
+		// images back through the embeddings array. For DeepSeek those are
+		// replacement buffers (the originals were freed while appending), so
+		// the handles must adopt whatever came back or a later Free
+		// double-frees the original and leaks the replacement.
+		for i := range images {
+			images[i].state.c = embs[i]
+		}
 		return nil, errorFromBuffer("ds4_chat_append_multimodal_message", 1, buf)
 	}
 	out := make([]VisionSpan, len(spans))

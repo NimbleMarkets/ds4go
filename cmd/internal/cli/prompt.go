@@ -33,11 +33,13 @@ func isImageFile(data []byte) bool {
 
 // readInputMessage turns a /read file into the next user message: images
 // become an image part after a short caption, anything else is the text.
+// The image part carries the bytes rather than the path: chat history is
+// re-rendered every turn, and the file may be deleted or overwritten by then.
 func readInputMessage(path string, data []byte) cliMessage {
 	if isImageFile(data) {
 		return cliMessage{role: "user", parts: []ds4.ContentPart{
 			{Text: "[image: " + filepath.Base(path) + "]\n"},
-			{Image: &ds4.ImageInput{Path: path}},
+			{Image: &ds4.ImageInput{Data: data}},
 		}}
 	}
 	return cliMessage{role: "user", content: string(data)}

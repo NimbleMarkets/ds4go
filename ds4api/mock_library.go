@@ -85,6 +85,7 @@ type MockControls struct {
 	mu              sync.RWMutex
 	glm             bool
 	vision          bool
+	multimodalFail  int // image index at which the mock multimodal append fails; -1 never
 	stops           map[int32]bool
 	thinking        map[int32]bool
 	specArgmaxCall  int
@@ -162,6 +163,21 @@ func (c *MockControls) hasVision() bool {
 	return c.vision
 }
 
+// SetMultimodalAppendFailAt makes ds4_chat_append_multimodal_message fail
+// when it reaches image index (0-based) after appending the earlier ones, the
+// way libds4 fails on a bad layout mid-message. Pass -1 to restore success.
+func (c *MockControls) SetMultimodalAppendFailAt(index int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.multimodalFail = index
+}
+
+func (c *MockControls) multimodalAppendFailAt() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.multimodalFail
+}
+
 // SetStopTokens overrides the token ids the mock reports as generation stops
 // (ds4_token_is_stop) in addition to EOS.  GLM stops on the system, user,
 // assistant, and observation role tokens, so tests use this to exercise
@@ -228,7 +244,7 @@ func NewMockLibrary() *Library {
 func NewMockLibraryWithControls() (*Library, *MockControls) {
 	lib := &Library{path: "mock", handle: 0}
 	r := &lib.raw
-	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}}
+	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}, multimodalFail: -1}
 	mockStderr.set(-1)
 	_ = loadCRuntime() // idempotent; cMalloc/cFree below require it.
 
@@ -686,6 +702,8 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		}
 		embs := unsafe.Slice((*cVisionEmbedding)(embeddings), int(imageCount))
 		outSpans := unsafe.Slice((*cVisionSpan)(spans), int(imageCount))
+		oldLen := tokens.Len
+		failAt := ctl.multimodalAppendFailAt()
 		for _, word := range strings.Fields(role + ":") {
 			mockTokensPush(tokens, mockWordToken(word))
 		}
@@ -693,11 +711,25 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 			for _, word := range strings.Fields(text(i)) {
 				mockTokensPush(tokens, mockWordToken(word))
 			}
+			if i == failAt {
+				// Upstream unwinds by handing the already-moved images back
+				// through the embeddings array (their replacement buffers,
+				// the originals are gone) and rewinding the tokens.
+				for j := 0; j < i; j++ {
+					embs[j] = outSpans[j].Embedding
+					outSpans[j] = cVisionSpan{}
+				}
+				tokens.Len = oldLen
+				mockWriteError(err, errCap, "invalid DeepSeek vision embedding layout")
+				return 0
+			}
 			outSpans[i] = cVisionSpan{TokenStart: uint32(tokens.Len)}
 			for k := uint32(0); k < embs[i].TokenCount; k++ {
 				mockTokensPush(tokens, mockImageToken)
 			}
-			outSpans[i].Embedding = embs[i]
+			// The DeepSeek path rebuilds the block and frees the caller's
+			// buffer; the span carries the replacement.
+			outSpans[i].Embedding = mockReplaceEmbedding(embs[i])
 			embs[i] = cVisionEmbedding{}
 		}
 		for _, word := range strings.Fields(text(int(imageCount))) {
@@ -1130,6 +1162,19 @@ func mockWriteError(err unsafe.Pointer, errLen uintptr, msg string) {
 	buf := unsafe.Slice((*byte)(err), int(errLen))
 	n := copy(buf[:len(buf)-1], msg)
 	buf[n] = 0
+}
+
+// mockReplaceEmbedding mirrors ds4_prompt_append_deepseek4_vision's handling
+// of the caller's buffer: the rows are copied into a fresh malloc block and
+// the original is freed, so the embedding the span carries is a different
+// allocation from the one the caller passed in.
+func mockReplaceEmbedding(emb cVisionEmbedding) cVisionEmbedding {
+	size := uintptr(emb.TokenCount) * uintptr(mockEmbdDim) * 4
+	block := cMalloc(size)
+	copy(unsafe.Slice((*byte)(block), size), unsafe.Slice((*byte)(emb.Data), size))
+	cFree(emb.Data)
+	emb.Data = block
+	return emb
 }
 
 // mockVisionEncode builds a deterministic embedding: 1 + len%4 rows of

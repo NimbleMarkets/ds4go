@@ -19,9 +19,15 @@ func TestIsImageFile(t *testing.T) {
 }
 
 func TestReadInputBecomesImagePart(t *testing.T) {
-	msg := readInputMessage("shot.png", []byte("\x89PNG\r\n\x1a\nxx"))
-	if len(msg.parts) != 2 || msg.parts[1].Image == nil || msg.parts[1].Image.Path != "shot.png" || !strings.Contains(msg.parts[0].Text, "shot.png") {
+	data := []byte("\x89PNG\r\n\x1a\nxx")
+	msg := readInputMessage("shot.png", data)
+	if len(msg.parts) != 2 || msg.parts[1].Image == nil || !strings.Contains(msg.parts[0].Text, "shot.png") {
 		t.Fatalf("image /read message = %+v", msg)
+	}
+	// The message carries the bytes, not the path: history is re-rendered
+	// every turn, and the file may be gone or changed by then.
+	if img := msg.parts[1].Image; string(img.Data) != string(data) || img.Path != "" {
+		t.Fatalf("image part = {Data:%q Path:%q}, want the bytes and no path", img.Data, img.Path)
 	}
 	text := readInputMessage("notes.txt", []byte("plain notes"))
 	if text.parts != nil || text.content != "plain notes" {

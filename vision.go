@@ -158,9 +158,10 @@ func (c *ImageEncoder) Encode(img ImageInput) (*ds4api.VisionEmbedding, error) {
 		emb.Free()
 		return clone, nil
 	}
-	if size > c.maxBytes {
-		// SetLimits shrank the budget while this image was encoding; caching
-		// it now would overrun the new limit however much we evicted.
+	if c.maxEntries <= 0 || size > c.maxBytes {
+		// The cache may hold nothing (a zero entry limit), or SetLimits
+		// shrank the budget while this image was encoding; caching it now
+		// would overrun the limit however much we evicted.
 		c.mu.Unlock()
 		emb.Free()
 		return clone, nil
