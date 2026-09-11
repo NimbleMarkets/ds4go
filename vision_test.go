@@ -101,6 +101,51 @@ func TestImageEncoderEvictsLeastRecentlyUsed(t *testing.T) {
 	}
 }
 
+func TestImageEncoderSetLimitsKeepsEntriesWithinTheNewLimit(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	enc := NewImageEncoder(eng)
+	one, _ := enc.Encode(ImageInput{Data: []byte("one")})
+	one.Free()
+	two, _ := enc.Encode(ImageInput{Data: []byte("two")})
+	two.Free()
+	// Resizing to exactly the current occupancy evicts nothing: the limit is
+	// what the cache may hold, not one less.
+	enc.SetLimits(2, DefaultImageCacheBytes)
+	if entries, _ := enc.Stats(); entries != 2 {
+		t.Fatalf("entries = %d after SetLimits(2, ...) on a two-entry cache, want 2", entries)
+	}
+	if !enc.cached([]byte("one")) || !enc.cached([]byte("two")) {
+		t.Errorf("an entry was evicted by a resize to the current size: one=%v two=%v", enc.cached([]byte("one")), enc.cached([]byte("two")))
+	}
+}
+
+// TestImageEncoderSetLimitsRacesEncode runs SetLimits against concurrent
+// Encodes; run with -race, the assertion is that the limit fields are not
+// read outside the mutex that guards them.
+func TestImageEncoderSetLimitsRacesEncode(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	enc := NewImageEncoder(eng)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			emb, err := enc.Encode(ImageInput{Data: []byte{byte('a' + i%7), 'x'}})
+			if err != nil {
+				t.Errorf("Encode: %v", err)
+				return
+			}
+			emb.Free()
+		}(i)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			enc.SetLimits(1+i%4, int64(64+i)<<10)
+		}(i)
+	}
+	wg.Wait()
+}
+
 func TestImageEncoderByteBudget(t *testing.T) {
 	eng, _ := visionMockEngine(t)
 	enc := NewImageEncoder(eng)

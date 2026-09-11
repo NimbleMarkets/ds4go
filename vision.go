@@ -92,7 +92,8 @@ func (c *ImageEncoder) SetLimits(entries int, bytes int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.maxEntries, c.maxBytes = entries, bytes
-	c.evictLocked(0)
+	// Nothing is arriving, so the cache may stay at exactly the new limits.
+	c.evictLocked(0, 0)
 }
 
 // Stats reports the cache occupancy.
@@ -119,6 +120,9 @@ func (c *ImageEncoder) Encode(img ImageInput) (*ds4api.VisionEmbedding, error) {
 	key := sha256.Sum256(data)
 
 	c.mu.Lock()
+	// Snapshot the byte budget under the lock: SetLimits writes it, and the
+	// cacheability check below runs outside the critical section.
+	maxBytes := c.maxBytes
 	if el, ok := c.entries[key]; ok {
 		c.order.MoveToFront(el)
 		emb := el.Value.(*imageCacheEntry).emb
@@ -138,7 +142,7 @@ func (c *ImageEncoder) Encode(img ImageInput) (*ds4api.VisionEmbedding, error) {
 		return nil, err
 	}
 	size := int64(emb.TokenCount()) * int64(c.engine.EmbdDim()) * 4
-	if size <= 0 || size > c.maxBytes {
+	if size <= 0 || size > maxBytes {
 		// Not cacheable; hand the fresh embedding straight to the caller.
 		return emb, nil
 	}
@@ -154,7 +158,14 @@ func (c *ImageEncoder) Encode(img ImageInput) (*ds4api.VisionEmbedding, error) {
 		emb.Free()
 		return clone, nil
 	}
-	c.evictLocked(size)
+	if size > c.maxBytes {
+		// SetLimits shrank the budget while this image was encoding; caching
+		// it now would overrun the new limit however much we evicted.
+		c.mu.Unlock()
+		emb.Free()
+		return clone, nil
+	}
+	c.evictLocked(1, size)
 	el := c.order.PushFront(&imageCacheEntry{key: key, emb: emb, bytes: size})
 	c.entries[key] = el
 	c.bytes += size
@@ -162,10 +173,13 @@ func (c *ImageEncoder) Encode(img ImageInput) (*ds4api.VisionEmbedding, error) {
 	return clone, nil
 }
 
-// evictLocked frees least-recently-used entries until the cache has room
-// for incoming bytes within both limits. Called with mu held.
-func (c *ImageEncoder) evictLocked(incoming int64) {
-	for c.order.Len() > 0 && (c.order.Len() >= c.maxEntries || c.bytes+incoming > c.maxBytes) {
+// evictLocked frees least-recently-used entries until the cache has room for
+// incomingEntries more entries holding incomingBytes more bytes within both
+// limits. Insertion passes (1, size); a resize passes (0, 0), which trims to
+// the new limits without evicting an entry the cache is still allowed to
+// hold. Called with mu held.
+func (c *ImageEncoder) evictLocked(incomingEntries int, incomingBytes int64) {
+	for c.order.Len() > 0 && (c.order.Len()+incomingEntries > c.maxEntries || c.bytes+incomingBytes > c.maxBytes) {
 		el := c.order.Back()
 		entry := el.Value.(*imageCacheEntry)
 		c.order.Remove(el)
