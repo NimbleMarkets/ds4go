@@ -76,6 +76,37 @@ func TestViewImageWithoutVisionIsATextObservation(t *testing.T) {
 	}
 }
 
+func TestViewImageRejectsLargeNonImage(t *testing.T) {
+	root := t.TempDir()
+	w, err := New(Config{Root: root, VisionAvailable: func() bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := make([]byte, 1<<20)
+	copy(big, []byte("not an image, just a large text-ish prefix"))
+	if err := os.WriteFile(filepath.Join(root, "big.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := invokeParts(t, w.ViewImageTool(), `{"path":"big.bin"}`)
+	if len(res.Parts) != 1 || res.Parts[0].Image != nil || !strings.Contains(res.Parts[0].Text, "not a PNG or JPEG") {
+		t.Fatalf("parts = %+v, want a text error for a large non-image file", res.Parts)
+	}
+}
+
+func TestViewImageContextCancelled(t *testing.T) {
+	w, _ := viewImageWorkspace(t, true)
+	mm, ok := w.ViewImageTool().(ds4.MultimodalToolHandler)
+	if !ok {
+		t.Fatal("view_image is not a MultimodalToolHandler")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := mm.InvokeParts(ctx, json.RawMessage(`{"path":"shot.png"}`))
+	if err == nil || err != context.Canceled {
+		t.Fatalf("InvokeParts with cancelled ctx: err = %v, want context.Canceled", err)
+	}
+}
+
 func TestRegisterReadOnlyIncludesViewImage(t *testing.T) {
 	w, _ := viewImageWorkspace(t, true)
 	reg := ds4.NewToolRegistry()

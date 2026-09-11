@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/NimbleMarkets/ds4go"
@@ -48,11 +49,23 @@ func (w *Workspace) ViewImageTool() ds4.ToolHandler {
 			if err != nil {
 				return textResult("ERROR: view_image: %v\n", err), nil
 			}
-			data, err := target.readFile()
+			f, err := target.open()
 			if err != nil {
 				return textResult("ERROR: view_image: %v\n", err), nil
 			}
-			if !isImageFile(data) {
+			defer f.Close()
+			head := make([]byte, 16)
+			n, err := io.ReadFull(f, head)
+			if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+				return textResult("ERROR: view_image: %v\n", err), nil
+			}
+			head = head[:n]
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return ds4.ToolResult{}, err
+				}
+			}
+			if !isImageFile(head) {
 				return textResult("ERROR: view_image: %s is not a PNG or JPEG\n", a.Path), nil
 			}
 			if w.cfg.VisionAvailable == nil || !w.cfg.VisionAvailable() {
