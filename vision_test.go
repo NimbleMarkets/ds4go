@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/dsml"
 )
 
 func visionMockEngine(t *testing.T) (*Engine, *ds4api.MockControls) {
@@ -290,6 +292,64 @@ func TestToolMessageWithImageRendersAsUserTurn(t *testing.T) {
 	defer multi.Free()
 	if a, b := plain.Slice(), multi.Tokens.Slice(); len(a) != len(b) {
 		t.Errorf("text-only tool turn: multimodal %d tokens vs plain %d", len(b), len(a))
+	}
+}
+
+// TestRenderChatMessageImageToolTurn asserts the central role/wrapper rule
+// directly: an image-bearing tool message always renders under the "user"
+// role, DSML wraps its text segments in the <tool_result> markers (spanning
+// the whole payload, not each segment), and GLM leaves the text unwrapped.
+func TestRenderChatMessageImageToolTurn(t *testing.T) {
+	const start, end = "<tool_result>", "</tool_result>"
+	msg := ChatMessage{Role: "tool", ToolCallID: "c1", Parts: []ContentPart{
+		{Text: "obs "}, {Image: &ImageInput{Data: []byte("pixels")}}, {Text: " tail"},
+	}}
+
+	dsmlRendered, err := renderChatMessage(msg, turnRenderInfo{syntax: dsml.SyntaxDSML})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dsmlRendered.role != "user" {
+		t.Errorf("DSML role = %q, want %q", dsmlRendered.role, "user")
+	}
+	if len(dsmlRendered.images) != 1 {
+		t.Fatalf("DSML images = %d, want 1", len(dsmlRendered.images))
+	}
+	if len(dsmlRendered.parts) == 0 || !strings.HasPrefix(dsmlRendered.parts[0], start) {
+		t.Errorf("DSML parts[0] = %q, want prefix %q", dsmlRendered.parts, start)
+	}
+	if last := dsmlRendered.parts[len(dsmlRendered.parts)-1]; !strings.HasSuffix(last, end) {
+		t.Errorf("DSML parts[last] = %q, want suffix %q", last, end)
+	}
+
+	glmRendered, err := renderChatMessage(msg, turnRenderInfo{syntax: dsml.SyntaxGLM})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if glmRendered.role != "user" {
+		t.Errorf("GLM role = %q, want %q", glmRendered.role, "user")
+	}
+	if len(glmRendered.images) != 1 {
+		t.Fatalf("GLM images = %d, want 1", len(glmRendered.images))
+	}
+	want := []string{"obs ", " tail"}
+	if len(glmRendered.parts) != len(want) || glmRendered.parts[0] != want[0] || glmRendered.parts[1] != want[1] {
+		t.Errorf("GLM parts = %q, want %q", glmRendered.parts, want)
+	}
+}
+
+// TestBuildPromptMultimodalRejectsAssistantImage guards against
+// ToolRegistry.renderMessage's assistant short-circuit silently dropping an
+// image on an assistant message instead of surfacing messageParts' error.
+func TestBuildPromptMultimodalRejectsAssistantImage(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	enc := NewImageEncoder(eng)
+	history := []ChatMessage{
+		{Role: "user", Content: "x"},
+		{Role: "assistant", Parts: []ContentPart{{Image: &ImageInput{Data: []byte("x")}}}},
+	}
+	if _, err := NewToolRegistry().BuildPromptMultimodal(eng, enc, "", history, ThinkNone); err == nil {
+		t.Fatal("BuildPromptMultimodal accepted an assistant message with an image")
 	}
 }
 

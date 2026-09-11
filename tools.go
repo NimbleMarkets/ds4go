@@ -643,6 +643,18 @@ func (r *ToolRegistry) renderMessage(msg ChatMessage, turn turnRenderInfo) (rend
 	if msg.Role != "assistant" {
 		return renderChatMessage(msg, turn)
 	}
+	if len(msg.Parts) > 0 {
+		// messageParts rejects an image on an assistant message; a text-only
+		// Parts collapses into Content the same way renderChatMessage does,
+		// so an assistant turn built from Parts still reaches the tool-call
+		// rendering below instead of being silently dropped.
+		texts, _, err := messageParts(msg)
+		if err != nil {
+			return renderedChatMessage{}, err
+		}
+		msg.Content = texts[0]
+		msg.Parts = nil
+	}
 	renderedCalls, err := r.renderAssistantToolCalls(turn.syntax, msg.ToolCalls)
 	if err != nil {
 		return renderedChatMessage{}, err
@@ -663,9 +675,10 @@ func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessag
 		}
 		if msg.Role == "tool" && turn.syntax != dsml.SyntaxGLM {
 			// DSML: keep the tool-result wrapper around the text so the model
-			// still sees a tool observation.
-			texts[0] = dsml.ToolResultStart + texts[0]
-			texts[len(texts)-1] += dsml.ToolResultEnd
+			// still sees a tool observation, escaping each segment exactly as
+			// the text-only RenderToolResult path does so tool output cannot
+			// close the wrapper early.
+			texts = dsml.RenderToolResultParts(texts)
 		}
 		// Image-bearing turns render under the user role for both families:
 		// GLM grounds image tokens in user turns (upstream
