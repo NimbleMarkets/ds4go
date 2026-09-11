@@ -254,3 +254,54 @@ func TestVisionFlagPairsFromCatalogWhenUnset(t *testing.T) {
 		t.Errorf("VisionPath = %q, want paired %q", got, want)
 	}
 }
+
+func TestEngineOptionsPinsVisionExpDSparkDrafter(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var vision, drafter, mtp models.Model
+	for _, m := range models.Curated() {
+		switch m.Alias {
+		case "vision-q2":
+			vision = m
+		case "vision-dspark-support":
+			drafter = m
+		case "mtp":
+			mtp = m
+		}
+	}
+	for _, m := range []models.Model{vision, mtp} {
+		if err := os.WriteFile(filepath.Join(modelsDir, m.FileName), []byte("gguf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	modelPath := filepath.Join(modelsDir, vision.FileName)
+	mtpPath := filepath.Join(modelsDir, mtp.FileName)
+	drafterPath := filepath.Join(modelsDir, drafter.FileName)
+
+	// The installed 0731 MTP model is the --mtp default, and libds4 rejects it
+	// against a Vision-Exp checkpoint: with no pinned drafter installed the
+	// engine must be opened without one.
+	cli := CLIConfig{Model: modelPath, MTP: mtpPath}
+	server := ServerConfig{Model: modelPath, MTP: mtpPath}
+	if got := cli.EngineOptions().MTPPath; got != "" {
+		t.Errorf("CLI MTPPath = %q with no pinned drafter installed, want empty", got)
+	}
+	if got := server.EngineOptions().MTPPath; got != "" {
+		t.Errorf("server MTPPath = %q with no pinned drafter installed, want empty", got)
+	}
+
+	// Installed: the pinned drafter is used, not the 0731 default.
+	if err := os.WriteFile(drafterPath, []byte("gguf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := cli.EngineOptions().MTPPath; got != drafterPath {
+		t.Errorf("CLI MTPPath = %q, want the pinned drafter %q", got, drafterPath)
+	}
+	if got := server.EngineOptions().MTPPath; got != drafterPath {
+		t.Errorf("server MTPPath = %q, want the pinned drafter %q", got, drafterPath)
+	}
+}

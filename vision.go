@@ -193,6 +193,28 @@ func DefaultVisionPath(modelPath string) string {
 	return path
 }
 
+// DSparkSupportPath reports the DSpark drafter a catalog-recognized model
+// pins. required is true when the catalog entry names its own DSpark support
+// model (the Vision-Exp checkpoints do); libds4 rejects every other drafter
+// for such a model, including the standard 0731 one. path is that drafter's
+// installed file under the models dir, or "" when it is not installed.
+// Text-only, GLM, and unrecognized models return ("", false).
+func DSparkSupportPath(modelPath string) (path string, required bool) {
+	model, ok := models.ModelForPath(modelPath)
+	if !ok || model.GLM || model.DSpark == "" {
+		return "", false
+	}
+	drafter, ok := models.Lookup(model.DSpark)
+	if !ok {
+		return "", true
+	}
+	path = filepath.Join(models.NewManager().ModelsDir, drafter.FileName)
+	if st, err := os.Stat(path); err != nil || st.IsDir() || st.Size() == 0 {
+		return "", true
+	}
+	return path, true
+}
+
 // ApplyVisionDefaults fills EngineOptions.VisionPath with the installed
 // encoder paired to a catalog vision model. An explicit VisionPath wins.
 func ApplyVisionDefaults(opts *EngineOptions) {

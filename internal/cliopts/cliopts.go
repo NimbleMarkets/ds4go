@@ -195,11 +195,19 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		simUsedBytes = b
 	}
 
+	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
-	if model, ok := models.ModelForPath(c.Model); ok && model.GLM {
+	switch {
+	case ok && model.GLM:
 		// libds4 rejects an external --mtp support model for GLM. GLM 5.2's
 		// optional next-token predictor is embedded in the base GGUF instead.
 		mtpPath = ""
+	case ok && model.DSpark != "":
+		// This checkpoint pins its own DSpark drafter; libds4 rejects every
+		// other one, including the installed 0731 model --mtp defaults to.
+		// An explicit --mtp is overridden for the same reason: any other
+		// drafter fails the engine open. Absent, the path stays empty.
+		mtpPath, _ = ds4.DSparkSupportPath(c.Model)
 	}
 
 	opts := ds4.EngineOptions{
@@ -414,9 +422,18 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 		simUsedBytes = b
 	}
 
+	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
-	if model, ok := models.ModelForPath(c.Model); ok && model.GLM {
+	switch {
+	case ok && model.GLM:
+		// libds4 rejects an external --mtp support model for GLM; its
+		// predictor is embedded in the base GGUF.
 		mtpPath = ""
+	case ok && model.DSpark != "":
+		// This checkpoint pins its own DSpark drafter and libds4 rejects
+		// every other one, so an explicit --mtp is overridden too: it would
+		// only fail the engine open. Absent, the path stays empty.
+		mtpPath, _ = ds4.DSparkSupportPath(c.Model)
 	}
 
 	opts := ds4.EngineOptions{

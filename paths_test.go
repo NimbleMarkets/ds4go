@@ -179,9 +179,72 @@ func TestApplyMTPDefaultsPicksVisionExpDrafter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	opts := EngineOptions{ModelPath: filepath.Join(modelsDir, vision.FileName)}
+	modelPath := filepath.Join(modelsDir, vision.FileName)
+	opts := EngineOptions{ModelPath: modelPath}
 	ApplyMTPDefaults(&opts)
 	if want := filepath.Join(modelsDir, drafter.FileName); opts.MTPPath != want {
 		t.Fatalf("MTPPath = %q, want the Vision-Exp drafter %q", opts.MTPPath, want)
+	}
+
+	// With the pinned drafter absent, the 0731 MTP model must not be used as a
+	// fallback: libds4 rejects it against a Vision-Exp checkpoint, so the
+	// engine would fail to open. An empty path stays empty.
+	if err := os.Remove(filepath.Join(modelsDir, drafter.FileName)); err != nil {
+		t.Fatal(err)
+	}
+	opts = EngineOptions{ModelPath: modelPath}
+	ApplyMTPDefaults(&opts)
+	if opts.MTPPath != "" {
+		t.Fatalf("MTPPath = %q with the pinned drafter absent, want empty", opts.MTPPath)
+	}
+}
+
+func TestDSparkSupportPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var vision, drafter, glm, text models.Model
+	for _, m := range models.Curated() {
+		switch m.Alias {
+		case "vision-q2":
+			vision = m
+		case "vision-dspark-support":
+			drafter = m
+		case "glm53-q2":
+			glm = m
+		case "q2-imatrix":
+			text = m
+		}
+	}
+	for _, m := range []models.Model{vision, glm, text} {
+		if err := os.WriteFile(filepath.Join(modelsDir, m.FileName), []byte("gguf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	visionPath := filepath.Join(modelsDir, vision.FileName)
+
+	// Required, but not installed.
+	if path, required := DSparkSupportPath(visionPath); !required || path != "" {
+		t.Errorf("DSparkSupportPath() = (%q, %v), want (\"\", true)", path, required)
+	}
+	// Required and installed.
+	drafterPath := filepath.Join(modelsDir, drafter.FileName)
+	if err := os.WriteFile(drafterPath, []byte("gguf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if path, required := DSparkSupportPath(visionPath); !required || path != drafterPath {
+		t.Errorf("DSparkSupportPath() = (%q, %v), want (%q, true)", path, required, drafterPath)
+	}
+	// GLM and text-only models pin no drafter.
+	for _, m := range []models.Model{glm, text} {
+		if path, required := DSparkSupportPath(filepath.Join(modelsDir, m.FileName)); required || path != "" {
+			t.Errorf("DSparkSupportPath(%s) = (%q, %v), want (\"\", false)", m.Alias, path, required)
+		}
+	}
+	if path, required := DSparkSupportPath(""); required || path != "" {
+		t.Errorf("DSparkSupportPath(\"\") = (%q, %v), want (\"\", false)", path, required)
 	}
 }
