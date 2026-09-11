@@ -522,6 +522,9 @@ func printModelInfo(model models.Model, m *models.Manager) {
 	fmt.Fprintf(os.Stdout, "Path:            %s\n", m.ModelsDir+"/"+model.FileName)
 	fmt.Fprintf(os.Stdout, "Size:            %.1f GiB\n", model.SizeGB)
 	fmt.Fprintf(os.Stdout, "Recommended RAM: %s\n", model.RecommendedRAM)
+	if model.Encoder != "" {
+		fmt.Fprintf(os.Stdout, "Vision encoder:  %s\n", model.Encoder)
+	}
 	fmt.Fprintf(os.Stdout, "Installed:       %t\n", model.Installed)
 	if model.Partial {
 		fmt.Fprintf(os.Stdout, "Partial:         true (%s)\n", tui.FormatPartialModel(model.PartialBytes, model.SizeGB))

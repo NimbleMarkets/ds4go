@@ -52,5 +52,10 @@ func ModelFlags(model models.Model) string {
 	if model.GLM {
 		flags = append(flags, "glm")
 	}
+	if model.Vision && model.Encoder != "" {
+		flags = append(flags, "vision: "+model.Encoder)
+	} else if model.Vision {
+		flags = append(flags, "vision")
+	}
 	return strings.Join(flags, ", ")
 }
