@@ -374,3 +374,149 @@ func TestSessionVisionUnsupported(t *testing.T) {
 		t.Fatalf("SyncMultimodal(nil spans) = %v, want plain sync", err)
 	}
 }
+
+// TestSessionVisionMethodsNilSessionSafe guards against a regression where
+// VisionPrefixMatches/VisionStateMatches evaluated s.lib.raw.<symbol> in the
+// caller's argument list, dereferencing a nil *Session before visionPredicate
+// ever reached its nil check.
+func TestSessionVisionMethodsNilSessionSafe(t *testing.T) {
+	var s *Session
+	if s.VisionPrefixMatches(nil) {
+		t.Error("VisionPrefixMatches on a nil session = true")
+	}
+	if s.VisionStateMatches(nil) {
+		t.Error("VisionStateMatches on a nil session = true")
+	}
+	if s.RebaseVisionState(nil) {
+		t.Error("RebaseVisionState on a nil session = true")
+	}
+	if s.HasVisionState() {
+		t.Error("HasVisionState on a nil session = true")
+	}
+}
+
+// TestSessionRewindSyncedKeepsSpanInsideRetainedPrefix covers a rewind whose
+// cut point lands after a synced image: the span is entirely inside the
+// retained prefix, so it is kept and re-synced with the rebuild.
+func TestSessionRewindSyncedKeepsSpanInsideRetainedPrefix(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetVision(true)
+	eng, err := lib.NewEngine(EngineOptions{VisionPath: "enc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	tokens, spans := multimodalPrompt(t, eng, "look", []byte("img"))
+	if err := sess.SyncMultimodal(tokens, spans); err != nil {
+		t.Fatal(err)
+	}
+	imageEnd := spans[0].TokenStart + spans[0].Embedding.TokenCount()
+	// Evaluate a few more tokens after the image so there is room to rewind
+	// to a position strictly after the image but before the live position.
+	for i := 0; i < 3; i++ {
+		if err := sess.Eval(int(99 + i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewindPos := imageEnd + 1
+	if rewindPos >= sess.Pos() {
+		t.Fatalf("test setup: rewind position %d not before the live position %d", rewindPos, sess.Pos())
+	}
+	before := ctl.MultimodalSyncCalls()
+	if err := sess.RewindSynced(rewindPos, spans...); err != nil {
+		t.Fatalf("RewindSynced: %v", err)
+	}
+	if !sess.HasVisionState() {
+		t.Error("HasVisionState() = false after rewinding past the image")
+	}
+	if got := ctl.MultimodalSyncCalls(); got != before+1 {
+		t.Errorf("multimodal sync calls = %d, want %d (rebuild)", got, before+1)
+	}
+}
+
+// TestSessionRewindSyncedSplitSpanErrors covers a rewind whose cut point
+// lands inside a synced image: RewindSynced must reject it rather than sync a
+// prompt with a partial image.
+func TestSessionRewindSyncedSplitSpanErrors(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetVision(true)
+	eng, err := lib.NewEngine(EngineOptions{VisionPath: "enc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	tokens, spans := multimodalPrompt(t, eng, "look", []byte("img"))
+	if err := sess.SyncMultimodal(tokens, spans); err != nil {
+		t.Fatal(err)
+	}
+	imageStart := spans[0].TokenStart
+	imageEnd := imageStart + spans[0].Embedding.TokenCount()
+	splitPos := imageStart + 1
+	if splitPos <= imageStart || splitPos >= imageEnd {
+		t.Fatalf("test setup: split position %d not inside image span %d..%d", splitPos, imageStart, imageEnd)
+	}
+	before := ctl.MultimodalSyncCalls()
+	err = sess.RewindSynced(splitPos, spans...)
+	if err == nil || !strings.Contains(err.Error(), "splits image span") {
+		t.Fatalf("RewindSynced at a split position = %v, want an error mentioning \"splits image span\"", err)
+	}
+	if got := ctl.MultimodalSyncCalls(); got != before {
+		t.Errorf("multimodal sync calls = %d, want %d (no rebuild on error)", got, before)
+	}
+}
+
+// TestSessionRewindSyncedDropsSpanAfterRewind covers a rewind whose cut point
+// lands before a synced image: the span is entirely after the retained
+// prefix, so it is dropped and the rebuild degrades to a plain sync.
+func TestSessionRewindSyncedDropsSpanAfterRewind(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetVision(true)
+	eng, err := lib.NewEngine(EngineOptions{VisionPath: "enc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+
+	tokens, err := eng.NewTokens([]int{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tokens.Free()
+	textLen := tokens.Len()
+	emb, err := eng.VisionEncodeMemory([]byte("img"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	span, err := eng.PromptAppendVision(tokens, emb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer span.Embedding.Free()
+
+	if err := sess.SyncMultimodal(tokens, []VisionSpan{span}); err != nil {
+		t.Fatal(err)
+	}
+	if !sess.HasVisionState() {
+		t.Fatal("HasVisionState() = false after a multimodal sync")
+	}
+	if span.TokenStart <= textLen {
+		t.Fatalf("test setup: image span at %d does not start after the text prefix (%d)", span.TokenStart, textLen)
+	}
+
+	before := ctl.MultimodalSyncCalls()
+	if err := sess.RewindSynced(textLen, span); err != nil {
+		t.Fatalf("RewindSynced: %v", err)
+	}
+	if got := ctl.MultimodalSyncCalls(); got != before {
+		t.Errorf("multimodal sync calls = %d, want %d (plain sync, span dropped)", got, before)
+	}
+	if sess.HasVisionState() {
+		t.Error("HasVisionState() = true after rewinding before the image, with the span dropped")
+	}
+}

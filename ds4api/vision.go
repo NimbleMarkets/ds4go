@@ -374,10 +374,18 @@ func (s *Session) SyncMultimodalWithCancel(prompt *Tokens, spans []VisionSpan, f
 	return errorFromBuffer("ds4_session_sync_multimodal", code, buf)
 }
 
-func (s *Session) visionPredicate(spans []VisionSpan, fn func(s uintptr, images unsafe.Pointer, n uintptr) bool) bool {
+// visionPredicate nil-checks s and s.ptr, then resolves the raw symbol under
+// libCallMu via pick (rather than in the caller's argument list, which would
+// dereference s before this check runs and read the raw symbol table outside
+// the lock).
+func (s *Session) visionPredicate(spans []VisionSpan, pick func(r *rawSymbols) func(s uintptr, images unsafe.Pointer, n uintptr) bool) bool {
 	libCallMu.Lock()
 	defer libCallMu.Unlock()
-	if s == nil || s.ptr == 0 || fn == nil {
+	if s == nil || s.ptr == 0 {
+		return false
+	}
+	fn := pick(&s.lib.raw)
+	if fn == nil {
 		return false
 	}
 	c, err := spansToC(spans)
@@ -394,12 +402,16 @@ func (s *Session) visionPredicate(spans []VisionSpan, fn func(s uintptr, images 
 // fingerprint) and any new images start at or after the live frontier. The
 // caller must still check the token prefix.
 func (s *Session) VisionPrefixMatches(spans []VisionSpan) bool {
-	return s.visionPredicate(spans, s.lib.raw.ds4SessionVisionPrefixMatches)
+	return s.visionPredicate(spans, func(r *rawSymbols) func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		return r.ds4SessionVisionPrefixMatches
+	})
 }
 
 // VisionStateMatches is VisionPrefixMatches plus an identical image count.
 func (s *Session) VisionStateMatches(spans []VisionSpan) bool {
-	return s.visionPredicate(spans, s.lib.raw.ds4SessionVisionStateMatches)
+	return s.visionPredicate(spans, func(r *rawSymbols) func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		return r.ds4SessionVisionStateMatches
+	})
 }
 
 // RebaseVisionState calls ds4_session_rebase_vision_state: for a continuation

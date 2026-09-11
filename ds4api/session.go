@@ -476,9 +476,14 @@ func (s *Session) Rewind(pos int) {
 // RewindSynced rewinds to pos and then restores a valid checkpoint for the
 // retained prefix when the rewind lost it, mirroring upstream's
 // agent_worker_rewind / server_generation_rewind. spans are the image spans
-// of the prompt the session was synced with; those that lie inside the
-// retained prefix are passed to the multimodal sync, as the header requires
-// for image-bearing sessions.
+// of the prompt the session was synced with, classified against the retained
+// prefix length: a span entirely inside it is kept and passed to the
+// multimodal sync, as the header requires for image-bearing sessions; a span
+// entirely after it is dropped; a span straddling the cut point is an error,
+// since the retained prefix would then contain a partial image. A rewind at
+// or past the current position is a no-op. Note that by the time a straddling
+// span is detected the session has already been rewound (Rewind is
+// unconditional), so on that error the session is left needing a fresh sync.
 func (s *Session) RewindSynced(pos int, spans ...VisionSpan) error {
 	if s == nil {
 		return errors.New("ds4: nil session")
@@ -496,10 +501,17 @@ func (s *Session) RewindSynced(pos int, spans ...VisionSpan) error {
 		return err
 	}
 	defer prefix.Free()
+	n := prefix.Len()
 	var kept []VisionSpan
 	for _, sp := range spans {
-		if sp.TokenStart+sp.Embedding.TokenCount() <= prefix.Len() {
+		end := sp.TokenStart + sp.Embedding.TokenCount()
+		switch {
+		case end <= n:
 			kept = append(kept, sp)
+		case sp.TokenStart >= n:
+			// Entirely after the retained prefix: dropped.
+		default:
+			return fmt.Errorf("ds4: rewind position %d splits image span at %d..%d", pos, sp.TokenStart, end)
 		}
 	}
 	return s.SyncMultimodal(prefix, kept)
