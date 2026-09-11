@@ -116,6 +116,28 @@ type cSessionSnapshot struct {
 	Cap uint64
 }
 
+// cVisionEmbedding mirrors ds4_vision_embedding. Data points at
+// token_count * ds4_engine_embd_dim floats malloc'd by libds4.
+type cVisionEmbedding struct {
+	Data          unsafe.Pointer
+	TokenCount    uint32
+	Layout        uint32
+	GridWidth     uint32
+	GridHeight    uint32
+	Width         uint32
+	Height        uint32
+	ContentWidth  uint32
+	ContentHeight uint32
+	Fingerprint   [32]uint8
+}
+
+// cVisionSpan mirrors ds4_vision_span: an embedding placed at a token offset
+// inside a prompt.
+type cVisionSpan struct {
+	TokenStart uint32
+	Embedding  cVisionEmbedding
+}
+
 type rawSymbols struct {
 	ds4EngineOpen                       func(out *uintptr, opt *cEngineOptions) int32
 	ds4EngineClose                      func(e uintptr)

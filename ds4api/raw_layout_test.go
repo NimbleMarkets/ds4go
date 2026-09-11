@@ -136,3 +136,26 @@ func TestDistributedOptionsLayoutMatchesC(t *testing.T) {
 		t.Errorf("sizeof(ds4_distributed_layers) = %d, want 12", got)
 	}
 }
+
+// ds4_vision_embedding and ds4_vision_span (upstream ds4 fc8bf3c). libds4
+// fills these by offset, so a drifted layout corrupts token counts silently.
+func TestVisionStructsLayoutMatchC(t *testing.T) {
+	var e cVisionEmbedding
+	checkOffsets(t, "ds4_vision_embedding", unsafe.Sizeof(e), 72, []fieldOffset{
+		{"data", unsafe.Offsetof(e.Data), 0},
+		{"token_count", unsafe.Offsetof(e.TokenCount), 8},
+		{"layout", unsafe.Offsetof(e.Layout), 12},
+		{"grid_width", unsafe.Offsetof(e.GridWidth), 16},
+		{"grid_height", unsafe.Offsetof(e.GridHeight), 20},
+		{"width", unsafe.Offsetof(e.Width), 24},
+		{"height", unsafe.Offsetof(e.Height), 28},
+		{"content_width", unsafe.Offsetof(e.ContentWidth), 32},
+		{"content_height", unsafe.Offsetof(e.ContentHeight), 36},
+		{"fingerprint", unsafe.Offsetof(e.Fingerprint), 40},
+	})
+	var s cVisionSpan
+	checkOffsets(t, "ds4_vision_span", unsafe.Sizeof(s), 80, []fieldOffset{
+		{"token_start", unsafe.Offsetof(s.TokenStart), 0},
+		{"embedding", unsafe.Offsetof(s.Embedding), 8},
+	})
+}
