@@ -175,14 +175,14 @@ func TestProgressFollowsResize(t *testing.T) {
 	p := newProgressReader(&buf, "GLM-5.3-Flash-Q2.gguf", 28*1024*1024*1024, 90*1024*1024*1024,
 		io.NopCloser(strings.NewReader("")))
 	p.render(true)
-	width = 80
+	width = 100
 	p.current += 1024 * 1024 * 1024
 	p.render(true)
 
 	frames := renderedFrames(buf.String())
 	last := frames[len(frames)-1]
-	if w := lipgloss.Width(last); w >= 80 {
-		t.Errorf("frame after shrink has width %d, want < 80: %q", w, last)
+	if w := lipgloss.Width(last); w >= 100 {
+		t.Errorf("frame after shrink has width %d, want < 100: %q", w, last)
 	}
 	if !strings.Contains(stripANSI(last), "GLM-5.3-Flash-Q2.gguf") {
 		t.Errorf("frame after shrink lost the filename: %q", stripANSI(last))
@@ -199,5 +199,138 @@ func TestProgressFollowsResize(t *testing.T) {
 	}
 	if !strings.Contains(last, "…") {
 		t.Errorf("frame at 60 columns was not shortened: %q", stripANSI(last))
+	}
+}
+
+// fakeClock drives a progressReader's notion of time.
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func gib(n float64) int64 { return int64(n * 1024 * 1024 * 1024) }
+func mib(n float64) int64 { return int64(n * 1024 * 1024) }
+
+// Speed reflects the last few seconds, not the average since the download
+// started: half an hour into a resumed download the lifetime average is
+// frozen and tells the user nothing about what the network is doing now.
+func TestProgressSpeedUsesMovingWindow(t *testing.T) {
+	t.Setenv("COLUMNS", "140")
+	clock := &fakeClock{t: time.Now()}
+	p := newProgressReader(io.Discard, "model.gguf", gib(28), gib(90), io.NopCloser(strings.NewReader("")))
+	p.now = clock.now
+	p.started = clock.t.Add(-30 * time.Minute)
+	p.initial = gib(28) - mib(9.5)*1800 // lifetime average 9.5 MiB/s
+
+	// The last five seconds ran at 2 MiB/s.
+	for i := 0; i < 50; i++ {
+		clock.advance(100 * time.Millisecond)
+		p.current += mib(0.2)
+		p.observe()
+	}
+	line := stripANSI(p.line())
+	if !strings.Contains(line, " 2.0 MiB/s") {
+		t.Fatalf("line = %q, want the recent 2.0 MiB/s rather than the lifetime average", line)
+	}
+
+	// With no recent samples the lifetime average is the fallback.
+	q := newProgressReader(io.Discard, "model.gguf", 0, gib(90), io.NopCloser(strings.NewReader("")))
+	q.now = clock.now
+	q.started = clock.t.Add(-10 * time.Second)
+	q.current = mib(95)
+	if line := stripANSI(q.line()); !strings.Contains(line, " 9.5 MiB/s") {
+		t.Fatalf("line = %q, want lifetime average 9.5 MiB/s without samples", line)
+	}
+}
+
+// Old samples fall out of the window, so a stall shows up as a falling rate.
+func TestProgressSpeedWindowForgetsOldSamples(t *testing.T) {
+	t.Setenv("COLUMNS", "140")
+	clock := &fakeClock{t: time.Now()}
+	p := newProgressReader(io.Discard, "model.gguf", 0, gib(90), io.NopCloser(strings.NewReader("")))
+	p.now = clock.now
+	p.started = clock.t
+	for i := 0; i < 50; i++ {
+		clock.advance(100 * time.Millisecond)
+		p.current += mib(1)
+		p.observe()
+	}
+	// Then nothing arrives for ten seconds.
+	for i := 0; i < 100; i++ {
+		clock.advance(100 * time.Millisecond)
+		p.observe()
+	}
+	line := stripANSI(p.line())
+	if !strings.Contains(line, " 0 B/s") {
+		t.Fatalf("line = %q, want a stalled rate after ten idle seconds", line)
+	}
+}
+
+// One decimal of GiB moves every ~11 s at 9.5 MiB/s; two decimals move about
+// once a second, which is what makes the line read as live.
+func TestProgressDownloadedShowsTwoDecimalsInGiB(t *testing.T) {
+	t.Setenv("COLUMNS", "140")
+	p := newProgressReader(io.Discard, "model.gguf", gib(28.44), gib(89.9), io.NopCloser(strings.NewReader("")))
+	line := stripANSI(p.line())
+	if !strings.Contains(line, "(28.44 GiB / 89.9 GiB)") {
+		t.Fatalf("line = %q, want two decimals on the downloaded figure only", line)
+	}
+	// Below a GiB the existing formatting is unchanged.
+	q := newProgressReader(io.Discard, "model.gguf", 512, 1024, io.NopCloser(strings.NewReader("")))
+	if line := stripANSI(q.line()); !strings.Contains(line, "(512 B / 1.0 KiB)") {
+		t.Fatalf("line = %q, want unchanged small-size formatting", line)
+	}
+}
+
+func TestProgressLineShowsETA(t *testing.T) {
+	t.Setenv("COLUMNS", "140")
+	clock := &fakeClock{t: time.Now()}
+	p := newProgressReader(io.Discard, "model.gguf", gib(86), gib(90), io.NopCloser(strings.NewReader("")))
+	p.now = clock.now
+	p.started = clock.t
+	for i := 0; i < 50; i++ {
+		clock.advance(100 * time.Millisecond)
+		p.current += mib(0.2) // 2 MiB/s; 4 GiB - 10 MiB left = 2043 s = 34m03s
+		p.observe()
+	}
+	line := stripANSI(p.line())
+	if !strings.Contains(line, "eta 34m03s") {
+		t.Fatalf("line = %q, want an ETA from the moving rate", line)
+	}
+	if got := formatETA(2 * time.Hour); got != "2h00m" {
+		t.Errorf("formatETA(2h) = %q, want 2h00m", got)
+	}
+	if got := formatETA(45 * time.Second); got != "45s" {
+		t.Errorf("formatETA(45s) = %q, want 45s", got)
+	}
+	// No rate, no ETA: better than a nonsense figure.
+	q := newProgressReader(io.Discard, "model.gguf", 0, gib(90), io.NopCloser(strings.NewReader("")))
+	q.now = clock.now
+	q.started = clock.t
+	if line := stripANSI(q.line()); strings.Contains(line, "eta") {
+		t.Fatalf("line = %q, want no ETA without a rate", line)
+	}
+}
+
+// Regression for the "frozen line" feel: at 9.5 MiB/s on a 90 GiB file the
+// visible text used to change 24 times in two minutes of 10 Hz frames.
+func TestProgressVisibleTextChangesEverySecond(t *testing.T) {
+	t.Setenv("COLUMNS", "140")
+	clock := &fakeClock{t: time.Now()}
+	p := newProgressReader(io.Discard, "GLM-5.3-Flash-Q2.gguf", gib(28.4), gib(89.9), io.NopCloser(strings.NewReader("")))
+	p.now = clock.now
+	p.started = clock.t.Add(-30 * time.Minute)
+	distinct, last := 0, ""
+	for tick := 0; tick < 1200; tick++ {
+		clock.advance(100 * time.Millisecond)
+		p.current += mib(0.95)
+		p.observe()
+		if frame := stripANSI(p.line()); frame != last {
+			distinct++
+			last = frame
+		}
+	}
+	if distinct < 100 {
+		t.Fatalf("visible text changed %d times in 120 s, want at least 100", distinct)
 	}
 }
