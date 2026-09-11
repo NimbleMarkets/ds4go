@@ -6,6 +6,7 @@
 package ds4api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -54,6 +55,11 @@ func (m *mockStderrStream) write(msg string) {
 // mocks: TestSessionCopyLogits asserts the two agree.
 const mockVocabSize int32 = 129280
 
+// mockEmbdDim is the row width the mock vision encoder reports and produces.
+// Untyped so it compares directly against both Engine.EmbdDim's int and the
+// raw ds4EngineEmbdDim int32 return without an explicit conversion.
+const mockEmbdDim = 8
+
 // Mock special-token ids and prefill geometry. The role tokens double as GLM
 // generation stops in the mock's ds4_token_is_stop.
 const (
@@ -72,6 +78,7 @@ const (
 type MockControls struct {
 	mu              sync.RWMutex
 	glm             bool
+	vision          bool
 	stops           map[int32]bool
 	thinking        map[int32]bool
 	specArgmaxCall  int
@@ -124,6 +131,20 @@ func (c *MockControls) SetGLM(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.glm = enabled
+}
+
+// SetVision makes the mock engine report a loaded vision encoder
+// (ds4_engine_has_vision) so encode and multimodal calls succeed.
+func (c *MockControls) SetVision(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.vision = enabled
+}
+
+func (c *MockControls) hasVision() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.vision
 }
 
 // SetStopTokens overrides the token ids the mock reports as generation stops
@@ -194,6 +215,7 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r := &lib.raw
 	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}}
 	mockStderr.set(-1)
+	_ = loadCRuntime() // idempotent; cMalloc/cFree below require it.
 
 	// Engine lifecycle.
 	r.ds4EngineOpen = mockEngineOpen
@@ -588,6 +610,37 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		return 100
 	}
 
+	// Vision.
+	r.ds4EngineHasVision = func(e uintptr) bool { return mockEnginePtr(e) != nil && ctl.hasVision() }
+	r.ds4EngineEmbdDim = func(e uintptr) int32 { return mockEmbdDim }
+	r.ds4EngineVisionEncodeMemory = func(e uintptr, encoded unsafe.Pointer, n uintptr, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32 {
+		if !ctl.hasVision() {
+			mockWriteError(err, errCap, "vision encoder is not loaded")
+			return 0
+		}
+		mockVisionEncode(unsafe.Slice((*byte)(encoded), int(n)), out)
+		return 1
+	}
+	r.ds4EngineVisionEncodeFile = func(e uintptr, path string, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32 {
+		if !ctl.hasVision() {
+			mockWriteError(err, errCap, "vision encoder is not loaded")
+			return 0
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			mockWriteError(err, errCap, rerr.Error())
+			return 0
+		}
+		mockVisionEncode(data, out)
+		return 1
+	}
+	r.ds4VisionEmbeddingFree = func(emb *cVisionEmbedding) {
+		if emb != nil && emb.Data != nil {
+			cFree(emb.Data)
+		}
+		*emb = cVisionEmbedding{}
+	}
+
 	return lib, ctl
 }
 
@@ -922,6 +975,18 @@ func mockWriteError(err unsafe.Pointer, errLen uintptr, msg string) {
 	buf := unsafe.Slice((*byte)(err), int(errLen))
 	n := copy(buf[:len(buf)-1], msg)
 	buf[n] = 0
+}
+
+// mockVisionEncode builds a deterministic embedding: 1 + len%4 rows of
+// mockEmbdDim floats holding the row index, fingerprint sha256(bytes).
+func mockVisionEncode(bytes []byte, out *cVisionEmbedding) {
+	rows := 1 + len(bytes)%4
+	data := cMalloc(uintptr(rows) * uintptr(mockEmbdDim) * 4)
+	floats := unsafe.Slice((*float32)(data), rows*int(mockEmbdDim))
+	for i := range floats {
+		floats[i] = float32(i / int(mockEmbdDim))
+	}
+	*out = cVisionEmbedding{Data: data, TokenCount: uint32(rows), Layout: 0, GridWidth: uint32(rows), GridHeight: 1, Width: 64, Height: 64, ContentWidth: 64, ContentHeight: 64, Fingerprint: sha256.Sum256(bytes)}
 }
 
 func mockSessionArgmax(s uintptr) int32 {

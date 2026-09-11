@@ -17,11 +17,12 @@ import (
 
 // Library is a loaded libds4 shared library.
 type Library struct {
-	path    string
-	handle  uintptr
-	raw     rawSymbols
-	abortMu sync.Mutex
-	abortID uintptr
+	path      string
+	handle    uintptr
+	raw       rawSymbols
+	abortMu   sync.Mutex
+	abortID   uintptr
+	visionDim int
 }
 
 var (
@@ -103,6 +104,13 @@ func (l *Library) SupportsDynamicSteering() bool {
 // session's KV state.
 func (l *Library) SupportsLiveSteeringFFN() bool {
 	return l != nil && l.raw.ds4SessionSetDirectionalSteeringFFN != nil
+}
+
+// SupportsVision reports whether the loaded library exports the vision API
+// (upstream ds4 fc8bf3c): image encoding, multimodal prompts, and
+// image-aware session sync.
+func (l *Library) SupportsVision() bool {
+	return l != nil && l.raw.ds4EngineVisionEncodeMemory != nil
 }
 
 // SupportsDistributed reports whether the loaded library exports the distributed
@@ -301,6 +309,24 @@ func (l *Library) register() (err error) {
 	}
 	if _, err := purego.Dlsym(l.handle, "ds4_engine_layer_compress_ratio"); err == nil {
 		mustRegister(&r.ds4EngineLayerCompressRatio, "ds4_engine_layer_compress_ratio")
+	}
+
+	// Vision support (upstream ds4 fc8bf3c) is an optional capability of newer
+	// libds4 builds; older libraries do not export these symbols, so register
+	// them as a group only when present. Callers gate on SupportsVision.
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_vision_encode_memory"); err == nil {
+		mustRegister(&r.ds4EngineHasVision, "ds4_engine_has_vision")
+		mustRegister(&r.ds4EngineEmbdDim, "ds4_engine_embd_dim")
+		mustRegister(&r.ds4EngineVisionEncodeFile, "ds4_engine_vision_encode_file")
+		mustRegister(&r.ds4EngineVisionEncodeMemory, "ds4_engine_vision_encode_memory")
+		mustRegister(&r.ds4VisionEmbeddingFree, "ds4_vision_embedding_free")
+		mustRegister(&r.ds4PromptAppendVision, "ds4_prompt_append_vision")
+		mustRegister(&r.ds4ChatAppendMultimodalMessage, "ds4_chat_append_multimodal_message")
+		mustRegister(&r.ds4SessionSyncMultimodal, "ds4_session_sync_multimodal")
+		mustRegister(&r.ds4SessionVisionPrefixMatches, "ds4_session_vision_prefix_matches")
+		mustRegister(&r.ds4SessionVisionStateMatches, "ds4_session_vision_state_matches")
+		mustRegister(&r.ds4SessionRebaseVisionState, "ds4_session_rebase_vision_state")
+		mustRegister(&r.ds4SessionHasVisionState, "ds4_session_has_vision_state")
 	}
 
 	return nil

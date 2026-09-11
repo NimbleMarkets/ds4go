@@ -239,4 +239,16 @@ type rawSymbols struct {
 	ds4SessionLoadLayerPayload          func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
 	ds4EngineLayerCount                 func(e uintptr) int32
 	ds4EngineLayerCompressRatio         func(e uintptr, layer uint32) uint32
+	ds4EngineHasVision                  func(e uintptr) bool
+	ds4EngineEmbdDim                    func(e uintptr) int32
+	ds4EngineVisionEncodeFile           func(e uintptr, path string, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4EngineVisionEncodeMemory         func(e uintptr, encoded unsafe.Pointer, encodedLen uintptr, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4VisionEmbeddingFree              func(emb *cVisionEmbedding)
+	ds4PromptAppendVision               func(e uintptr, tokens *cTokens, span *cVisionSpan, emb *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4ChatAppendMultimodalMessage      func(e uintptr, tokens *cTokens, role string, textParts unsafe.Pointer, embeddings unsafe.Pointer, imageCount uintptr, spans unsafe.Pointer, err unsafe.Pointer, errCap uintptr) int32
+	ds4SessionSyncMultimodal            func(s uintptr, prompt *cTokens, images unsafe.Pointer, imageCount uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionVisionPrefixMatches       func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionVisionStateMatches        func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionRebaseVisionState         func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionHasVisionState            func(s uintptr) bool
 }

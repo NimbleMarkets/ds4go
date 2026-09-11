@@ -1,0 +1,184 @@
+package ds4api
+
+import (
+	"errors"
+	"runtime"
+	"unsafe"
+)
+
+// ErrVisionNotSupported is returned by the vision entry points when the loaded
+// libds4 predates the vision API.
+var ErrVisionNotSupported = errors.New("ds4: vision is not supported by the loaded library (missing symbols)")
+
+// VisionEmbedding owns the encoder output for one image: token_count rows of
+// ds4_engine_embd_dim floats malloc'd by libds4. Appending it to a prompt
+// moves ownership into a VisionSpan and empties this handle.
+type VisionEmbedding struct {
+	lib     *Library
+	state   *visionEmbeddingState
+	cleanup runtime.Cleanup
+}
+
+type visionEmbeddingState struct{ c cVisionEmbedding }
+
+type visionCleanupArg struct {
+	lib   *Library
+	state *visionEmbeddingState
+}
+
+func cleanVisionEmbedding(arg visionCleanupArg) {
+	if arg.state.c.Data != nil && arg.lib.raw.ds4VisionEmbeddingFree != nil {
+		arg.lib.raw.ds4VisionEmbeddingFree(&arg.state.c)
+	}
+}
+
+func visionEmbeddingFromC(lib *Library, c cVisionEmbedding) *VisionEmbedding {
+	state := &visionEmbeddingState{c: c}
+	e := &VisionEmbedding{lib: lib, state: state}
+	e.cleanup = runtime.AddCleanup(e, cleanVisionEmbedding, visionCleanupArg{lib: lib, state: state})
+	return e
+}
+
+// TokenCount is the number of image tokens the embedding occupies.
+func (e *VisionEmbedding) TokenCount() int {
+	if e == nil || e.state == nil {
+		return 0
+	}
+	return int(e.state.c.TokenCount)
+}
+
+// Fingerprint identifies the image content; libds4 compares it when deciding
+// whether a session's image state can be reused.
+func (e *VisionEmbedding) Fingerprint() [32]byte {
+	if e == nil || e.state == nil {
+		return [32]byte{}
+	}
+	return e.state.c.Fingerprint
+}
+
+// Free releases the embedding. It is a no-op after a move or a prior Free.
+func (e *VisionEmbedding) Free() {
+	if e == nil || e.state == nil || e.state.c.Data == nil {
+		return
+	}
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	e.lib.raw.ds4VisionEmbeddingFree(&e.state.c)
+	e.state.c = cVisionEmbedding{}
+}
+
+// take moves the C value out of the handle for a transfer to libds4.
+func (e *VisionEmbedding) take() cVisionEmbedding {
+	c := e.state.c
+	e.state.c = cVisionEmbedding{}
+	return c
+}
+
+// Clone copies the embedding. The copy is independent: freeing either side
+// leaves the other valid. dim must be Engine.EmbdDim of the encoder engine.
+func (e *VisionEmbedding) Clone() (*VisionEmbedding, error) {
+	if e == nil || e.state == nil || e.state.c.Data == nil {
+		return nil, errors.New("ds4: clone of an empty vision embedding")
+	}
+	if e.state.c.TokenCount == 0 || e.lib.visionDim <= 0 {
+		return nil, errors.New("ds4: vision embedding has no rows")
+	}
+	bytes := uintptr(e.state.c.TokenCount) * uintptr(e.lib.visionDim) * 4
+	if err := loadCRuntime(); err != nil {
+		return nil, err
+	}
+	dst := cMalloc(bytes)
+	if dst == nil {
+		return nil, errors.New("ds4: out of memory cloning a vision embedding")
+	}
+	copy(unsafe.Slice((*byte)(dst), bytes), unsafe.Slice((*byte)(e.state.c.Data), bytes))
+	c := e.state.c
+	c.Data = dst
+	return visionEmbeddingFromC(e.lib, c), nil
+}
+
+// VisionSpan is an embedding placed at a token offset within a prompt.
+type VisionSpan struct {
+	TokenStart int
+	Embedding  *VisionEmbedding
+}
+
+// FreeVisionSpans frees every embedding in spans.
+func FreeVisionSpans(spans []VisionSpan) {
+	for i := range spans {
+		spans[i].Embedding.Free()
+	}
+}
+
+// HasVision calls ds4_engine_has_vision: whether an encoder is loaded.
+func (e *Engine) HasVision() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineHasVision == nil {
+		return false
+	}
+	return e.lib.raw.ds4EngineHasVision(e.ptr)
+}
+
+// EmbdDim calls ds4_engine_embd_dim: the width of one embedding row.
+func (e *Engine) EmbdDim() int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineEmbdDim == nil {
+		return 0
+	}
+	return int(e.lib.raw.ds4EngineEmbdDim(e.ptr))
+}
+
+// VisionEncodeFile calls ds4_engine_vision_encode_file on a PNG or JPEG path.
+func (e *Engine) VisionEncodeFile(path string) (*VisionEmbedding, error) {
+	unlock, err := e.require()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if e.lib.raw.ds4EngineVisionEncodeFile == nil {
+		return nil, ErrVisionNotSupported
+	}
+	e.rememberEmbdDim()
+	var out cVisionEmbedding
+	buf, errPtr, n := errorBuffer()
+	ok := e.lib.raw.ds4EngineVisionEncodeFile(e.ptr, path, &out, errPtr, n)
+	if ok == 0 {
+		return nil, errorFromBuffer("ds4_engine_vision_encode_file", 1, buf)
+	}
+	return visionEmbeddingFromC(e.lib, out), nil
+}
+
+// VisionEncodeMemory calls ds4_engine_vision_encode_memory on encoded PNG or
+// JPEG bytes.
+func (e *Engine) VisionEncodeMemory(encoded []byte) (*VisionEmbedding, error) {
+	unlock, err := e.require()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if e.lib.raw.ds4EngineVisionEncodeMemory == nil {
+		return nil, ErrVisionNotSupported
+	}
+	if len(encoded) == 0 {
+		return nil, errors.New("ds4: empty image")
+	}
+	e.rememberEmbdDim()
+	var out cVisionEmbedding
+	buf, errPtr, n := errorBuffer()
+	ok := e.lib.raw.ds4EngineVisionEncodeMemory(e.ptr, unsafe.Pointer(&encoded[0]), uintptr(len(encoded)), &out, errPtr, n)
+	runtime.KeepAlive(encoded)
+	if ok == 0 {
+		return nil, errorFromBuffer("ds4_engine_vision_encode_memory", 1, buf)
+	}
+	return visionEmbeddingFromC(e.lib, out), nil
+}
+
+// rememberEmbdDim caches the row width on the library so Clone can size
+// copies without an engine handle. Called with libCallMu held.
+func (e *Engine) rememberEmbdDim() {
+	if e.lib.visionDim == 0 && e.lib.raw.ds4EngineEmbdDim != nil {
+		e.lib.visionDim = int(e.lib.raw.ds4EngineEmbdDim(e.ptr))
+	}
+}
