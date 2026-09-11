@@ -19,3 +19,4 @@ const editParams = `{"type":"object","properties":{"path":{"type":"string"},"old
 const bashParams = `{"type":"object","properties":{"command":{"type":"string"},"timeout_sec":{"type":"number"},"refresh_sec":{"type":"number"}},"required":["command"]}`
 const bashStatusParams = `{"type":"object","properties":{"job":{"type":"integer"},"pid":{"type":"integer"},"refresh_sec":{"type":"number"}},"required":["job"]}`
 const bashStopParams = `{"type":"object","properties":{"job":{"type":"integer"},"pid":{"type":"integer"},"kill_children":{"type":"boolean"}},"required":["job"]}`
+const viewImageParams = `{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`

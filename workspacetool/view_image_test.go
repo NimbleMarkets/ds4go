@@ -1,0 +1,94 @@
+package workspacetool
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/NimbleMarkets/ds4go"
+)
+
+func viewImageWorkspace(t *testing.T, vision bool) (*Workspace, string) {
+	t.Helper()
+	root := t.TempDir()
+	png := filepath.Join(root, "shot.png")
+	if err := os.WriteFile(png, []byte("\x89PNG\r\n\x1a\npixels"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := New(Config{Root: root, VisionAvailable: func() bool { return vision }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w, png
+}
+
+func invokeParts(t *testing.T, tool ds4.ToolHandler, args string) ds4.ToolResult {
+	t.Helper()
+	mm, ok := tool.(ds4.MultimodalToolHandler)
+	if !ok {
+		t.Fatal("view_image is not a MultimodalToolHandler")
+	}
+	res, err := mm.InvokeParts(context.Background(), json.RawMessage(args))
+	if err != nil {
+		t.Fatalf("InvokeParts: %v", err)
+	}
+	return res
+}
+
+func TestViewImageReturnsImagePart(t *testing.T) {
+	w, png := viewImageWorkspace(t, true)
+	res := invokeParts(t, w.ViewImageTool(), `{"path":"shot.png"}`)
+	if len(res.Parts) != 2 || res.Parts[1].Image == nil || res.Parts[1].Image.Path != png {
+		t.Fatalf("parts = %+v, want a caption then the image", res.Parts)
+	}
+	if !strings.Contains(res.Parts[0].Text, "shot.png") {
+		t.Errorf("caption %q does not name the file", res.Parts[0].Text)
+	}
+}
+
+func TestViewImageRejectsNonImages(t *testing.T) {
+	w, _ := viewImageWorkspace(t, true)
+	res := invokeParts(t, w.ViewImageTool(), `{"path":"notes.txt"}`)
+	if len(res.Parts) != 1 || res.Parts[0].Image != nil || !strings.Contains(res.Parts[0].Text, "not a PNG or JPEG") {
+		t.Fatalf("parts = %+v, want a text error", res.Parts)
+	}
+	res = invokeParts(t, w.ViewImageTool(), `{"path":"../outside.png"}`)
+	if len(res.Parts) != 1 || !strings.HasPrefix(res.Parts[0].Text, "ERROR") {
+		t.Fatalf("path escape: parts = %+v", res.Parts)
+	}
+	res = invokeParts(t, w.ViewImageTool(), `{}`)
+	if len(res.Parts) != 1 || !strings.HasPrefix(res.Parts[0].Text, "ERROR") {
+		t.Fatalf("missing path: parts = %+v", res.Parts)
+	}
+}
+
+func TestViewImageWithoutVisionIsATextObservation(t *testing.T) {
+	w, _ := viewImageWorkspace(t, false)
+	res := invokeParts(t, w.ViewImageTool(), `{"path":"shot.png"}`)
+	if len(res.Parts) != 1 || res.Parts[0].Image != nil || !strings.Contains(res.Parts[0].Text, "--vision") {
+		t.Fatalf("parts = %+v, want a text hint naming --vision", res.Parts)
+	}
+}
+
+func TestRegisterReadOnlyIncludesViewImage(t *testing.T) {
+	w, _ := viewImageWorkspace(t, true)
+	reg := ds4.NewToolRegistry()
+	if err := w.RegisterReadOnly(reg); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, s := range reg.Schemas() {
+		if s.Name == "view_image" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("view_image not registered by RegisterReadOnly")
+	}
+}

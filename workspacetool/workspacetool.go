@@ -78,6 +78,10 @@ type Config struct {
 	// Confirm is called before side-effecting operations when non-nil.
 	Confirm func(context.Context, Action) (bool, error)
 
+	// VisionAvailable reports whether the engine can encode images. When nil
+	// or false, view_image returns a text observation asking for --vision.
+	VisionAvailable func() bool
+
 	// Env is the environment used for shell commands. It defaults to os.Environ.
 	Env []string
 	// Shell is the shell executable used by bash. It defaults to $SHELL or
@@ -226,6 +230,7 @@ func (w *Workspace) RegisterReadOnly(reg *ds4.ToolRegistry) error {
 		w.MoreTool(),
 		w.ListTool(),
 		w.SearchTool(),
+		w.ViewImageTool(),
 	} {
 		if err := reg.Register(tool); err != nil {
 			return err
