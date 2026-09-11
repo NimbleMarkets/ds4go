@@ -2,6 +2,7 @@ package ds4api
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"unsafe"
 )
@@ -182,4 +183,118 @@ func (e *Engine) VisionEncodeMemory(encoded []byte) (*VisionEmbedding, error) {
 		return nil, errorFromBuffer("ds4_engine_vision_encode_memory", 1, buf)
 	}
 	return visionEmbeddingFromC(e.lib, out, dim), nil
+}
+
+// cStringArray builds a NULL-free C array of C strings for a call. Free
+// releases everything; libds4 copies what it needs during the call.
+type cStringArray struct {
+	ptrs unsafe.Pointer
+	strs []unsafe.Pointer
+}
+
+func newCStringArray(values []string) (*cStringArray, error) {
+	if err := loadCRuntime(); err != nil {
+		return nil, err
+	}
+	arr := &cStringArray{ptrs: cMalloc(uintptr(len(values)) * unsafe.Sizeof(uintptr(0)))}
+	slots := unsafe.Slice((**byte)(arr.ptrs), len(values))
+	for i, v := range values {
+		p := cMalloc(uintptr(len(v)) + 1)
+		copy(unsafe.Slice((*byte)(p), len(v)+1), append([]byte(v), 0))
+		slots[i] = (*byte)(p)
+		arr.strs = append(arr.strs, p)
+	}
+	return arr, nil
+}
+
+func (a *cStringArray) free() {
+	for _, p := range a.strs {
+		cFree(p)
+	}
+	cFree(a.ptrs)
+}
+
+// PromptAppendVision calls ds4_prompt_append_vision: it appends the image
+// placeholder block for emb to tokens and moves emb into the returned span.
+func (e *Engine) PromptAppendVision(tokens *Tokens, emb *VisionEmbedding) (VisionSpan, error) {
+	unlock, err := e.require()
+	if err != nil {
+		return VisionSpan{}, err
+	}
+	defer unlock()
+	if e.lib.raw.ds4PromptAppendVision == nil {
+		return VisionSpan{}, ErrVisionNotSupported
+	}
+	if emb == nil || emb.state == nil || emb.state.c.Data == nil {
+		return VisionSpan{}, errors.New("ds4: empty vision embedding")
+	}
+	dim := 0
+	if e.lib.raw.ds4EngineEmbdDim != nil {
+		dim = int(e.lib.raw.ds4EngineEmbdDim(e.ptr))
+	}
+	var span cVisionSpan
+	buf, errPtr, n := errorBuffer()
+	ok := e.lib.raw.ds4PromptAppendVision(e.ptr, tokens.cptr(), &span, &emb.state.c, errPtr, n)
+	if ok == 0 {
+		return VisionSpan{}, errorFromBuffer("ds4_prompt_append_vision", 1, buf)
+	}
+	emb.take() // libds4 zeroed it; mirror that in Go
+	return VisionSpan{TokenStart: int(span.TokenStart), Embedding: visionEmbeddingFromC(e.lib, span.Embedding, dim)}, nil
+}
+
+// ChatAppendMultimodalMessage calls ds4_chat_append_multimodal_message for a
+// user or tool message whose text parts alternate with images:
+// len(textParts) must equal len(images)+1. On success every embedding is
+// moved into the returned spans (in order). On failure the embeddings are
+// left untouched. With no images it delegates to ChatAppendMessage.
+func (e *Engine) ChatAppendMultimodalMessage(tokens *Tokens, role string, textParts []string, images []*VisionEmbedding) ([]VisionSpan, error) {
+	if len(textParts) != len(images)+1 {
+		return nil, errors.New("ds4: multimodal message needs len(textParts) == len(images)+1")
+	}
+	if len(images) == 0 {
+		return nil, e.ChatAppendMessage(tokens, role, textParts[0])
+	}
+	if role != "user" && role != "tool" && role != "function" {
+		return nil, errors.New("ds4: multimodal messages require a user or tool role")
+	}
+	unlock, err := e.require()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if e.lib.raw.ds4ChatAppendMultimodalMessage == nil {
+		return nil, ErrVisionNotSupported
+	}
+	dim := 0
+	if e.lib.raw.ds4EngineEmbdDim != nil {
+		dim = int(e.lib.raw.ds4EngineEmbdDim(e.ptr))
+	}
+	for i, img := range images {
+		if img == nil || img.state == nil || img.state.c.Data == nil {
+			return nil, fmt.Errorf("ds4: image %d is an empty vision embedding", i)
+		}
+	}
+	parts, err := newCStringArray(textParts)
+	if err != nil {
+		return nil, err
+	}
+	defer parts.free()
+	embs := make([]cVisionEmbedding, len(images))
+	for i, img := range images {
+		embs[i] = img.state.c
+	}
+	spans := make([]cVisionSpan, len(images))
+	buf, errPtr, n := errorBuffer()
+	ok := e.lib.raw.ds4ChatAppendMultimodalMessage(e.ptr, tokens.cptr(), role,
+		parts.ptrs, unsafe.Pointer(&embs[0]), uintptr(len(images)), unsafe.Pointer(&spans[0]), errPtr, n)
+	runtime.KeepAlive(embs)
+	if ok == 0 {
+		return nil, errorFromBuffer("ds4_chat_append_multimodal_message", 1, buf)
+	}
+	out := make([]VisionSpan, len(spans))
+	for i := range spans {
+		images[i].take() // moved
+		out[i] = VisionSpan{TokenStart: int(spans[i].TokenStart), Embedding: visionEmbeddingFromC(e.lib, spans[i].Embedding, dim)}
+	}
+	return out, nil
 }

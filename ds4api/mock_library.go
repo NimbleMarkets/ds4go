@@ -60,6 +60,12 @@ const mockVocabSize int32 = 129280
 // raw ds4EngineEmbdDim int32 return without an explicit conversion.
 const mockEmbdDim = 8
 
+// mockImageToken is the placeholder id the mock chat/prompt appenders emit
+// for each embedding row. mockImageStart and mockImageEnd bracket the block
+// ds4_prompt_append_vision writes.
+const mockImageToken int32 = 7
+const mockImageStart, mockImageEnd int32 = 8, 9
+
 // Mock special-token ids and prefill geometry. The role tokens double as GLM
 // generation stops in the mock's ds4_token_is_stop.
 const (
@@ -639,6 +645,53 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 			cFree(emb.Data)
 		}
 		*emb = cVisionEmbedding{}
+	}
+	r.ds4PromptAppendVision = func(e uintptr, tokens *cTokens, span *cVisionSpan, emb *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32 {
+		if !ctl.hasVision() || emb == nil || emb.Data == nil {
+			mockWriteError(err, errCap, "invalid vision prompt input")
+			return 0
+		}
+		mockTokensPush(tokens, mockImageStart)
+		*span = cVisionSpan{TokenStart: uint32(tokens.Len)}
+		for i := uint32(0); i < emb.TokenCount; i++ {
+			mockTokensPush(tokens, mockImageToken)
+		}
+		mockTokensPush(tokens, mockImageEnd)
+		span.Embedding = *emb
+		*emb = cVisionEmbedding{}
+		return 1
+	}
+	r.ds4ChatAppendMultimodalMessage = func(e uintptr, tokens *cTokens, role string, textParts unsafe.Pointer, embeddings unsafe.Pointer, imageCount uintptr, spans unsafe.Pointer, err unsafe.Pointer, errCap uintptr) int32 {
+		parts := unsafe.Slice((**byte)(textParts), int(imageCount)+1)
+		text := func(i int) string { return goString(unsafe.Pointer(parts[i])) }
+		if imageCount == 0 {
+			mockChatAppendMessage(e, tokens, role, text(0))
+			return 1
+		}
+		if !ctl.hasVision() {
+			mockWriteError(err, errCap, "model does not support image messages")
+			return 0
+		}
+		embs := unsafe.Slice((*cVisionEmbedding)(embeddings), int(imageCount))
+		outSpans := unsafe.Slice((*cVisionSpan)(spans), int(imageCount))
+		for _, word := range strings.Fields(role + ":") {
+			mockTokensPush(tokens, mockWordToken(word))
+		}
+		for i := range embs {
+			for _, word := range strings.Fields(text(i)) {
+				mockTokensPush(tokens, mockWordToken(word))
+			}
+			outSpans[i] = cVisionSpan{TokenStart: uint32(tokens.Len)}
+			for k := uint32(0); k < embs[i].TokenCount; k++ {
+				mockTokensPush(tokens, mockImageToken)
+			}
+			outSpans[i].Embedding = embs[i]
+			embs[i] = cVisionEmbedding{}
+		}
+		for _, word := range strings.Fields(text(int(imageCount))) {
+			mockTokensPush(tokens, mockWordToken(word))
+		}
+		return 1
 	}
 
 	return lib, ctl
