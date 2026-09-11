@@ -9,6 +9,7 @@ import (
 
 	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/spf13/pflag"
 )
 
 func TestSelectBackend_ExplicitFlags(t *testing.T) {
@@ -198,5 +199,58 @@ func TestEngineOptionsSuppressExternalMTPForGLM(t *testing.T) {
 				t.Errorf("MTPPath = %q, want %q", test.got.MTPPath, test.want)
 			}
 		})
+	}
+}
+
+func TestVisionFlagMapsToEngineOptions(t *testing.T) {
+	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+	cfg := RegisterCLI(fs)
+	if err := fs.Parse([]string{"--vision", "/enc.gguf", "--image", "a.png", "--image", "b.jpg", "-p", "what?"}); err != nil {
+		t.Fatal(err)
+	}
+	opts := cfg.EngineOptions()
+	if opts.VisionPath != "/enc.gguf" {
+		t.Errorf("VisionPath = %q, want /enc.gguf", opts.VisionPath)
+	}
+	if got := cfg.Images; len(got) != 2 || got[0] != "a.png" || got[1] != "b.jpg" {
+		t.Errorf("Images = %v", got)
+	}
+	parts := cfg.ImageParts("what?")
+	if len(parts) != 3 || parts[0].Text != "what?" || parts[1].Image == nil || parts[1].Image.Path != "a.png" || parts[2].Image.Path != "b.jpg" {
+		t.Errorf("ImageParts = %+v", parts)
+	}
+	if parts := (&CLIConfig{}).ImageParts("plain"); parts != nil {
+		t.Errorf("ImageParts without --image = %+v, want nil", parts)
+	}
+}
+
+func TestVisionFlagPairsFromCatalogWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var vision, encoder models.Model
+	for _, m := range models.Curated() {
+		switch m.Alias {
+		case "glm53-q2":
+			vision = m
+		case "glm53-vision":
+			encoder = m
+		}
+	}
+	for _, m := range []models.Model{vision, encoder} {
+		if err := os.WriteFile(filepath.Join(modelsDir, m.FileName), []byte("gguf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fs := pflag.NewFlagSet("t", pflag.ContinueOnError)
+	cfg := RegisterCLI(fs)
+	if err := fs.Parse([]string{"-m", filepath.Join(modelsDir, vision.FileName)}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.EngineOptions().VisionPath, filepath.Join(modelsDir, encoder.FileName); got != want {
+		t.Errorf("VisionPath = %q, want paired %q", got, want)
 	}
 }

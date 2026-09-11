@@ -37,6 +37,8 @@ type CLIConfig struct {
 	MTP                        string
 	MTPDraft                   int
 	MTPMargin                  float32
+	Vision                     string
+	Images                     []string
 	Ctx                        int
 	Metal                      bool
 	CUDA                       bool
@@ -98,6 +100,8 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
+	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
+	fs.StringArrayVar(&c.Images, "image", nil, "PNG or JPEG to attach to the prompt; repeatable, attached in order after the text")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated for the session")
 	fs.BoolVar(&c.Metal, "metal", false, "use the Metal graph backend")
 	fs.BoolVar(&c.CUDA, "cuda", false, "use the CUDA graph backend")
@@ -198,9 +202,10 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		mtpPath = ""
 	}
 
-	return ds4.EngineOptions{
+	opts := ds4.EngineOptions{
 		ModelPath:                  c.Model,
 		MTPPath:                    mtpPath,
+		VisionPath:                 c.Vision,
 		Backend:                    c.SelectBackend(),
 		NThreads:                   c.Threads,
 		ContextSize:                c.Ctx,
@@ -222,6 +227,21 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		SSDStreamingCold:           c.SSDStreamingCold,
 		InspectOnly:                c.Inspect,
 	}
+	ds4.ApplyVisionDefaults(&opts)
+	return opts
+}
+
+// ImageParts returns the prompt text followed by the --image files as content
+// parts, or nil when no images were given so callers keep the text-only path.
+func (c *CLIConfig) ImageParts(prompt string) []ds4.ContentPart {
+	if len(c.Images) == 0 {
+		return nil
+	}
+	parts := []ds4.ContentPart{{Text: prompt}}
+	for _, path := range c.Images {
+		parts = append(parts, ds4.ContentPart{Image: &ds4.ImageInput{Path: path}})
+	}
+	return parts
 }
 
 // GenerateOptions builds ds4.GenerateOptions from the parsed sampling flags.
@@ -270,6 +290,8 @@ type ServerConfig struct {
 	MTP                        string
 	MTPDraft                   int
 	MTPMargin                  float32
+	Vision                     string
+	Images                     []string
 	Ctx                        int
 	Tokens                     int
 	Threads                    int
@@ -321,6 +343,8 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
+	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
+	fs.StringArrayVar(&c.Images, "image", nil, "PNG or JPEG to attach to the prompt; repeatable, attached in order after the text")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated at startup")
 	fs.IntVarP(&c.Tokens, "tokens", "n", 393216, "default max output tokens when the client omits a limit")
 	fs.IntVarP(&c.Threads, "threads", "t", 0, "CPU helper threads for lightweight host-side work")
@@ -397,9 +421,10 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 		mtpPath = ""
 	}
 
-	return ds4.EngineOptions{
+	opts := ds4.EngineOptions{
 		ModelPath:                  c.Model,
 		MTPPath:                    mtpPath,
+		VisionPath:                 c.Vision,
 		Backend:                    c.SelectBackend(),
 		NThreads:                   c.Threads,
 		ContextSize:                c.Ctx,
@@ -419,6 +444,8 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 		SSDStreaming:               c.SSDStreaming,
 		SSDStreamingCold:           c.SSDStreamingCold,
 	}
+	ds4.ApplyVisionDefaults(&opts)
+	return opts
 }
 
 func parseGibArg(s string) (uint64, error) {
