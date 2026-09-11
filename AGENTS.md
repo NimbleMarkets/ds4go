@@ -65,6 +65,12 @@ to avoid binary planting.
   moves them into spans; a `Prompt` owns its spans and may be freed once synced
   (libds4 keeps only fingerprints). Only user and tool messages carry images;
   image-bearing tool results render under the user role.
+- Under DSML, an image-bearing tool observation renders under the user role with
+  its text wrapped in `<tool_result>` markers. That wrapping is deliberate and
+  differs from upstream ds4, which passes such observations bare under the user
+  role: without the markers the model cannot tell an observation from user input
+  once the tool role is gone. A future upstream sync must not "fix" it.
+  (GLM keeps its own per-result `<|observation|>` element and stays unwrapped.)
 - After syncing the upstream ds4 checkout, run `task ds4:sync`
   (`scripts/check-ds4-sync.sh`). `ds4api` mirrors C structs that libds4 reads by
   byte offset, so an upstream field insertion breaks the ABI with no compile or

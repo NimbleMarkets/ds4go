@@ -189,12 +189,6 @@ func TestPromptFreeReleasesSpans(t *testing.T) {
 	p.Free() // idempotent
 }
 
-// TestImageEncoderConcurrentHitsAndEvictions exercises the race between a
-// cache hit's Clone and a concurrent eviction freeing that same entry. With
-// only one cache slot, every other Encode of the alternate image evicts the
-// one just inserted, so hits and evictions interleave constantly. Run with
-// -race; the assertion is only that nothing panics or races, and every
-// embedding handed back is valid (TokenCount() > 0) before it is freed.
 func TestMessagePartsSplitsTextAroundImages(t *testing.T) {
 	msg := ChatMessage{Role: "user", Parts: []ContentPart{
 		{Text: "first "}, {Image: &ImageInput{Data: []byte("a")}}, {Text: "middle"},
@@ -398,6 +392,12 @@ func TestBuildPromptMultimodalRejectsAssistantImage(t *testing.T) {
 	}
 }
 
+// TestImageEncoderConcurrentHitsAndEvictions exercises the race between a
+// cache hit's Clone and a concurrent eviction freeing that same entry. With
+// only one cache slot, every other Encode of the alternate image evicts the
+// one just inserted, so hits and evictions interleave constantly. Run with
+// -race; the assertion is only that nothing panics or races, and every
+// embedding handed back is valid (TokenCount() > 0) before it is freed.
 func TestImageEncoderConcurrentHitsAndEvictions(t *testing.T) {
 	eng, _ := visionMockEngine(t)
 	enc := NewImageEncoder(eng)
