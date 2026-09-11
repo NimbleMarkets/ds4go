@@ -182,7 +182,7 @@ func DefaultVisionPath(modelPath string) string {
 	if !ok || !model.Vision || model.Encoder == "" {
 		return ""
 	}
-	encoder, ok := models.ModelByAlias(model.Encoder)
+	encoder, ok := models.Lookup(model.Encoder)
 	if !ok {
 		return ""
 	}

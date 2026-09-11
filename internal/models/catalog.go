@@ -379,13 +379,3 @@ func ModelForPath(path string) (Model, bool) {
 	}
 	return Model{}, false
 }
-
-// ModelByAlias returns the curated entry for alias.
-func ModelByAlias(alias string) (Model, bool) {
-	for _, m := range Curated() {
-		if m.Alias == alias {
-			return m, true
-		}
-	}
-	return Model{}, false
-}

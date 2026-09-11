@@ -241,12 +241,13 @@ func ApplyMTPDefaults(opts *EngineOptions) {
 	if opts == nil {
 		return
 	}
-	if model, ok := models.ModelForPath(opts.ModelPath); ok && model.GLM {
+	model, ok := models.ModelForPath(opts.ModelPath)
+	if ok && model.GLM {
 		opts.MTPPath = ""
 		return
 	}
-	if model, ok := models.ModelForPath(opts.ModelPath); ok && model.DSpark != "" && opts.MTPPath == "" {
-		if drafter, ok := models.ModelByAlias(model.DSpark); ok {
+	if ok && model.DSpark != "" && opts.MTPPath == "" {
+		if drafter, ok := models.Lookup(model.DSpark); ok {
 			path := filepath.Join(models.NewManager().ModelsDir, drafter.FileName)
 			if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Size() > 0 {
 				opts.MTPPath = path
