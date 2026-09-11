@@ -55,6 +55,65 @@ func (t Tool) Invoke(ctx context.Context, args json.RawMessage) (string, error) 
 	return t.Handler(ctx, args)
 }
 
+// ToolResult is a tool's multimodal output: text and image parts in order.
+type ToolResult struct {
+	Parts []ContentPart
+}
+
+// Text joins the text parts; it errors if any image part is present.
+func (r ToolResult) Text() (string, error) {
+	var b strings.Builder
+	for _, p := range r.Parts {
+		if p.Image != nil {
+			return "", errors.New("ds4go: tool result carries an image; the caller must use InvokeParts")
+		}
+		b.WriteString(p.Text)
+	}
+	return b.String(), nil
+}
+
+func (r ToolResult) hasImage() bool {
+	for _, p := range r.Parts {
+		if p.Image != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// MultimodalToolHandler is a ToolHandler whose results may include images.
+// The registry prefers InvokeParts when a handler implements it.
+type MultimodalToolHandler interface {
+	ToolHandler
+	InvokeParts(ctx context.Context, args json.RawMessage) (ToolResult, error)
+}
+
+// MultimodalTool binds a schema to a function returning a ToolResult.
+type MultimodalTool struct {
+	ToolSchema
+	Handler func(ctx context.Context, args json.RawMessage) (ToolResult, error)
+}
+
+// Schema returns the tool schema.
+func (t MultimodalTool) Schema() ToolSchema { return t.ToolSchema }
+
+// Invoke runs the handler and returns its text; results with images error.
+func (t MultimodalTool) Invoke(ctx context.Context, args json.RawMessage) (string, error) {
+	res, err := t.InvokeParts(ctx, args)
+	if err != nil {
+		return "", err
+	}
+	return res.Text()
+}
+
+// InvokeParts runs the handler.
+func (t MultimodalTool) InvokeParts(ctx context.Context, args json.RawMessage) (ToolResult, error) {
+	if t.Handler == nil {
+		return ToolResult{}, fmt.Errorf("ds4go: tool %q has no handler", t.Name)
+	}
+	return t.Handler(ctx, args)
+}
+
 // ChatMessage is one tool-aware chat turn.
 type ChatMessage struct {
 	// Role is "system", "user", "assistant", or "tool".
@@ -626,15 +685,25 @@ func (r *ToolRegistry) ExecuteToolCalls(ctx context.Context, calls []ToolCall) (
 		if err != nil {
 			return nil, err
 		}
-		result, err := handler.Invoke(ctx, json.RawMessage(call.Arguments))
-		if err != nil {
-			return nil, fmt.Errorf("ds4go: tool %q failed: %w", call.Name, err)
+		msg := ChatMessage{Role: "tool", ToolCallID: call.ID}
+		if mm, ok := handler.(MultimodalToolHandler); ok {
+			res, err := mm.InvokeParts(ctx, json.RawMessage(call.Arguments))
+			if err != nil {
+				return nil, fmt.Errorf("ds4go: tool %q failed: %w", call.Name, err)
+			}
+			if res.hasImage() {
+				msg.Parts = res.Parts
+			} else {
+				msg.Content, _ = res.Text()
+			}
+		} else {
+			result, err := handler.Invoke(ctx, json.RawMessage(call.Arguments))
+			if err != nil {
+				return nil, fmt.Errorf("ds4go: tool %q failed: %w", call.Name, err)
+			}
+			msg.Content = result
 		}
-		out = append(out, ChatMessage{
-			Role:       "tool",
-			Content:    result,
-			ToolCallID: call.ID,
-		})
+		out = append(out, msg)
 	}
 	return out, nil
 }
