@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,7 +26,7 @@ func newModelCommand() *cobra.Command {
 		// by cobra — so show help instead of silently running "list".
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return runModelList(nil)
+				return runModelList(os.Stdout, modelManager(), modelListOptions{})
 			}
 			if args[0] == "help" {
 				return cmd.Help()
@@ -34,16 +35,7 @@ func newModelCommand() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(
-		&cobra.Command{
-			Use:     "list",
-			Aliases: []string{"ls"},
-			Short:   "List installed and available models",
-			Args:    cobra.NoArgs,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				cmd.SilenceUsage = true
-				return runModelList(args)
-			},
-		},
+		newModelListCommand(),
 		newModelInfoCommand(),
 		&cobra.Command{
 			Use:   "set [alias]",
@@ -131,29 +123,94 @@ func modelManager() *models.Manager {
 	return m
 }
 
-func runModelList(args []string) error {
-	fs := pflag.NewFlagSet("model list", pflag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
-		return err
+// modelListOptions selects what "model list" shows and how.
+type modelListOptions struct {
+	// JSON emits a single object instead of the text table.
+	JSON bool
+	// Installed and Available restrict the listing to one group. Neither
+	// (or All) shows both, which is the default.
+	Installed bool
+	Available bool
+	All       bool
+}
+
+func newModelListCommand() *cobra.Command {
+	var opts modelListOptions
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List installed and available models",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+			return runModelList(os.Stdout, modelManager(), opts)
+		},
 	}
-	m := modelManager()
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "emit JSON instead of formatted text")
+	cmd.Flags().BoolVar(&opts.All, "all", false, "show installed and available models (the default)")
+	cmd.Flags().BoolVar(&opts.Installed, "installed", false, "show only installed models")
+	cmd.Flags().BoolVar(&opts.Available, "available", false, "show only models available to download")
+	cmd.MarkFlagsMutuallyExclusive("installed", "available")
+	cmd.MarkFlagsMutuallyExclusive("all", "installed")
+	cmd.MarkFlagsMutuallyExclusive("all", "available")
+	return cmd
+}
+
+// modelListJSON is the "model list --json" document. Models carries the
+// filtered entries in catalog order; each entry's installed, partial, and
+// default fields say which group it belongs to.
+type modelListJSON struct {
+	ModelsDir  string      `json:"modelsDir"`
+	LibraryDir string      `json:"libraryDir"`
+	Default    *string     `json:"default"`
+	Models     []modelJSON `json:"models"`
+}
+
+func runModelList(w io.Writer, m *models.Manager, opts modelListOptions) error {
+	if opts.Installed && opts.Available {
+		return errors.New("ds4go model list: --installed and --available are mutually exclusive")
+	}
 	list, cfg, err := m.List()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "%-19s%s\n", "Model directory:", m.ModelsDir)
-	fmt.Fprintf(os.Stdout, "%-19s%s\n", "Library directory:", ds4.DefaultLibraryDir())
-	fmt.Fprintln(os.Stdout)
-	if active := activeDefault(list); active != "" {
-		fmt.Fprintf(os.Stdout, "Default: %s", active)
-		fmt.Fprint(os.Stdout, " (active)")
-	} else if cfg.DefaultModel != "" {
-		fmt.Fprintf(os.Stdout, "Default: none (configured %s is not installed)", cfg.DefaultModel)
-	} else {
-		fmt.Fprint(os.Stdout, "Default: none")
+	showInstalled := !opts.Available
+	showAvailable := !opts.Installed
+	active := activeDefault(list)
+
+	if opts.JSON {
+		doc := modelListJSON{
+			ModelsDir:  m.ModelsDir,
+			LibraryDir: ds4.DefaultLibraryDir(),
+			Models:     []modelJSON{},
+		}
+		if active != "" {
+			doc.Default = &active
+		}
+		for _, model := range list {
+			if (model.Installed && !showInstalled) || (!model.Installed && !showAvailable) {
+				continue
+			}
+			doc.Models = append(doc.Models, modelJSON{Model: model, Path: m.ModelsDir + "/" + model.FileName})
+		}
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(doc)
 	}
-	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout)
+
+	fmt.Fprintf(w, "%-19s%s\n", "Model directory:", m.ModelsDir)
+	fmt.Fprintf(w, "%-19s%s\n", "Library directory:", ds4.DefaultLibraryDir())
+	fmt.Fprintln(w)
+	if active != "" {
+		fmt.Fprintf(w, "Default: %s", active)
+		fmt.Fprint(w, " (active)")
+	} else if cfg.DefaultModel != "" {
+		fmt.Fprintf(w, "Default: none (configured %s is not installed)", cfg.DefaultModel)
+	} else {
+		fmt.Fprint(w, "Default: none")
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w)
 	// Size the alias and RAM columns to the widest value present so long names
 	// (e.g. distributed split aliases) don't overflow and misalign the table.
 	aliasW, ramW := 14, 12
@@ -165,14 +222,18 @@ func runModelList(args []string) error {
 			ramW = w
 		}
 	}
-	printModelGroup("Installed", list, true, aliasW, ramW)
-	fmt.Fprintln(os.Stdout)
-	printModelGroup("Available to download", list, false, aliasW, ramW)
-	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout)
-	fmt.Fprintln(os.Stdout, "Use: ds4go model set q4-imatrix")
-	fmt.Fprintln(os.Stdout, "     ds4go model download q4-imatrix")
-	fmt.Fprintln(os.Stdout, "     ds4go model delete q4-imatrix")
+	if showInstalled {
+		printModelGroup(w, "Installed", list, true, aliasW, ramW)
+		fmt.Fprintln(w)
+	}
+	if showAvailable {
+		printModelGroup(w, "Available to download", list, false, aliasW, ramW)
+		fmt.Fprintln(w)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Use: ds4go model set q4-imatrix")
+	fmt.Fprintln(w, "     ds4go model download q4-imatrix")
+	fmt.Fprintln(w, "     ds4go model delete q4-imatrix")
 	return nil
 }
 
@@ -402,8 +463,8 @@ func filterDefaultableInstalled(list []models.Model) []models.Model {
 	return out
 }
 
-func printModelGroup(title string, list []models.Model, installed bool, aliasW, ramW int) {
-	fmt.Fprintf(os.Stdout, "%s:\n", title)
+func printModelGroup(w io.Writer, title string, list []models.Model, installed bool, aliasW, ramW int) {
+	fmt.Fprintf(w, "%s:\n", title)
 	any := false
 
 	aliasStyle := lipgloss.NewStyle().Width(aliasW)
@@ -447,11 +508,11 @@ func printModelGroup(title string, list []models.Model, installed bool, aliasW, 
 		colSize := sizeStyle.Render(fmt.Sprintf("%.1f GiB", model.SizeGB))
 		colRAM := ramStyle.Render(model.RecommendedRAM)
 
-		fmt.Fprintf(os.Stdout, "  %s %s  %s   %s  %s%s%s\n",
+		fmt.Fprintf(w, "  %s %s  %s   %s  %s%s%s\n",
 			checkStr, colAlias, colSize, colRAM, flags, def, partial)
 	}
 	if !any {
-		fmt.Fprintln(os.Stdout, "  none")
+		fmt.Fprintln(w, "  none")
 	}
 }
 

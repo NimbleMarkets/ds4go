@@ -69,7 +69,7 @@ $DS4_DIR/models/   GGUF model files
 Manage curated DeepSeek V4 Flash, GLM 5.3, and GLM 5.2 models with:
 
 ```sh
-ds4go model list
+ds4go model list                 # --installed, --available, or --json
 ds4go model download q2-imatrix
 ds4go model set q2-imatrix
 

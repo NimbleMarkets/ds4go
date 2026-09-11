@@ -4,6 +4,7 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+ * **`ds4go model list` filters and JSON**: `--installed` and `--available` show one group, `--all` (the default) shows both, and `--json` emits one object with `modelsDir`, `libraryDir`, `default` (null when nothing is active), and the filtered `models` array in the same per-model shape as `model info --json`.
  * **Model download progress reads as live**: the speed is a moving average over the last five seconds instead of the average since start, the downloaded figure shows two decimals from GiB upward, and an ETA from the moving rate is appended. On a 90 GiB file at 10 MiB/s the line used to change every 5-10 seconds; it now changes every frame.
  * **fix: download progress survives terminal resizes.** The installer and model-download progress lines padded each frame to the terminal width and redrew with a bare carriage return; shrinking the window reflowed the padded row onto two rows and left the old frame's head orphaned above every later redraw. Both now draw through a shared `internal/termline` renderer that erases rather than pads, parks the cursor at column 0, and keeps frames under the width, re-read per frame.
  * **build**: the root module is self-contained again (it no longer needs the workspace to resolve lipgloss), CI covers the `cmd` module, and dependencies are updated (purego 0.11, x/sys 0.48, bubbletea 2.0.9, lipgloss 2.0.6).
