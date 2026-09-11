@@ -291,7 +291,6 @@ type ServerConfig struct {
 	MTPDraft                   int
 	MTPMargin                  float32
 	Vision                     string
-	Images                     []string
 	Ctx                        int
 	Tokens                     int
 	Threads                    int
@@ -344,7 +343,6 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
 	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
-	fs.StringArrayVar(&c.Images, "image", nil, "PNG or JPEG to attach to the prompt; repeatable, attached in order after the text")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated at startup")
 	fs.IntVarP(&c.Tokens, "tokens", "n", 393216, "default max output tokens when the client omits a limit")
 	fs.IntVarP(&c.Threads, "threads", "t", 0, "CPU helper threads for lightweight host-side work")
