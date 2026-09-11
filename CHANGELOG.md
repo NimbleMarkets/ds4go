@@ -2,6 +2,11 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+ * **Vision**: images in conversations for DeepSeek Flash Vision-Exp and GLM 5.3 Flash. `ds4api` binds the vision API; `ChatMessage.Parts` carries ordered text and image parts; `BuildChatPromptMultimodal` returns a `Prompt` with image spans; `Generator.GeneratePrompt` and `ToolLoop.Images` sync it; an `ImageEncoder` caches embeddings by image bytes. CLI: `--vision`, `--image`, and `/read` with PNG/JPEG; catalog entries `vision-q2`, `vision-q2-q4`, `vision-mxfp4`, `vision-encoder`, `vision-dspark-support`, `glm53-vision`, with the encoder paired automatically when installed. `workspacetool` gains `view_image`.
+ * **Chat mode prompt rendering**: `ds4go prompt` chat turns now render through the shared tool-aware prompt builder, so Think Max's prefix and GLM's reasoning-effort line appear in chat mode as upstream's CLI emits them, and assistant turns replay through the rendered-chat tokenizer.
+
 ## v0.6.0 (2026-09-10)
 
 Requires libds4 **v0.5.20260910** or newer (NimbleMarkets/ds4 `nm-shared`, rebased on upstream ds4 6289c51). The engine options struct changed shape upstream, and older libraries misread it; `ds4go install` picks up the current release.

@@ -61,6 +61,10 @@ to avoid binary planting.
   must suppress `MTPPath` for catalog-recognized `Model.GLM` models, including
   the active-model hard link. Keep `ds4api` a strict binding that passes explicit
   engine options through unchanged.
+- Vision: image embeddings are libds4-owned C memory. `ChatAppendMultimodalMessage`
+  moves them into spans; a `Prompt` owns its spans and may be freed once synced
+  (libds4 keeps only fingerprints). Only user and tool messages carry images;
+  image-bearing tool results render under the user role.
 - After syncing the upstream ds4 checkout, run `task ds4:sync`
   (`scripts/check-ds4-sync.sh`). `ds4api` mirrors C structs that libds4 reads by
   byte offset, so an upstream field insertion breaks the ABI with no compile or

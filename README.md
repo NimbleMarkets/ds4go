@@ -85,6 +85,17 @@ ds4go model set glm-iq2xxs
 The default model path for commands and examples is
 `$DS4_DIR/models/ds4flash.gguf`.
 
+### Vision
+
+DeepSeek Flash Vision-Exp and GLM 5.3 Flash accept images in conversations.
+Download a vision model together with its encoder, then attach an image to a
+prompt:
+
+```sh
+ds4go model download glm53-q2 glm53-vision
+ds4go prompt -m … --image photo.png -p "What is this?"
+```
+
 DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM's
 optional next-token predictor is embedded in the base model instead, and
 `libds4` rejects an external MTP path for GLM. When a curated GLM model is
