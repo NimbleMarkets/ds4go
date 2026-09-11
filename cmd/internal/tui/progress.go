@@ -4,35 +4,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/NimbleMarkets/ds4go/internal/models"
-	"github.com/charmbracelet/x/term"
+	"github.com/NimbleMarkets/ds4go/internal/termline"
 )
-
-// defaultColumns is used when the output is not a measurable terminal. 80 is
-// the conservative choice: a line wider than the real terminal wraps, and the
-// "\r" redraw then only rewinds the last physical row, so the display repeats
-// instead of updating in place.
-const defaultColumns = 80
 
 // terminalSizeFunc reports w's width, and whether w is a terminal at all.
 // Overridden in tests.
-var terminalSizeFunc = func(w io.Writer) (int, bool) {
-	file, ok := w.(*os.File)
-	if !ok || !term.IsTerminal(file.Fd()) {
-		return 0, false
-	}
-	width, _, err := term.GetSize(file.Fd())
-	if err != nil || width <= 0 {
-		return 0, true
-	}
-	return width, true
-}
+var terminalSizeFunc termline.SizeFunc = termline.TerminalSize
 
 // NewProgressTracker returns a reader wrapper that tracks progress.
 func NewProgressTracker(out io.Writer, name string, start, total int64) models.ProgressTracker {
@@ -51,6 +33,7 @@ var (
 
 type progressReader struct {
 	out        io.Writer
+	term       *termline.Line
 	name       string
 	current    int64
 	initial    int64
@@ -61,8 +44,11 @@ type progressReader struct {
 }
 
 func newProgressReader(out io.Writer, name string, current, total int64, reader io.ReadCloser) *progressReader {
+	line := termline.New(out)
+	line.Size = func(w io.Writer) (int, bool) { return terminalSizeFunc(w) }
 	p := &progressReader{
 		out:     out,
+		term:    line,
 		name:    name,
 		current: current,
 		initial: current,
@@ -97,24 +83,13 @@ func (p *progressReader) Done(err error) {
 		p.current = p.total
 	}
 	p.render(true)
-	fmt.Fprintln(p.out)
+	p.term.Finish()
 }
 
 // columns reports the width to render at: the real terminal size when the
-// output is a terminal, then an explicit COLUMNS, then defaultColumns.
+// output is a terminal, then an explicit COLUMNS, then a default of 80.
 func (p *progressReader) columns() int {
-	if width, isTerm := terminalSizeFunc(p.out); isTerm && width >= 20 {
-		return width
-	}
-	if cols, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && cols >= 40 {
-		return cols
-	}
-	return defaultColumns
-}
-
-func (p *progressReader) isTerminal() bool {
-	_, isTerm := terminalSizeFunc(p.out)
-	return isTerm
+	return p.term.Columns()
 }
 
 func (p *progressReader) render(force bool) {
@@ -123,34 +98,40 @@ func (p *progressReader) render(force bool) {
 	}
 	// Redirected output has no cursor to rewind, so interstitial frames would
 	// just pile up in the log. Keep the first and the final one.
-	if !force && !p.isTerminal() {
+	if !force && !p.term.IsTerminal() {
 		return
 	}
 	p.lastRender = time.Now()
-	line := p.line()
-	width := p.columns()
-	if w := lipgloss.Width(line); w < width {
-		line += strings.Repeat(" ", width-w)
-	}
-	fmt.Fprintf(p.out, "\r%s", line)
+	// The width is read once per frame and used both to size the name and
+	// to draw, so a resize between the two cannot mismatch them. termline
+	// clears the previous frame by erasing rather than padding.
+	p.term.Draw(p.lineAt(p.columns()))
 }
 
+// line renders the frame at the current terminal width.
 func (p *progressReader) line() string {
+	return p.lineAt(p.columns())
+}
+
+// lineAt renders the frame sized for width columns, leaving one column free
+// so the row never reaches the wrap column.
+func (p *progressReader) lineAt(width int) string {
+	width--
 	if p.total > 0 {
 		pct := float64(p.current) / float64(p.total) * 100
 		size := fmt.Sprintf("(%s / %s)", formatBytes(p.current), formatBytes(p.total))
 		speed := formatBytes(p.bytesPerSecond()) + "/s"
 		suffix := fmt.Sprintf(" %.1f%% %s %s", pct, size, speed)
-		return "Downloading: " + p.progressName(lipgloss.Width("Downloading: ")+lipgloss.Width(suffix)) + suffix
+		return "Downloading: " + p.progressName(width, lipgloss.Width("Downloading: ")+lipgloss.Width(suffix)) + suffix
 	}
 	size := fmt.Sprintf("(%s)", formatBytes(p.current))
 	speed := formatBytes(p.bytesPerSecond()) + "/s"
 	suffix := " " + size + " " + speed
-	return "Downloading: " + shortenToWidth(p.name, p.columns()-lipgloss.Width("Downloading: ")-lipgloss.Width(suffix)) + suffix
+	return "Downloading: " + shortenToWidth(p.name, width-lipgloss.Width("Downloading: ")-lipgloss.Width(suffix)) + suffix
 }
 
-func (p *progressReader) progressName(usedWidth int) string {
-	width := p.columns() - usedWidth
+func (p *progressReader) progressName(totalWidth, usedWidth int) string {
+	width := totalWidth - usedWidth
 	if width < 12 {
 		width = 12
 	}

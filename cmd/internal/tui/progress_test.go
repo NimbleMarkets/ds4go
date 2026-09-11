@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestProgressReaderLineIncludesStyledNameAndSpeed(t *testing.T) {
@@ -126,13 +127,77 @@ func restoreTerminalSize(t *testing.T) {
 	t.Cleanup(func() { terminalSizeFunc = original })
 }
 
-// renderedFrames splits progress output into its individual redraws.
+// renderedFrames splits progress output into its individual redraws, with
+// the erase sequence removed so widths measure the text alone.
 func renderedFrames(out string) []string {
 	var frames []string
 	for _, f := range strings.Split(out, "\r") {
+		f = strings.TrimSuffix(f, ansi.EraseScreenBelow)
 		if f != "" {
 			frames = append(frames, f)
 		}
 	}
 	return frames
+}
+
+// The previous frame's tail is cleared by erasing to the end of the screen,
+// and the cursor is parked at column 0, rather than padding to the width: a
+// padded row reflows into two rows when the terminal shrinks, and "\r" then
+// rewinds only the last of them, orphaning the head above every redraw.
+func TestProgressRedrawErasesAndParksCursor(t *testing.T) {
+	defer restoreTerminalSize(t)
+	terminalSizeFunc = func(io.Writer) (int, bool) { return 80, true }
+
+	var buf bytes.Buffer
+	p := newProgressReader(&buf, "model.gguf", 500, 1000, io.NopCloser(strings.NewReader("")))
+	buf.Reset()
+	p.render(true)
+
+	out := buf.String()
+	if !strings.HasSuffix(out, ansi.EraseScreenBelow+"\r") {
+		t.Fatalf("frame does not erase below and park the cursor: %q", out)
+	}
+	frames := renderedFrames(out)
+	if last := frames[len(frames)-1]; strings.HasSuffix(last, " ") {
+		t.Fatalf("frame is padded with spaces: %q", last)
+	}
+}
+
+// Width is re-read per frame, so a shrink between frames yields a frame that
+// fits the new width, sized consistently for name and padding alike.
+func TestProgressFollowsResize(t *testing.T) {
+	defer restoreTerminalSize(t)
+	width := 140
+	terminalSizeFunc = func(io.Writer) (int, bool) { return width, true }
+	t.Setenv("COLUMNS", "")
+
+	var buf bytes.Buffer
+	p := newProgressReader(&buf, "GLM-5.3-Flash-Q2.gguf", 28*1024*1024*1024, 90*1024*1024*1024,
+		io.NopCloser(strings.NewReader("")))
+	p.render(true)
+	width = 80
+	p.current += 1024 * 1024 * 1024
+	p.render(true)
+
+	frames := renderedFrames(buf.String())
+	last := frames[len(frames)-1]
+	if w := lipgloss.Width(last); w >= 80 {
+		t.Errorf("frame after shrink has width %d, want < 80: %q", w, last)
+	}
+	if !strings.Contains(stripANSI(last), "GLM-5.3-Flash-Q2.gguf") {
+		t.Errorf("frame after shrink lost the filename: %q", stripANSI(last))
+	}
+
+	// Narrower still: the name is shortened rather than the row wrapping.
+	width = 60
+	p.current += 1024 * 1024 * 1024
+	p.render(true)
+	frames = renderedFrames(buf.String())
+	last = frames[len(frames)-1]
+	if w := lipgloss.Width(last); w >= 60 {
+		t.Errorf("frame at 60 columns has width %d, want < 60: %q", w, last)
+	}
+	if !strings.Contains(last, "…") {
+		t.Errorf("frame at 60 columns was not shortened: %q", stripANSI(last))
+	}
 }

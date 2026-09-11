@@ -3,47 +3,19 @@ package install
 import (
 	"fmt"
 	"io"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/ansi"
-	"github.com/charmbracelet/x/term"
+	"github.com/NimbleMarkets/ds4go/internal/termline"
 )
-
-// defaultProgressColumns is used when the output is not a measurable terminal.
-// A frame wider than the real terminal wraps, and the "\r" redraw then rewinds
-// only the last physical row, so the display repeats instead of updating.
-const defaultProgressColumns = 80
-
-// progressColumns reports the render width for w.
-func progressColumns(w io.Writer) int {
-	if file, ok := w.(*os.File); ok && term.IsTerminal(file.Fd()) {
-		if width, _, err := term.GetSize(file.Fd()); err == nil && width >= 20 {
-			return width
-		}
-	}
-	if cols, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && cols >= 40 {
-		return cols
-	}
-	return defaultProgressColumns
-}
-
-// progressIsTerminal reports whether w can have its cursor rewound.
-func progressIsTerminal(w io.Writer) bool {
-	file, ok := w.(*os.File)
-	return ok && term.IsTerminal(file.Fd())
-}
 
 type downloadProgress struct {
 	out        io.Writer
+	term       *termline.Line
 	style      nimbleStyle
 	name       string
 	total      int64
 	downloaded int64
 	last       time.Time
-	width      int
 }
 
 func newDownloadProgress(out io.Writer, name string, total int64) *downloadProgress {
@@ -52,10 +24,10 @@ func newDownloadProgress(out io.Writer, name string, total int64) *downloadProgr
 	}
 	p := &downloadProgress{
 		out:   out,
+		term:  termline.New(out),
 		style: defaultNimbleStyle(),
 		name:  name,
 		total: total,
-		width: progressColumns(out),
 	}
 	p.render(true)
 	return p
@@ -83,7 +55,7 @@ func (p *downloadProgress) Done(err error) {
 	// Forced: the final frame must be emitted even when the rate limiter or the
 	// non-terminal guard would skip an ordinary redraw.
 	p.render(true)
-	fmt.Fprintln(p.out)
+	p.term.Finish()
 }
 
 func (p *downloadProgress) render(force bool) {
@@ -93,18 +65,14 @@ func (p *downloadProgress) render(force bool) {
 	}
 	// Redirected output has no cursor to rewind, so interstitial frames would
 	// only pile up in a log. Keep the first and the final one.
-	if !force && !progressIsTerminal(p.out) {
+	if !force && !p.term.IsTerminal() {
 		return
 	}
 	p.last = now
-
-	msg := p.line()
-	// Pad by display width: len() counts ANSI escape bytes, so byte-based
-	// padding never clears the previous frame.
-	if w := ansi.StringWidth(msg); w < p.width {
-		msg += strings.Repeat(" ", p.width-w)
-	}
-	fmt.Fprintf(p.out, "\r%s", msg)
+	// termline re-reads the width per frame, truncates to fit, and clears the
+	// previous frame by erasing rather than padding, so a resize mid-download
+	// does not leave orphaned rows.
+	p.term.Draw(p.line())
 }
 
 func (p *downloadProgress) line() string {
