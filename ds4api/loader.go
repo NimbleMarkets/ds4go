@@ -17,12 +17,11 @@ import (
 
 // Library is a loaded libds4 shared library.
 type Library struct {
-	path      string
-	handle    uintptr
-	raw       rawSymbols
-	abortMu   sync.Mutex
-	abortID   uintptr
-	visionDim int
+	path    string
+	handle  uintptr
+	raw     rawSymbols
+	abortMu sync.Mutex
+	abortID uintptr
 }
 
 var (

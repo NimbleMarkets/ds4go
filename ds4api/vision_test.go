@@ -3,6 +3,8 @@ package ds4api
 import (
 	"crypto/sha256"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -66,15 +68,44 @@ func TestVisionCloneIsIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
+	wantFingerprint := emb.Fingerprint()
+	wantRows := emb.TokenCount()
 	emb.Free()
-	if clone.TokenCount() != 1+len("abcdef")%4 {
-		t.Errorf("clone lost its token count after the original was freed")
+	if clone.TokenCount() != wantRows {
+		t.Errorf("clone lost its token count after the original was freed: got %d, want %d", clone.TokenCount(), wantRows)
 	}
-	if clone.Fingerprint() != emb.Fingerprint() && emb.TokenCount() != 0 {
-		t.Errorf("clone fingerprint differs")
+	if clone.Fingerprint() != wantFingerprint {
+		t.Errorf("clone fingerprint differs: got %x, want %x", clone.Fingerprint(), wantFingerprint)
 	}
 	clone.Free()
 	clone.Free() // double free is a no-op
+}
+
+func TestVisionEncodeFileReadsTheFile(t *testing.T) {
+	eng, _ := visionEngine(t)
+	img := []byte("\x89PNG\r\n\x1a\nfake-image-file-bytes")
+	path := t.TempDir() + "/image.png"
+	if err := os.WriteFile(path, img, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	emb, err := eng.VisionEncodeFile(path)
+	if err != nil {
+		t.Fatalf("VisionEncodeFile: %v", err)
+	}
+	defer emb.Free()
+	if want := 1 + len(img)%4; emb.TokenCount() != want {
+		t.Errorf("TokenCount() = %d, want %d", emb.TokenCount(), want)
+	}
+	if got, want := emb.Fingerprint(), sha256.Sum256(img); got != want {
+		t.Errorf("Fingerprint() = %x, want sha256 of the file bytes", got)
+	}
+
+	missingPath := path + ".missing"
+	if _, err := eng.VisionEncodeFile(missingPath); err == nil {
+		t.Fatal("VisionEncodeFile succeeded on a missing path")
+	} else if !strings.Contains(err.Error(), missingPath) {
+		t.Errorf("error = %q, want it to mention the missing path", err.Error())
+	}
 }
 
 func TestVisionUnsupportedLibrary(t *testing.T) {
