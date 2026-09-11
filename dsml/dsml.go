@@ -43,6 +43,14 @@ const (
 	toolResultEnd       = "</tool_result>"
 )
 
+// ToolResultStart and ToolResultEnd wrap a DeepSeek tool result payload in
+// the prompt. Exported for callers that assemble multimodal tool turns
+// themselves; RenderToolResult remains the text-only path.
+const (
+	ToolResultStart = toolResultStart
+	ToolResultEnd   = toolResultEnd
+)
+
 // Tool is an OpenAI-style function/tool schema.
 type Tool struct {
 	// Name is the tool's callable name. It must not contain a double-quote

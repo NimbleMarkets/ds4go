@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/dsml"
 )
 
@@ -76,6 +77,37 @@ type ChatMessage struct {
 	// stanza to plain content, and is empty for clean turns. ToolLoop uses it
 	// to send the model a syntax-error retry turn.
 	MalformedReason string
+}
+
+// ErrImagesNeedMultimodalPrompt is returned by the text-only prompt builders
+// when a message carries image parts; use BuildChatPromptMultimodal.
+var ErrImagesNeedMultimodalPrompt = errors.New("ds4go: history contains images; build the prompt with BuildChatPromptMultimodal")
+
+// messageParts splits a message's Parts into the text segments around each
+// image (len(texts) == len(images)+1). Adjacent text parts merge. Only user
+// and tool messages may carry images.
+func messageParts(msg ChatMessage) (texts []string, images []ImageInput, err error) {
+	if len(msg.Parts) == 0 {
+		return []string{msg.Content}, nil, nil
+	}
+	texts = []string{""}
+	for i, part := range msg.Parts {
+		switch {
+		case part.Image != nil && part.Text != "":
+			return nil, nil, fmt.Errorf("ds4go: part %d has both text and an image", i)
+		case part.Image != nil:
+			if msg.Role != "user" && msg.Role != "tool" {
+				return nil, nil, fmt.Errorf("ds4go: %s messages cannot carry images", msg.Role)
+			}
+			images = append(images, *part.Image)
+			texts = append(texts, "")
+		case part.Text != "":
+			texts[len(texts)-1] += part.Text
+		default:
+			return nil, nil, fmt.Errorf("ds4go: part %d is empty", i)
+		}
+	}
+	return texts, images, nil
 }
 
 // ToolCall is one tool request emitted by the assistant.
@@ -190,13 +222,58 @@ func (r *ToolRegistry) RenderToolsSectionSyntax(syntax dsml.Syntax) (string, err
 // tools is non-empty, BuildChatPrompt creates a system turn containing only the
 // rendered tools section. Tool result messages are rendered as user turns
 // containing DSML <tool_result> blocks.
+//
+// BuildChatPrompt returns ErrImagesNeedMultimodalPrompt if any message in
+// history carries image parts; use BuildChatPromptMultimodal instead.
 func BuildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode) (*Tokens, error) {
-	return buildChatPrompt(engine, system, tools, history, think, renderChatMessage)
+	if historyHasImages(history) {
+		return nil, ErrImagesNeedMultimodalPrompt
+	}
+	prompt, err := buildChatPrompt(engine, nil, system, tools, history, think, renderChatMessage)
+	if err != nil {
+		return nil, err
+	}
+	return prompt.Tokens, nil
 }
 
 // BuildPrompt renders a tool-aware chat prompt using ds4's chat helpers.
+//
+// BuildPrompt returns ErrImagesNeedMultimodalPrompt if any message in history
+// carries image parts; use BuildPromptMultimodal instead.
 func (r *ToolRegistry) BuildPrompt(engine *Engine, system string, history []ChatMessage, think ThinkMode) (*Tokens, error) {
-	return buildChatPrompt(engine, system, dsmlToolsFromSchemas(r.Schemas()), history, think, r.renderMessage)
+	if historyHasImages(history) {
+		return nil, ErrImagesNeedMultimodalPrompt
+	}
+	prompt, err := buildChatPrompt(engine, nil, system, dsmlToolsFromSchemas(r.Schemas()), history, think, r.renderMessage)
+	if err != nil {
+		return nil, err
+	}
+	return prompt.Tokens, nil
+}
+
+// BuildChatPromptMultimodal is BuildChatPrompt for histories that may carry
+// image parts. images encodes them (nil is allowed only when no message has
+// images). The returned Prompt owns the tokens and spans; free it after the
+// session has been synced.
+func BuildChatPromptMultimodal(engine *Engine, images *ImageEncoder, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode) (*Prompt, error) {
+	return buildChatPrompt(engine, images, system, tools, history, think, nil)
+}
+
+// BuildPromptMultimodal is BuildPrompt for histories that may carry image parts.
+func (r *ToolRegistry) BuildPromptMultimodal(engine *Engine, images *ImageEncoder, system string, history []ChatMessage, think ThinkMode) (*Prompt, error) {
+	return buildChatPrompt(engine, images, system, dsmlToolsFromSchemas(r.Schemas()), history, think, r.renderMessage)
+}
+
+// historyHasImages reports whether any message in history carries an image part.
+func historyHasImages(history []ChatMessage) bool {
+	for _, msg := range history {
+		for _, p := range msg.Parts {
+			if p.Image != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // turnRenderInfo carries the per-turn rendering decisions computed from the
@@ -236,7 +313,7 @@ func appendThinkPrefix(engine *Engine, tokens *Tokens, think ThinkMode) error {
 	return nil
 }
 
-func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode, render chatMessageRenderer) (*Tokens, error) {
+func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode, render chatMessageRenderer) (*Prompt, error) {
 	if engine == nil {
 		return nil, errors.New("ds4go: nil engine")
 	}
@@ -277,11 +354,40 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 		tokens.Free()
 		return nil, err
 	}
+	prompt := &Prompt{Tokens: tokens}
 	for _, msg := range rendered {
+		if len(msg.images) > 0 {
+			if images == nil {
+				prompt.Free()
+				return nil, errors.New("ds4go: history contains images but no ImageEncoder was supplied")
+			}
+			embs := make([]*ds4api.VisionEmbedding, 0, len(msg.images))
+			for _, img := range msg.images {
+				emb, err := images.Encode(img)
+				if err != nil {
+					for _, e := range embs {
+						e.Free()
+					}
+					prompt.Free()
+					return nil, err
+				}
+				embs = append(embs, emb)
+			}
+			spans, err := engine.ChatAppendMultimodalMessage(tokens, msg.role, msg.parts, embs)
+			if err != nil {
+				for _, e := range embs {
+					e.Free()
+				}
+				prompt.Free()
+				return nil, err
+			}
+			prompt.Images = append(prompt.Images, spans...)
+			continue
+		}
 		if msg.prerendered {
 			turn, err := engine.TokenizeRenderedChat(msg.content)
 			if err != nil {
-				tokens.Free()
+				prompt.Free()
 				return nil, err
 			}
 			for _, id := range turn.Slice() {
@@ -291,15 +397,15 @@ func buildChatPrompt(engine *Engine, system string, tools []dsml.Tool, history [
 			continue
 		}
 		if err := engine.ChatAppendMessage(tokens, msg.role, msg.content); err != nil {
-			tokens.Free()
+			prompt.Free()
 			return nil, err
 		}
 	}
 	if err := engine.ChatAppendAssistantPrefix(tokens, think); err != nil {
-		tokens.Free()
+		prompt.Free()
 		return nil, err
 	}
-	return tokens, nil
+	return prompt, nil
 }
 
 // ToolSyntax reports the tool-call markup grammar an engine's model uses,
@@ -545,6 +651,28 @@ func (r *ToolRegistry) renderMessage(msg ChatMessage, turn turnRenderInfo) (rend
 }
 
 func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessage, error) {
+	if len(msg.Parts) > 0 {
+		texts, images, err := messageParts(msg)
+		if err != nil {
+			return renderedChatMessage{}, err
+		}
+		if len(images) == 0 {
+			msg.Content = texts[0]
+			msg.Parts = nil
+			return renderChatMessage(msg, turn)
+		}
+		if msg.Role == "tool" && turn.syntax != dsml.SyntaxGLM {
+			// DSML: keep the tool-result wrapper around the text so the model
+			// still sees a tool observation.
+			texts[0] = dsml.ToolResultStart + texts[0]
+			texts[len(texts)-1] += dsml.ToolResultEnd
+		}
+		// Image-bearing turns render under the user role for both families:
+		// GLM grounds image tokens in user turns (upstream
+		// agent_tool_observation_build), and DeepSeek's tool results are user
+		// turns already.
+		return renderedChatMessage{role: "user", parts: texts, images: images}, nil
+	}
 	switch msg.Role {
 	case "", "system", "user":
 		return renderedChatMessage{role: msg.Role, content: msg.Content}, nil
@@ -618,6 +746,10 @@ type renderedChatMessage struct {
 	// special markers map to their vocab token ids, instead of being passed
 	// to ChatAppendMessage.
 	prerendered bool
+	// parts and images are set for a message carrying image parts:
+	// len(parts) == len(images)+1, appended with ChatAppendMultimodalMessage.
+	parts  []string
+	images []ImageInput
 }
 
 func toolAwareSystemContent(system string, toolsSection string) string {
@@ -667,10 +799,21 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 				if rendered.role != "user" {
 					return nil, fmt.Errorf("ds4go: tool message rendered as %q", rendered.role)
 				}
+				if len(rendered.images) > 0 {
+					if content.Len() > 0 {
+						out = append(out, renderedChatMessage{role: "user", content: content.String()})
+						content.Reset()
+					}
+					out = append(out, rendered)
+					i++
+					continue
+				}
 				content.WriteString(rendered.content)
 				i++
 			}
-			out = append(out, renderedChatMessage{role: "user", content: content.String()})
+			if content.Len() > 0 {
+				out = append(out, renderedChatMessage{role: "user", content: content.String()})
+			}
 			continue
 		}
 
