@@ -567,3 +567,29 @@ func testManager(dir string) *Manager {
 		ProgressOut: io.Discard,
 	}
 }
+
+func TestResolvePathMapsAnInstalledAliasToItsFile(t *testing.T) {
+	m := testManager(t.TempDir())
+	vision, ok := Lookup("vision-q2")
+	if !ok {
+		t.Fatal("vision-q2 missing from the catalog")
+	}
+	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(m.ModelsDir, vision.FileName)
+	if err := os.WriteFile(want, []byte("gguf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.ResolvePath("vision-q2"); got != want {
+		t.Errorf("ResolvePath(installed alias) = %q, want %q", got, want)
+	}
+	// An alias that is not installed and a plain path both pass through
+	// untouched: the caller's not-found handling reports them.
+	if got := m.ResolvePath("vision-encoder"); got != "vision-encoder" {
+		t.Errorf("ResolvePath(uninstalled alias) = %q, want it unchanged", got)
+	}
+	if got := m.ResolvePath("/tmp/custom.gguf"); got != "/tmp/custom.gguf" {
+		t.Errorf("ResolvePath(path) = %q, want it unchanged", got)
+	}
+}

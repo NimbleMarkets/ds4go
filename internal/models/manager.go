@@ -473,6 +473,18 @@ func (m *Manager) hasActiveDefaultLocked() bool {
 	return false
 }
 
+// ResolvePath maps an installed catalog alias to its GGUF file under
+// ModelsDir, so --model accepts the same names as `model download`. Any
+// other value, including an alias that is not installed, is returned
+// unchanged for the caller to report.
+func (m *Manager) ResolvePath(value string) string {
+	model, ok := Lookup(value)
+	if !ok || !m.installed(model) {
+		return value
+	}
+	return filepath.Join(m.ModelsDir, model.FileName)
+}
+
 func (m *Manager) installed(model Model) bool {
 	st, err := os.Stat(filepath.Join(m.ModelsDir, model.FileName))
 	return err == nil && !st.IsDir() && st.Size() > 0

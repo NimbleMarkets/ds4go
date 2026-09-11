@@ -96,7 +96,7 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
-	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
+	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path or installed catalog alias (see: ds4go model list)")
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
@@ -346,7 +346,7 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
-	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
+	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path or installed catalog alias (see: ds4go model list)")
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")

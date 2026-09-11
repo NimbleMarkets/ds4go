@@ -72,6 +72,7 @@ func newPromptCommand() *cobra.Command {
 }
 
 func run(cfg *cliopts.CLIConfig) error {
+	cfg.Model = modelManager().ResolvePath(cfg.Model)
 	if err := preflightPromptModel(cfg.Model); err != nil {
 		return err
 	}
@@ -157,6 +158,10 @@ func preflightPromptModel(path string) error {
 			return fmt.Errorf("no default model is installed at %s\nRun: ds4go model download %s\nOr:  ds4go model list", path, models.RecommendedModelAlias)
 		}
 		return fmt.Errorf("configured default model %q is not available at %s\nRun: ds4go model download %s\nOr:  ds4go model set <installed-alias>", cfg.DefaultModel, path, cfg.DefaultModel)
+	}
+	if _, ok := models.Lookup(path); ok {
+		// A catalog alias that is not installed yet.
+		return fmt.Errorf("model %s is not installed\nRun: ds4go model download %s", path, path)
 	}
 	return fmt.Errorf("model file not found: %s\nUse --model PATH or run: ds4go model download %s", path, models.RecommendedModelAlias)
 }
