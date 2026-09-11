@@ -458,3 +458,52 @@ func TestGeneratePromptRewindsWithSpans(t *testing.T) {
 		t.Errorf("multimodal sync calls = %d, want the rebuild to use the multimodal path", got)
 	}
 }
+
+func TestToolLoopRunsWithImageHistory(t *testing.T) {
+	eng, ctl := visionMockEngine(t)
+	ctl.SetStopTokens(int(eng.TokenEOS()))
+	sess, _ := eng.NewSession(512)
+	defer sess.Close()
+	loop := ToolLoop{Engine: eng, Session: sess, Tools: NewToolRegistry(), Images: NewImageEncoder(eng)}
+	res, err := loop.Run(ToolLoopOptions{
+		History:  []ChatMessage{{Role: "user", Parts: []ContentPart{{Text: "describe"}, {Image: &ImageInput{Data: []byte("photo")}}}}},
+		Generate: GenerateOptions{MaxTokens: 4, StopOnEOS: true},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Assistant.Role != "assistant" {
+		t.Fatalf("assistant = %+v", res.Assistant)
+	}
+	if ctl.MultimodalSyncCalls() == 0 || !sess.HasVisionState() {
+		t.Error("the loop did not sync the image prompt through the multimodal path")
+	}
+}
+
+func TestToolLoopWithoutEncoderRejectsImages(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	loop := ToolLoop{Engine: eng, Session: sess, Tools: NewToolRegistry()}
+	_, err := loop.Run(ToolLoopOptions{History: []ChatMessage{{Role: "user", Parts: []ContentPart{{Image: &ImageInput{Data: []byte("p")}}, {Text: "?"}}}}})
+	if err == nil {
+		t.Fatal("Run accepted image history without an ImageEncoder")
+	}
+}
+
+func TestToolLoopCompleteFuncCannotCarryImages(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	loop := ToolLoop{Engine: eng, Session: sess, Tools: NewToolRegistry(), Images: NewImageEncoder(eng),
+		CompleteFunc: func(*Tokens, GenerateOptions) (string, error) { return "ok", nil }}
+	_, err := loop.Run(ToolLoopOptions{History: []ChatMessage{{Role: "user", Parts: []ContentPart{{Image: &ImageInput{Data: []byte("p")}}, {Text: "?"}}}}})
+	if !errors.Is(err, ErrCompleteFuncCannotCarryImages) {
+		t.Fatalf("error = %v, want ErrCompleteFuncCannotCarryImages", err)
+	}
+	// Text-only history still works through CompleteFunc.
+	res, err := loop.Run(ToolLoopOptions{History: []ChatMessage{{Role: "user", Content: "hi"}}})
+	if err != nil || res.Assistant.Content != "ok" {
+		t.Fatalf("text-only CompleteFunc run: %+v, %v", res.Assistant, err)
+	}
+}
