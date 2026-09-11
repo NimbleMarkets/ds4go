@@ -104,3 +104,84 @@ func TestDefaultLibraryPathIgnoresCWD(t *testing.T) {
 		t.Fatalf("DefaultLibraryPath() = %q, must not resolve to a working-directory library", got)
 	}
 }
+
+func TestApplyVisionDefaultsPairsInstalledEncoder(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var vision, encoder models.Model
+	for _, m := range models.Curated() {
+		switch m.Alias {
+		case "vision-q2":
+			vision = m
+		case "vision-encoder":
+			encoder = m
+		}
+	}
+	modelPath := filepath.Join(modelsDir, vision.FileName)
+	encoderPath := filepath.Join(modelsDir, encoder.FileName)
+	for _, p := range []string{modelPath, encoderPath} {
+		if err := os.WriteFile(p, []byte("gguf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := EngineOptions{ModelPath: modelPath}
+	ApplyVisionDefaults(&opts)
+	if opts.VisionPath != encoderPath {
+		t.Fatalf("VisionPath = %q, want the installed encoder %q", opts.VisionPath, encoderPath)
+	}
+	// Explicit path wins.
+	opts = EngineOptions{ModelPath: modelPath, VisionPath: "/elsewhere/enc.gguf"}
+	ApplyVisionDefaults(&opts)
+	if opts.VisionPath != "/elsewhere/enc.gguf" {
+		t.Errorf("explicit VisionPath was overridden: %q", opts.VisionPath)
+	}
+	// Encoder not installed: nothing is paired.
+	if err := os.Remove(encoderPath); err != nil {
+		t.Fatal(err)
+	}
+	opts = EngineOptions{ModelPath: modelPath}
+	ApplyVisionDefaults(&opts)
+	if opts.VisionPath != "" {
+		t.Errorf("VisionPath = %q with no encoder installed, want empty", opts.VisionPath)
+	}
+	// A text-only model never pairs.
+	opts = EngineOptions{ModelPath: filepath.Join(modelsDir, "DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf")}
+	ApplyVisionDefaults(&opts)
+	if opts.VisionPath != "" {
+		t.Errorf("text-only model paired an encoder: %q", opts.VisionPath)
+	}
+}
+
+func TestApplyMTPDefaultsPicksVisionExpDrafter(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var vision, drafter, mtp models.Model
+	for _, m := range models.Curated() {
+		switch m.Alias {
+		case "vision-q2":
+			vision = m
+		case "vision-dspark-support":
+			drafter = m
+		case "mtp":
+			mtp = m
+		}
+	}
+	for _, m := range []models.Model{vision, drafter, mtp} {
+		if err := os.WriteFile(filepath.Join(modelsDir, m.FileName), []byte("gguf"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := EngineOptions{ModelPath: filepath.Join(modelsDir, vision.FileName)}
+	ApplyMTPDefaults(&opts)
+	if want := filepath.Join(modelsDir, drafter.FileName); opts.MTPPath != want {
+		t.Fatalf("MTPPath = %q, want the Vision-Exp drafter %q", opts.MTPPath, want)
+	}
+}

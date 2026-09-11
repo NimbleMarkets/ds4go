@@ -29,3 +29,15 @@ func TestEnrichEngineOpenError(t *testing.T) {
 		t.Fatalf("enriched error = %q", err)
 	}
 }
+
+func TestIsVisionEncoderMissing(t *testing.T) {
+	if !IsVisionEncoderMissing(errors.New("ds4_session_sync_multimodal: vision encoder is not loaded")) {
+		t.Error("libds4's message was not classified")
+	}
+	if !IsVisionEncoderMissing(fmt.Errorf("wrapped: %w", errors.New("vision encoder is not loaded"))) {
+		t.Error("wrapped message was not classified")
+	}
+	if IsVisionEncoderMissing(errors.New("decode requires a synchronized checkpoint")) || IsVisionEncoderMissing(nil) {
+		t.Error("unrelated error classified as a missing encoder")
+	}
+}

@@ -21,11 +21,19 @@ type Model struct {
 	// GLM marks a GLM DSA model. Its tool-calling markup, stop tokens, and
 	// reasoning-effort prompt differ from DeepSeek's; libds4 selects the
 	// behaviour from the GGUF, and ds4go exposes it via Engine.IsGLMDSA.
-	GLM         bool `json:"glm,omitempty"`
-	Imatrix     bool `json:"imatrix"`
-	Legacy      bool `json:"legacy"`
-	Optional    bool `json:"optional"`
-	Distributed bool `json:"distributed"`
+	GLM bool `json:"glm,omitempty"`
+	// Vision marks a checkpoint that accepts images once its encoder is
+	// loaded. Encoder is the catalog alias of that encoder GGUF; ds4go pairs
+	// it automatically when installed (ds4.ApplyVisionDefaults).
+	Vision  bool   `json:"vision,omitempty"`
+	Encoder string `json:"encoder,omitempty"`
+	// DSpark is the catalog alias of the DSpark support model this checkpoint
+	// requires, when it is not the default one (Vision-Exp has its own).
+	DSpark      string `json:"dspark,omitempty"`
+	Imatrix     bool   `json:"imatrix"`
+	Legacy      bool   `json:"legacy"`
+	Optional    bool   `json:"optional"`
+	Distributed bool   `json:"distributed"`
 	// DistributedRole and LayerRange describe a distributed split half. LayerRange
 	// is in upstream ds4 --layers form (e.g. "0:30", "31:output"); DistributedRole
 	// is "coordinator" or "worker". Both empty for non-distributed models.
@@ -177,6 +185,8 @@ var curated = []Model{
 		SizeGB:         89.9,
 		RecommendedRAM: "128 GB",
 		SHA256:         "e81fd6241c6e55a64e1e14e47a3eab61a173fa8d7e4b5c1d1848827119705b32",
+		Vision:         true,
+		Encoder:        "glm53-vision",
 		Notes:          "GLM 5.3 Flash imatrix IQ2_XXS/Q2_K experts; one 128 GB Mac or DGX Spark, embedded MTP",
 	},
 	{
@@ -187,6 +197,8 @@ var curated = []Model{
 		SizeGB:         177.8,
 		RecommendedRAM: ">=192 GB",
 		SHA256:         "c7a0d950363238dd7804782c88340d737775aba53a15f8d4fdcc34e984f25221",
+		Vision:         true,
+		Encoder:        "glm53-vision",
 		Notes:          "GLM 5.3 Flash Q4_K; larger Mac, two 128 GB Macs, or SSD streaming",
 	},
 	{
@@ -198,6 +210,67 @@ var curated = []Model{
 		RecommendedRAM: ">=256 GB",
 		SHA256:         "059b36accd4c9acf73099da9f703b574d627869d619b7c4c316aa856e33d472e",
 		Notes:          "full GLM 5.3 routed IQ2_XXS with Q2_K block 78; large machine or --ssd-streaming",
+	},
+	{
+		Alias:          "vision-q2",
+		FileName:       "DeepSeek-V4-Flash-Vision-Exp-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8.gguf",
+		SizeGB:         80.8,
+		RecommendedRAM: "96-128 GB",
+		SHA256:         "8f2d42c0071ccf8a98f391cc2b835fd123f12330690b3059dbb7707920e5ad9e",
+		Vision:         true,
+		Encoder:        "vision-encoder",
+		DSpark:         "vision-dspark-support",
+		Notes:          "DeepSeek V4 Flash Vision-Exp q2; a different checkpoint from Flash 0731, pairs with vision-encoder",
+	},
+	{
+		Alias:          "vision-q2-q4",
+		FileName:       "DeepSeek-V4-Flash-Vision-Exp-Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown-AProjQ8-SExpQ8-OutQ8.gguf",
+		SizeGB:         90.9,
+		RecommendedRAM: "128-192 GB",
+		SHA256:         "cded4517bb9d033e778e8bc4ccf1e79ba96d1c2d2b9f1c071c1d4a9037c51b02",
+		Vision:         true,
+		Encoder:        "vision-encoder",
+		DSpark:         "vision-dspark-support",
+		Notes:          "Vision-Exp mixed q2/q4",
+	},
+	{
+		Alias:          "vision-mxfp4",
+		FileName:       "DeepSeek-V4-Flash-Vision-Exp-MXFP4Experts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out.gguf",
+		SizeGB:         145.3,
+		RecommendedRAM: ">=192 GB",
+		SHA256:         "fc1efb96fa26e654b3530ce5f4b926b189a936d41d94dc1903c832f1e18eb3e7",
+		Vision:         true,
+		Encoder:        "vision-encoder",
+		DSpark:         "vision-dspark-support",
+		Notes:          "Vision-Exp MXFP4 experts",
+	},
+	{
+		Alias:          "vision-encoder",
+		FileName:       "DeepSeek-V4-Flash-Vision-Encoder.gguf",
+		SizeGB:         0.9,
+		RecommendedRAM: "optional",
+		SHA256:         "00cd4d81a435364967400a95c42703343e11da6b6f18c5143fe76e1d94d5035f",
+		Optional:       true,
+		Notes:          "vision encoder for the Vision-Exp checkpoints; loaded with --vision",
+	},
+	{
+		Alias:          "vision-dspark-support",
+		FileName:       "DeepSeek-V4-Flash-Vision-Exp-DSpark-support.gguf",
+		SizeGB:         5.6,
+		RecommendedRAM: "optional",
+		SHA256:         "0807a67fd9ce5874bfc60d8d2461f50e11657e3dd94913d3473f85aa679bc877",
+		Optional:       true,
+		Notes:          "DSpark drafter for the Vision-Exp checkpoints only; the 0731 drafter is rejected",
+	},
+	{
+		Alias:          "glm53-vision",
+		FileName:       "GLM-5.3-Flash-Vision-Encoder.gguf",
+		Repo:           glm53FlashRepo,
+		SizeGB:         1.0,
+		RecommendedRAM: "optional",
+		SHA256:         "ae23e14c6979e889051b2e4a39351abcdafb161e18e606fae4d8c40095a4bf3a",
+		Optional:       true,
+		Notes:          "vision encoder for GLM 5.3 Flash; loaded with --vision",
 	},
 	{
 		Alias:          "q2-imatrix-0731",
@@ -302,6 +375,16 @@ func ModelForPath(path string) (Model, bool) {
 		candidate, err := os.Stat(filepath.Join(dir, model.FileName))
 		if err == nil && os.SameFile(selected, candidate) {
 			return model, true
+		}
+	}
+	return Model{}, false
+}
+
+// ModelByAlias returns the curated entry for alias.
+func ModelByAlias(alias string) (Model, bool) {
+	for _, m := range Curated() {
+		if m.Alias == alias {
+			return m, true
 		}
 	}
 	return Model{}, false

@@ -245,6 +245,14 @@ func ApplyMTPDefaults(opts *EngineOptions) {
 		opts.MTPPath = ""
 		return
 	}
+	if model, ok := models.ModelForPath(opts.ModelPath); ok && model.DSpark != "" && opts.MTPPath == "" {
+		if drafter, ok := models.ModelByAlias(model.DSpark); ok {
+			path := filepath.Join(models.NewManager().ModelsDir, drafter.FileName)
+			if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Size() > 0 {
+				opts.MTPPath = path
+			}
+		}
+	}
 	if opts.MTPPath == "" {
 		opts.MTPPath = DefaultMTPPath()
 	}

@@ -293,3 +293,65 @@ func TestCuratedGLM53Models(t *testing.T) {
 		}
 	}
 }
+
+func TestCuratedVisionModels(t *testing.T) {
+	want := map[string]struct {
+		file, repo, encoder string
+		sizeGB              float64
+		sha                 string
+		vision, optional    bool
+	}{
+		"vision-q2":             {"DeepSeek-V4-Flash-Vision-Exp-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8.gguf", hfRepo, "vision-encoder", 80.8, "8f2d42c0071ccf8a98f391cc2b835fd123f12330690b3059dbb7707920e5ad9e", true, false},
+		"vision-q2-q4":          {"DeepSeek-V4-Flash-Vision-Exp-Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown-AProjQ8-SExpQ8-OutQ8.gguf", hfRepo, "vision-encoder", 90.9, "cded4517bb9d033e778e8bc4ccf1e79ba96d1c2d2b9f1c071c1d4a9037c51b02", true, false},
+		"vision-mxfp4":          {"DeepSeek-V4-Flash-Vision-Exp-MXFP4Experts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out.gguf", hfRepo, "vision-encoder", 145.3, "fc1efb96fa26e654b3530ce5f4b926b189a936d41d94dc1903c832f1e18eb3e7", true, false},
+		"vision-encoder":        {"DeepSeek-V4-Flash-Vision-Encoder.gguf", hfRepo, "", 0.9, "00cd4d81a435364967400a95c42703343e11da6b6f18c5143fe76e1d94d5035f", false, true},
+		"vision-dspark-support": {"DeepSeek-V4-Flash-Vision-Exp-DSpark-support.gguf", hfRepo, "", 5.6, "0807a67fd9ce5874bfc60d8d2461f50e11657e3dd94913d3473f85aa679bc877", false, true},
+		"glm53-vision":          {"GLM-5.3-Flash-Vision-Encoder.gguf", glm53FlashRepo, "", 1.0, "ae23e14c6979e889051b2e4a39351abcdafb161e18e606fae4d8c40095a4bf3a", false, true},
+	}
+	found := map[string]bool{}
+	for _, m := range Curated() {
+		w, ok := want[m.Alias]
+		if !ok {
+			continue
+		}
+		found[m.Alias] = true
+		if m.FileName != w.file || m.SizeGB != w.sizeGB || m.SHA256 != w.sha || m.Encoder != w.encoder || m.Vision != w.vision || m.Optional != w.optional {
+			t.Errorf("%s = %+v, want %+v", m.Alias, m, w)
+		}
+		if repo := m.Repo; repo == "" {
+			repo = hfRepo
+		} else if repo != w.repo {
+			t.Errorf("%s Repo = %q, want %q", m.Alias, repo, w.repo)
+		}
+	}
+	for alias := range want {
+		if !found[alias] {
+			t.Errorf("curated catalog is missing %q", alias)
+		}
+	}
+	for _, m := range Curated() {
+		switch m.Alias {
+		case "glm53-q2", "glm53-q4":
+			if !m.Vision || m.Encoder != "glm53-vision" {
+				t.Errorf("%s should pair with glm53-vision (Vision=%v Encoder=%q)", m.Alias, m.Vision, m.Encoder)
+			}
+		case "vision-q2", "vision-q2-q4", "vision-mxfp4":
+			if m.DSpark != "vision-dspark-support" {
+				t.Errorf("%s DSpark = %q, want vision-dspark-support", m.Alias, m.DSpark)
+			}
+		}
+	}
+	// Every Encoder/DSpark alias resolves to a catalog entry.
+	aliases := map[string]bool{}
+	for _, m := range Curated() {
+		aliases[m.Alias] = true
+	}
+	for _, m := range Curated() {
+		if m.Encoder != "" && !aliases[m.Encoder] {
+			t.Errorf("%s Encoder %q is not a catalog alias", m.Alias, m.Encoder)
+		}
+		if m.DSpark != "" && !aliases[m.DSpark] {
+			t.Errorf("%s DSpark %q is not a catalog alias", m.Alias, m.DSpark)
+		}
+	}
+}

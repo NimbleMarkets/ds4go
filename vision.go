@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 // ImageInput is one image for a multimodal message: encoded PNG or JPEG
@@ -171,6 +173,33 @@ func (c *ImageEncoder) evictLocked(incoming int64) {
 		c.bytes -= entry.bytes
 		entry.emb.Free()
 	}
+}
+
+// DefaultVisionPath returns the installed encoder for a catalog-recognized
+// vision model, or "" when the model is text-only or its encoder is absent.
+func DefaultVisionPath(modelPath string) string {
+	model, ok := models.ModelForPath(modelPath)
+	if !ok || !model.Vision || model.Encoder == "" {
+		return ""
+	}
+	encoder, ok := models.ModelByAlias(model.Encoder)
+	if !ok {
+		return ""
+	}
+	path := filepath.Join(models.NewManager().ModelsDir, encoder.FileName)
+	if st, err := os.Stat(path); err != nil || st.IsDir() || st.Size() == 0 {
+		return ""
+	}
+	return path
+}
+
+// ApplyVisionDefaults fills EngineOptions.VisionPath with the installed
+// encoder paired to a catalog vision model. An explicit VisionPath wins.
+func ApplyVisionDefaults(opts *EngineOptions) {
+	if opts == nil || opts.VisionPath != "" {
+		return
+	}
+	opts.VisionPath = DefaultVisionPath(opts.ModelPath)
 }
 
 func (img ImageInput) bytes() ([]byte, error) {
