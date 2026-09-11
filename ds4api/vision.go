@@ -368,6 +368,9 @@ func (s *Session) SyncMultimodalWithCancel(prompt *Tokens, spans []VisionSpan, f
 	buf, errPtr, n := errorBuffer()
 	code := s.lib.raw.ds4SessionSyncMultimodal(s.ptr, prompt.cptr(), spansPtr(c), uintptr(len(c)), errPtr, n)
 	runtime.KeepAlive(c)
+	// c holds copies of the C embedding structs; the handles in spans own the
+	// buffers those point at, and their cleanups free them.
+	runtime.KeepAlive(spans)
 	if code == sessionSyncInterruptedCode {
 		return ErrSessionSyncInterrupted
 	}
@@ -394,6 +397,8 @@ func (s *Session) visionPredicate(spans []VisionSpan, pick func(r *rawSymbols) f
 	}
 	ok := fn(s.ptr, spansPtr(c), uintptr(len(c)))
 	runtime.KeepAlive(c)
+	// The handles in spans own the buffers the C call reads through c.
+	runtime.KeepAlive(spans)
 	return ok
 }
 
@@ -435,6 +440,8 @@ func (s *Session) RebaseVisionState(spans []VisionSpan) bool {
 		}
 	}
 	runtime.KeepAlive(c)
+	// The handles in spans own the buffers the C call reads through c.
+	runtime.KeepAlive(spans)
 	return ok
 }
 
