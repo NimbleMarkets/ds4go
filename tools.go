@@ -60,6 +60,10 @@ type ChatMessage struct {
 	Role string
 	// Content is the plain text content for the message.
 	Content string
+	// Parts is the ordered multimodal content of a user or tool message:
+	// text and images interleaved. When non-empty it replaces Content for
+	// prompt rendering. Only user and tool messages may carry images.
+	Parts []ContentPart
 	// ReasoningContent is the assistant reasoning block when thinking mode is enabled.
 	ReasoningContent string
 	// ToolCalls is the assistant's requested tool calls for this turn.
