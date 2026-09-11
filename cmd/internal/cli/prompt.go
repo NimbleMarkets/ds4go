@@ -252,6 +252,14 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 	ctxSize := cfg.Ctx
 	images := ds4.NewImageEncoder(engine)
 
+	// Mirror --inspect's wording so it is clear up front whether /read can
+	// attach an image this session.
+	if engine.HasVision() {
+		fmt.Println("Vision encoder: loaded")
+	} else {
+		fmt.Println("Vision encoder: none")
+	}
+
 	defer func() {
 		if session != nil {
 			session.Close()
@@ -283,6 +291,7 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 				fmt.Println("  /ctx N         Set context size for following prompts.")
 				fmt.Println("  /power N       Set GPU duty cycle percentage, 1..100.")
 				fmt.Println("  /read FILE     Read a prompt from FILE and run it.")
+				fmt.Println("                 A PNG or JPEG is attached as an image instead (needs a vision encoder).")
 				fmt.Println("  /quit, /exit   Leave the prompt.")
 				continue
 

@@ -37,6 +37,12 @@ func TestIsVisionEncoderMissing(t *testing.T) {
 	if !IsVisionEncoderMissing(fmt.Errorf("wrapped: %w", errors.New("vision encoder is not loaded"))) {
 		t.Error("wrapped message was not classified")
 	}
+	if !IsVisionEncoderMissing(errors.New("ds4_session_sync_multimodal: model does not support image messages")) {
+		t.Error("libds4's other image refusal was not classified")
+	}
+	if !IsVisionEncoderMissing(fmt.Errorf("wrapped: %w", errors.New("model does not support image messages"))) {
+		t.Error("wrapped second message was not classified")
+	}
 	if IsVisionEncoderMissing(errors.New("decode requires a synchronized checkpoint")) || IsVisionEncoderMissing(nil) {
 		t.Error("unrelated error classified as a missing encoder")
 	}
