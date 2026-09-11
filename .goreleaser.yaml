@@ -21,7 +21,7 @@ builds:
     goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w
+      - -s -w -X github.com/NimbleMarkets/ds4go/cmd/internal/cli.version=v{{ .Version }}
 
 archives:
   - id: default

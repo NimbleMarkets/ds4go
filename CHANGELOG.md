@@ -2,8 +2,23 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
-## Unreleased
+## v0.6.0 (2026-09-10)
 
+Requires libds4 **v0.5.20260910** or newer (NimbleMarkets/ds4 `nm-shared`, rebased on upstream ds4 6289c51). The engine options struct changed shape upstream, and older libraries misread it; `ds4go install` picks up the current release.
+
+**Highlights**
+
+ * **GLM 5.2 and GLM 5.3 Flash support**: catalog entries, GLM tool-call markup, stop tokens, reasoning effort, and the embedded MTP draft block (`EngineOptions.GLMMTP`) for speculative decoding without an external support model.
+ * **`workspacetool` package**: local read/list/search tools for `ToolLoop`, with opt-in write, edit, and shell jobs confined to a workspace root.
+ * **Tool-call parity with upstream ds4**: literal tool bodies (no HTML unescaping), structural markers quoted inside arguments no longer split a call, wrapper-only repair, greedy grammar sampling across speculative blocks, and schema-typed GLM arguments.
+ * **Sessions**: rewinds now follow upstream's checkpoint semantics via `Session.RewindSynced`, and the generator discards draft tokens past a stop, a cancel, or a resampled boundary.
+ * **CLI**: `ds4go --version`, `ds4go model list --installed|--available|--json`, a download progress line that survives terminal resizes and shows a live rate and ETA, and downloads refused when the volume cannot hold them.
+ * **Build**: root module is self-contained for `go get`, `task ds4:sync` catches upstream ABI drift, and dependencies are current (purego 0.11).
+
+<details>
+<summary>Full changelog</summary>
+
+ * **`ds4go --version`**: release builds report the tag; `go install` builds report the module version, and plain builds the VCS revision.
  * **`ds4go model list` filters and JSON**: `--installed` and `--available` show one group, `--all` (the default) shows both, and `--json` emits one object with `modelsDir`, `libraryDir`, `default` (null when nothing is active), and the filtered `models` array in the same per-model shape as `model info --json`.
  * **Model download progress reads as live**: the speed is a moving average over the last five seconds instead of the average since start, the downloaded figure shows two decimals from GiB upward, and an ETA from the moving rate is appended. On a 90 GiB file at 10 MiB/s the line used to change every 5-10 seconds; it now changes every frame.
  * **fix: download progress survives terminal resizes.** The installer and model-download progress lines padded each frame to the terminal width and redrew with a bare carriage return; shrinking the window reflowed the padded row onto two rows and left the old frame's head orphaned above every later redraw. Both now draw through a shared `internal/termline` renderer that erases rather than pads, parks the cursor at column 0, and keeps frames under the width, re-read per frame.
@@ -22,6 +37,8 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
  * **Upstream ABI synchronization**: add `task ds4:sync` / `scripts/check-ds4-sync.sh` to compile the real upstream header and detect stale Go snapshots of byte-offset-sensitive C structs.
  * **DSML parsing hardening** (ported from `ds4` upstream): a bare `<｜DSML｜invoke>` with no `<｜DSML｜tool_calls>` wrapper is now accepted as an implicit single-call block; stray DSML markers in plain assistant output are reported as malformed so the tool loop asks the model to retry; and `invoke`/`parameter` openers require a tag delimiter, so `<｜DSML｜invokeX` no longer false-matches `invoke`.
  * **Structure-aware greedy sampling**: tool turns now sample DSML grammar greedily (argmax) while keeping the configured sampling for parameter values, improving tool-call reliability. It is a no-op at temperature <= 0, so speculative decoding is unaffected. Exposed as `GenerateOptions.SampleControl` and `StreamDecoder.WantsGreedySampling`.
+
+</details>
 
 ## v0.5.1 (2026-06-10)
 
