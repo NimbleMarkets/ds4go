@@ -3,6 +3,7 @@ package ds4
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
@@ -138,4 +139,36 @@ func TestPromptFreeReleasesSpans(t *testing.T) {
 		t.Error("Prompt.Free did not free the spans")
 	}
 	p.Free() // idempotent
+}
+
+// TestImageEncoderConcurrentHitsAndEvictions exercises the race between a
+// cache hit's Clone and a concurrent eviction freeing that same entry. With
+// only one cache slot, every other Encode of the alternate image evicts the
+// one just inserted, so hits and evictions interleave constantly. Run with
+// -race; the assertion is only that nothing panics or races, and every
+// embedding handed back is valid (TokenCount() > 0) before it is freed.
+func TestImageEncoderConcurrentHitsAndEvictions(t *testing.T) {
+	eng, _ := visionMockEngine(t)
+	enc := NewImageEncoder(eng)
+	enc.SetLimits(1, DefaultImageCacheBytes)
+
+	images := [][]byte{[]byte("alpha-image"), []byte("beta-image")}
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			img := ImageInput{Data: images[i%len(images)]}
+			emb, err := enc.Encode(img)
+			if err != nil {
+				t.Errorf("Encode: %v", err)
+				return
+			}
+			defer emb.Free()
+			if emb.TokenCount() == 0 {
+				t.Error("Encode returned an embedding with no tokens")
+			}
+		}(i)
+	}
+	wg.Wait()
 }

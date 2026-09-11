@@ -120,8 +120,14 @@ func (c *ImageEncoder) Encode(img ImageInput) (*ds4api.VisionEmbedding, error) {
 	if el, ok := c.entries[key]; ok {
 		c.order.MoveToFront(el)
 		emb := el.Value.(*imageCacheEntry).emb
+		// Clone while still holding c.mu: if we unlocked first, a
+		// concurrent Encode could evict this entry and Free its embedding
+		// before Clone runs, cloning already-freed memory. Lock order is
+		// c.mu -> libCallMu (Clone takes libCallMu internally), which
+		// matches evictLocked's Free calls, so this cannot deadlock.
+		clone, err := emb.Clone()
 		c.mu.Unlock()
-		return emb.Clone()
+		return clone, err
 	}
 	c.mu.Unlock()
 
