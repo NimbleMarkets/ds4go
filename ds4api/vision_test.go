@@ -223,3 +223,154 @@ func TestPromptAppendVision(t *testing.T) {
 		t.Errorf("tokens = %d, want 5", got)
 	}
 }
+
+func multimodalPrompt(t *testing.T, eng *Engine, text string, image []byte) (*Tokens, []VisionSpan) {
+	t.Helper()
+	tokens, err := eng.NewTokens(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emb, err := eng.VisionEncodeMemory(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spans, err := eng.ChatAppendMultimodalMessage(tokens, "user", []string{text, ""}, []*VisionEmbedding{emb})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { FreeVisionSpans(spans); tokens.Free() })
+	return tokens, spans
+}
+
+func TestSessionSyncMultimodalRecordsVisionState(t *testing.T) {
+	eng, _ := visionEngine(t)
+	sess, err := eng.NewSession(256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if sess.HasVisionState() {
+		t.Fatal("fresh session reports vision state")
+	}
+	tokens, spans := multimodalPrompt(t, eng, "describe", []byte("image-one"))
+	if err := sess.SyncMultimodal(tokens, spans); err != nil {
+		t.Fatalf("SyncMultimodal: %v", err)
+	}
+	if !sess.HasVisionState() {
+		t.Error("HasVisionState() = false after a multimodal sync")
+	}
+	if sess.Pos() != tokens.Len() {
+		t.Errorf("Pos() = %d, want %d", sess.Pos(), tokens.Len())
+	}
+	if !sess.VisionPrefixMatches(spans) || !sess.VisionStateMatches(spans) {
+		t.Error("the synced spans do not match their own session")
+	}
+	// A different image at the same offset is not a prefix match.
+	_, other := multimodalPrompt(t, eng, "describe", []byte("image-two"))
+	if sess.VisionPrefixMatches(other) {
+		t.Error("a different image matched the session's prefix")
+	}
+	// The same image plus a later new one is a prefix match but not a state match.
+	longer, more := multimodalPrompt(t, eng, "describe", []byte("image-one"))
+	extra, _ := eng.VisionEncodeMemory([]byte("image-three"))
+	span2, err := eng.PromptAppendVision(longer, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	more = append(more, span2)
+	if !sess.VisionPrefixMatches(more) {
+		t.Error("prefix with a trailing new image did not match")
+	}
+	if sess.VisionStateMatches(more) {
+		t.Error("state matched despite an extra image")
+	}
+	// A plain sync clears image state.
+	if err := sess.Sync([]int{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	if sess.HasVisionState() {
+		t.Error("HasVisionState() = true after a text-only sync")
+	}
+}
+
+func TestSessionSyncMultimodalRejectsBadSpans(t *testing.T) {
+	eng, _ := visionEngine(t)
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	tokens, spans := multimodalPrompt(t, eng, "x", []byte("img"))
+	bad := []VisionSpan{{TokenStart: tokens.Len() + 10, Embedding: spans[0].Embedding}}
+	if err := sess.SyncMultimodal(tokens, bad); err == nil {
+		t.Fatal("accepted a span past the end of the prompt")
+	}
+}
+
+func TestSessionRebaseVisionState(t *testing.T) {
+	eng, _ := visionEngine(t)
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	tokens, spans := multimodalPrompt(t, eng, "look", []byte("same"))
+	if err := sess.SyncMultimodal(tokens, spans); err != nil {
+		t.Fatal(err)
+	}
+	_, moved := multimodalPrompt(t, eng, "look at this longer text", []byte("same"))
+	if moved[0].TokenStart == spans[0].TokenStart {
+		t.Fatal("test setup: expected a different offset")
+	}
+	if !sess.RebaseVisionState(moved) {
+		t.Fatal("RebaseVisionState refused a same-fingerprint span")
+	}
+	if moved[0].TokenStart != spans[0].TokenStart {
+		t.Errorf("TokenStart after rebase = %d, want %d", moved[0].TokenStart, spans[0].TokenStart)
+	}
+}
+
+func TestSessionRewindSyncedWithSpansUsesMultimodalRebuild(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetVision(true)
+	eng, err := lib.NewEngine(EngineOptions{VisionPath: "enc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	tokens, spans := multimodalPrompt(t, eng, "look", []byte("img"))
+	if err := sess.SyncMultimodal(tokens, spans); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Eval(99); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RewindSynced(tokens.Len(), spans...); err != nil {
+		t.Fatalf("RewindSynced with spans: %v", err)
+	}
+	if !sess.HasVisionState() {
+		t.Error("vision state lost across a span-aware rewind")
+	}
+	if got := ctl.MultimodalSyncCalls(); got != 2 {
+		t.Errorf("multimodal sync calls = %d, want 2 (initial + rebuild)", got)
+	}
+}
+
+func TestSessionVisionUnsupported(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetVision(true)
+	lib.raw.ds4SessionSyncMultimodal = nil
+	lib.raw.ds4SessionHasVisionState = nil
+	eng, _ := lib.NewEngine(EngineOptions{})
+	defer eng.Close()
+	sess, _ := eng.NewSession(64)
+	defer sess.Close()
+	tokens, _ := eng.NewTokens([]int{1})
+	defer tokens.Free()
+	if err := sess.SyncMultimodal(tokens, []VisionSpan{{}}); !errors.Is(err, ErrVisionNotSupported) {
+		t.Fatalf("SyncMultimodal error = %v, want ErrVisionNotSupported", err)
+	}
+	if sess.HasVisionState() {
+		t.Fatal("HasVisionState() = true without the symbol")
+	}
+	// With no spans, SyncMultimodal is the plain sync and needs no vision symbols.
+	if err := sess.SyncMultimodal(tokens, nil); err != nil {
+		t.Fatalf("SyncMultimodal(nil spans) = %v, want plain sync", err)
+	}
+}

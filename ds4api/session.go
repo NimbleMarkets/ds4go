@@ -475,11 +475,11 @@ func (s *Session) Rewind(pos int) {
 
 // RewindSynced rewinds to pos and then restores a valid checkpoint for the
 // retained prefix when the rewind lost it, mirroring upstream's
-// agent_worker_rewind / server_generation_rewind: after ds4_session_rewind the
-// retained tokens are copied and, if ds4_session_common_prefix no longer
-// covers them, synced again. A rewind at or past the current position is a
-// no-op.
-func (s *Session) RewindSynced(pos int) error {
+// agent_worker_rewind / server_generation_rewind. spans are the image spans
+// of the prompt the session was synced with; those that lie inside the
+// retained prefix are passed to the multimodal sync, as the header requires
+// for image-bearing sessions.
+func (s *Session) RewindSynced(pos int, spans ...VisionSpan) error {
 	if s == nil {
 		return errors.New("ds4: nil session")
 	}
@@ -496,7 +496,13 @@ func (s *Session) RewindSynced(pos int) error {
 		return err
 	}
 	defer prefix.Free()
-	return s.SyncTokens(prefix)
+	var kept []VisionSpan
+	for _, sp := range spans {
+		if sp.TokenStart+sp.Embedding.TokenCount() <= prefix.Len() {
+			kept = append(kept, sp)
+		}
+	}
+	return s.SyncMultimodal(prefix, kept)
 }
 
 // Pos returns the current session token position.

@@ -298,3 +298,142 @@ func (e *Engine) ChatAppendMultimodalMessage(tokens *Tokens, role string, textPa
 	}
 	return out, nil
 }
+
+// spansToC marshals spans for one call. The returned slice must be kept alive
+// (runtime.KeepAlive) until the call returns; libds4 copies the identities it
+// keeps and never retains the array or the embedding buffers.
+func spansToC(spans []VisionSpan) ([]cVisionSpan, error) {
+	out := make([]cVisionSpan, len(spans))
+	for i, sp := range spans {
+		if sp.Embedding == nil || sp.Embedding.state == nil || sp.Embedding.state.c.Data == nil {
+			return nil, fmt.Errorf("ds4: image span %d has an empty embedding", i)
+		}
+		if sp.TokenStart < 0 {
+			return nil, fmt.Errorf("ds4: image span %d has a negative token start", i)
+		}
+		out[i] = cVisionSpan{TokenStart: uint32(sp.TokenStart), Embedding: sp.Embedding.state.c}
+	}
+	return out, nil
+}
+
+func spansPtr(c []cVisionSpan) unsafe.Pointer {
+	if len(c) == 0 {
+		return nil
+	}
+	return unsafe.Pointer(&c[0])
+}
+
+// SyncMultimodal is Session.SyncTokens for a prompt containing image spans
+// (ds4_session_sync_multimodal). With no spans it is the plain sync.
+func (s *Session) SyncMultimodal(prompt *Tokens, spans []VisionSpan) error {
+	return s.SyncMultimodalWithCancel(prompt, spans, nil)
+}
+
+// SyncMultimodalWithCancel is SyncMultimodal polling fn for cancellation, as
+// SyncTokensWithCancel does.
+func (s *Session) SyncMultimodalWithCancel(prompt *Tokens, spans []VisionSpan, fn CancelFunc) error {
+	if len(spans) == 0 {
+		if fn == nil {
+			return s.SyncTokens(prompt)
+		}
+		return s.SyncTokensWithCancel(prompt, fn)
+	}
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionSyncMultimodal == nil {
+		return ErrVisionNotSupported
+	}
+	c, err := spansToC(spans)
+	if err != nil {
+		return err
+	}
+	if fn != nil {
+		if s.lib.raw.ds4SessionSetCancel == nil {
+			return ErrCancelNotSupported
+		}
+		tempID := registerCancelCallback(fn)
+		s.lib.raw.ds4SessionSetCancel(s.ptr, cancelCallback, tempID)
+		defer func() {
+			if s.state.cancelID != 0 {
+				s.lib.raw.ds4SessionSetCancel(s.ptr, cancelCallback, s.state.cancelID)
+			} else {
+				s.lib.raw.ds4SessionSetCancel(s.ptr, 0, 0)
+			}
+			unregisterCancelCallback(tempID)
+		}()
+	}
+	buf, errPtr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionSyncMultimodal(s.ptr, prompt.cptr(), spansPtr(c), uintptr(len(c)), errPtr, n)
+	runtime.KeepAlive(c)
+	if code == sessionSyncInterruptedCode {
+		return ErrSessionSyncInterrupted
+	}
+	return errorFromBuffer("ds4_session_sync_multimodal", code, buf)
+}
+
+func (s *Session) visionPredicate(spans []VisionSpan, fn func(s uintptr, images unsafe.Pointer, n uintptr) bool) bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || fn == nil {
+		return false
+	}
+	c, err := spansToC(spans)
+	if err != nil {
+		return false
+	}
+	ok := fn(s.ptr, spansPtr(c), uintptr(len(c)))
+	runtime.KeepAlive(c)
+	return ok
+}
+
+// VisionPrefixMatches calls ds4_session_vision_prefix_matches: every image
+// the session already holds is unchanged in spans (same offset and
+// fingerprint) and any new images start at or after the live frontier. The
+// caller must still check the token prefix.
+func (s *Session) VisionPrefixMatches(spans []VisionSpan) bool {
+	return s.visionPredicate(spans, s.lib.raw.ds4SessionVisionPrefixMatches)
+}
+
+// VisionStateMatches is VisionPrefixMatches plus an identical image count.
+func (s *Session) VisionStateMatches(spans []VisionSpan) bool {
+	return s.visionPredicate(spans, s.lib.raw.ds4SessionVisionStateMatches)
+}
+
+// RebaseVisionState calls ds4_session_rebase_vision_state: for a continuation
+// authenticated by other means, restore the session's image offsets into
+// spans (TokenStart is updated in place). Fingerprints and row counts must
+// match; on failure spans are unchanged.
+func (s *Session) RebaseVisionState(spans []VisionSpan) bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionRebaseVisionState == nil {
+		return false
+	}
+	c, err := spansToC(spans)
+	if err != nil {
+		return false
+	}
+	ok := s.lib.raw.ds4SessionRebaseVisionState(s.ptr, spansPtr(c), uintptr(len(c)))
+	if ok {
+		for i := range spans {
+			spans[i].TokenStart = int(c[i].TokenStart)
+		}
+	}
+	runtime.KeepAlive(c)
+	return ok
+}
+
+// HasVisionState calls ds4_session_has_vision_state: true while the session
+// contains, or is syncing, image-conditioned state. Such state must not be
+// written to a text-keyed disk cache.
+func (s *Session) HasVisionState() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionHasVisionState == nil {
+		return false
+	}
+	return s.lib.raw.ds4SessionHasVisionState(s.ptr)
+}

@@ -91,6 +91,7 @@ type MockControls struct {
 	specSampledCall int
 	syncCalls       int
 	rewindCalls     int
+	multimodalSyncs int
 }
 
 // SyncCalls reports how many ds4_session_sync calls the mock has served, so
@@ -106,6 +107,14 @@ func (c *MockControls) RewindCalls() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.rewindCalls
+}
+
+// MultimodalSyncCalls reports how many ds4_session_sync_multimodal calls the
+// mock served.
+func (c *MockControls) MultimodalSyncCalls() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.multimodalSyncs
 }
 
 func (c *MockControls) count(field *int) {
@@ -364,6 +373,9 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	}
 	r.ds4SessionSync = func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32 {
 		ctl.count(&ctl.syncCalls)
+		if sess := mockSessionPtr(s); sess != nil {
+			sess.images = nil
+		}
 		return mockSessionSync(s, prompt, err, errLen)
 	}
 	r.ds4SessionRewriteRequiresRebuild = func(liveLen int32, canonicalLen int32, common int32) bool { return true }
@@ -694,6 +706,88 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		return 1
 	}
 
+	mockIdentities := func(images unsafe.Pointer, n uintptr) []mockImageIdentity {
+		if n == 0 {
+			return nil
+		}
+		c := unsafe.Slice((*cVisionSpan)(images), int(n))
+		out := make([]mockImageIdentity, len(c))
+		for i := range c {
+			out[i] = mockImageIdentity{start: int(c[i].TokenStart), count: int(c[i].Embedding.TokenCount), fp: c[i].Embedding.Fingerprint}
+		}
+		return out
+	}
+	r.ds4SessionSyncMultimodal = func(s uintptr, prompt *cTokens, images unsafe.Pointer, n uintptr, err unsafe.Pointer, errLen uintptr) int32 {
+		ctl.count(&ctl.multimodalSyncs)
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return -1
+		}
+		if n != 0 && !ctl.hasVision() {
+			mockWriteError(err, errLen, "vision encoder is not loaded")
+			return 1
+		}
+		ids := mockIdentities(images, n)
+		prev := 0
+		for _, id := range ids {
+			if id.count == 0 || id.start < prev || id.start+id.count > int(prompt.Len) {
+				mockWriteError(err, errLen, "invalid or overlapping image token span")
+				return 1
+			}
+			prev = id.start + id.count
+		}
+		if rc := mockSessionSync(s, prompt, err, errLen); rc != 0 {
+			return rc
+		}
+		sess.images = ids
+		return 0
+	}
+	r.ds4SessionVisionPrefixMatches = func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.checkpointInvalid {
+			return false
+		}
+		ids := mockIdentities(images, n)
+		if len(ids) < len(sess.images) {
+			return false
+		}
+		for i, have := range sess.images {
+			if ids[i] != have {
+				return false
+			}
+		}
+		for _, id := range ids[len(sess.images):] {
+			if id.start < len(sess.evaluated) {
+				return false
+			}
+		}
+		return true
+	}
+	r.ds4SessionVisionStateMatches = func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		sess := mockSessionPtr(s)
+		return sess != nil && int(n) == len(sess.images) && r.ds4SessionVisionPrefixMatches(s, images, n)
+	}
+	r.ds4SessionRebaseVisionState = func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		sess := mockSessionPtr(s)
+		if sess == nil || int(n) != len(sess.images) {
+			return false
+		}
+		c := unsafe.Slice((*cVisionSpan)(images), int(n))
+		for i := range c {
+			if c[i].Embedding.Fingerprint != sess.images[i].fp || int(c[i].Embedding.TokenCount) != sess.images[i].count {
+				return false
+			}
+		}
+		for i := range c {
+			c[i].TokenStart = uint32(sess.images[i].start)
+		}
+		return true
+	}
+	r.ds4SessionHasVisionState = func(s uintptr) bool {
+		sess := mockSessionPtr(s)
+		return sess != nil && len(sess.images) > 0
+	}
+
 	return lib, ctl
 }
 
@@ -810,6 +904,14 @@ type mockSession struct {
 	ctxSize           int32
 	tokenSnapshot     cTokens
 	cancelID          uintptr
+	images            []mockImageIdentity
+}
+
+// mockImageIdentity records one image's offset, row count, and content
+// fingerprint as the mock session last synced it.
+type mockImageIdentity struct {
+	start, count int
+	fp           [32]byte
 }
 
 var (
