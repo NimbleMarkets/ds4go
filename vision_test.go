@@ -378,3 +378,83 @@ func TestImageEncoderConcurrentHitsAndEvictions(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestGeneratePromptSyncsMultimodalOnlyWithSpans(t *testing.T) {
+	eng, ctl := visionMockEngine(t)
+	enc := NewImageEncoder(eng)
+	sess, err := eng.NewSession(256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	g := Generator{Engine: eng, Session: sess}
+
+	text, err := BuildChatPromptMultimodal(eng, enc, "", nil, []ChatMessage{{Role: "user", Content: "hi"}}, ThinkNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer text.Free()
+	if _, err := g.GeneratePrompt(text, GenerateOptions{MaxTokens: 3}); err != nil {
+		t.Fatalf("GeneratePrompt(text): %v", err)
+	}
+	if ctl.MultimodalSyncCalls() != 0 || sess.HasVisionState() {
+		t.Fatal("text-only prompt used the multimodal sync")
+	}
+
+	withImage, err := BuildChatPromptMultimodal(eng, enc, "", nil, []ChatMessage{{Role: "user", Parts: []ContentPart{{Text: "see"}, {Image: &ImageInput{Data: []byte("img")}}}}}, ThinkNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer withImage.Free()
+	out, err := g.GeneratePrompt(withImage, GenerateOptions{MaxTokens: 3})
+	if err != nil {
+		t.Fatalf("GeneratePrompt(image): %v", err)
+	}
+	if len(out) != 3 {
+		t.Errorf("generated %d tokens, want 3", len(out))
+	}
+	if ctl.MultimodalSyncCalls() != 1 || !sess.HasVisionState() {
+		t.Error("image prompt did not go through the multimodal sync")
+	}
+	if got, want := sess.Pos(), withImage.Tokens.Len()+3; got != want {
+		t.Errorf("Pos() = %d, want %d", got, want)
+	}
+}
+
+func TestGeneratePromptRewindsWithSpans(t *testing.T) {
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	ctl.SetVision(true)
+	eng, err := lib.NewEngine(ds4api.EngineOptions{VisionPath: "enc", MTPPath: "mtp.gguf", MTPDraftTokens: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	enc := NewImageEncoder(eng)
+	sess, _ := eng.NewSession(256)
+	defer sess.Close()
+	p, err := BuildChatPromptMultimodal(eng, enc, "", nil, []ChatMessage{{Role: "user", Parts: []ContentPart{{Text: "see"}, {Image: &ImageInput{Data: []byte("img")}}}}}, ThinkNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Free()
+	// Make the third generated token a stop so the speculative block is cut
+	// and the rewind path runs with the prompt's spans.
+	if err := sess.SyncMultimodal(p.Tokens, p.Images); err != nil {
+		t.Fatal(err)
+	}
+	first := sess.Argmax()
+	ctl.SetStopTokens(first + 2)
+	out, err := (Generator{Engine: eng, Session: sess}).GeneratePrompt(p, GenerateOptions{MaxTokens: 8, StopOnEOS: true})
+	if err != nil {
+		t.Fatalf("GeneratePrompt: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("generated %v, want two tokens before the stop", out)
+	}
+	if !sess.HasVisionState() {
+		t.Error("vision state lost across the stop rewind: RewindSynced ran without the spans")
+	}
+	if got := ctl.MultimodalSyncCalls(); got < 2 {
+		t.Errorf("multimodal sync calls = %d, want the rebuild to use the multimodal path", got)
+	}
+}

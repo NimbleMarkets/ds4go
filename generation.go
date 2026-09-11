@@ -50,6 +50,11 @@ type GenerateOptions struct {
 	// it too: a token it forces greedy is verified by the argmax speculative
 	// path, so markup structure is never sampled through.
 	SampleControl func() bool
+	// Images are the image spans of the prompt the session was synced with.
+	// Continue passes them to span-aware rewinds so an image-bearing session
+	// rebuilds through the multimodal sync. GeneratePrompt sets it from the
+	// prompt; callers resuming an image session through Continue set it.
+	Images []ds4api.VisionSpan
 }
 
 // Generator binds a ds4 engine and session for Go-native generation helpers.
@@ -81,6 +86,28 @@ func (g Generator) GenerateTokens(prompt *ds4api.Tokens, opts GenerateOptions) (
 	}, opts.Context); err != nil {
 		return nil, err
 	}
+	return g.Continue(opts)
+}
+
+// GeneratePrompt synchronizes to a rendered Prompt and generates tokens from
+// the session. With no image spans it is GenerateTokens; with spans it syncs
+// through the multimodal path.
+func (g Generator) GeneratePrompt(p *Prompt, opts GenerateOptions) ([]int, error) {
+	if p == nil || p.Tokens == nil {
+		return nil, errors.New("ds4go: nil prompt")
+	}
+	if len(p.Images) == 0 {
+		return g.GenerateTokens(p.Tokens, opts)
+	}
+	if g.Session == nil {
+		return nil, errors.New("ds4go: nil session")
+	}
+	if err := syncWithContext(func() error { return g.Session.SyncMultimodal(p.Tokens, p.Images) }, func(fn ds4api.CancelFunc) error {
+		return g.Session.SyncMultimodalWithCancel(p.Tokens, p.Images, fn)
+	}, opts.Context); err != nil {
+		return nil, err
+	}
+	opts.Images = p.Images
 	return g.Continue(opts)
 }
 
@@ -231,7 +258,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 						// The stop and any draft past it were evaluated into
 						// the session; discard them so Pos agrees with the
 						// tokens kept (upstream 5b3cc8b).
-						if err := g.Session.RewindSynced(blockStart + ti); err != nil {
+						if err := g.Session.RewindSynced(blockStart+ti, opts.Images...); err != nil {
 							return out, err
 						}
 						return out, nil
@@ -247,7 +274,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 					if cancelled() {
 						// The caller stopped the turn on this token (a closed
 						// tool block, say); drop the rest of the block.
-						if err := g.Session.RewindSynced(blockStart + ti + 1); err != nil {
+						if err := g.Session.RewindSynced(blockStart+ti+1, opts.Images...); err != nil {
 							return out, err
 						}
 						return out, opts.Context.Err()
@@ -256,7 +283,7 @@ func (g Generator) Continue(opts GenerateOptions) ([]int, error) {
 						// Later tokens were proposed under the old parser mode.
 						// Re-evaluate this boundary token to restore its
 						// logits, then sample the suffix under the new mode.
-						if err := g.Session.RewindSynced(blockStart + ti); err != nil {
+						if err := g.Session.RewindSynced(blockStart+ti, opts.Images...); err != nil {
 							return out, err
 						}
 						if err := g.Session.Eval(t); err != nil {
