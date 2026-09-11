@@ -1,6 +1,7 @@
 package workspacetool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -44,11 +45,50 @@ func invokeParts(t *testing.T, tool ds4.ToolHandler, args string) ds4.ToolResult
 func TestViewImageReturnsImagePart(t *testing.T) {
 	w, png := viewImageWorkspace(t, true)
 	res := invokeParts(t, w.ViewImageTool(), `{"path":"shot.png"}`)
-	if len(res.Parts) != 2 || res.Parts[1].Image == nil || res.Parts[1].Image.Path != png {
+	if len(res.Parts) != 2 || res.Parts[1].Image == nil {
 		t.Fatalf("parts = %+v, want a caption then the image", res.Parts)
+	}
+	// The bytes are read once through the confined handle, not handed back as
+	// a path the tool loop would re-read outside the os.Root guard.
+	want, err := os.ReadFile(png)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Parts[1].Image; !bytes.Equal(got.Data, want) || got.Path != "" {
+		t.Fatalf("image part = (%d bytes, path %q), want the %d file bytes and no path", len(got.Data), got.Path, len(want))
 	}
 	if !strings.Contains(res.Parts[0].Text, "shot.png") {
 		t.Errorf("caption %q does not name the file", res.Parts[0].Text)
+	}
+}
+
+func TestViewImageRejectsOversizeImage(t *testing.T) {
+	root := t.TempDir()
+	w, err := New(Config{Root: root, VisionAvailable: func() bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "huge.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	// Sparse: one byte past the bound without writing 64 MiB.
+	if err := f.Truncate(maxImageBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	res := invokeParts(t, w.ViewImageTool(), `{"path":"huge.png"}`)
+	if len(res.Parts) != 1 || res.Parts[0].Image != nil || !strings.HasPrefix(res.Parts[0].Text, "ERROR") {
+		t.Fatalf("parts = %+v, want a text error for an oversize image", res.Parts)
+	}
+	if !strings.Contains(res.Parts[0].Text, "too large") {
+		t.Errorf("observation %q does not say the file is too large", res.Parts[0].Text)
 	}
 }
 
