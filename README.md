@@ -92,8 +92,9 @@ Download a vision model together with its encoder, then attach an image to a
 prompt:
 
 ```sh
-ds4go model download glm53-q2 glm53-vision
-ds4go prompt -m … --image photo.png -p "What is this?"
+ds4go model download glm53-q2
+ds4go model download glm53-vision
+ds4go prompt -m ~/.ds4/models/GLM-5.3-Flash-Q2.gguf --image photo.png -p "What is this?"
 ```
 
 DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM's
