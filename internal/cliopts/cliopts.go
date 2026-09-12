@@ -14,6 +14,7 @@
 package cliopts
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -84,6 +85,7 @@ type CLIConfig struct {
 	Seed       uint64
 	Think      bool
 	ThinkMax   bool
+	ThinkLevel ThinkLevelFlag // --think-level (V4.1 reasoning effort); unset unless given
 	NoThink    bool
 
 	// Diagnostics.
@@ -112,6 +114,7 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	// Model and runtime.
 	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path or installed catalog alias (see: ds4go model list)")
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
+	fs.StringVar(&c.MTP, "mtp-model", models.DefaultMTPPath(), "external MTP or DSpark support GGUF (same as --mtp)")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
 	fs.BoolVar(&c.Dspark, "dspark", false, "enable experimental DSpark runtime speculative decoding (needs the DSpark support GGUF via --mtp)")
@@ -159,6 +162,7 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.BoolVar(&c.Think, "think", false, "use normal thinking mode (the default)")
 	fs.BoolVar(&c.ThinkMax, "think-max", false, "use Think Max when --ctx is large enough; otherwise normal thinking")
 	fs.BoolVar(&c.NoThink, "nothink", false, "start assistant turns with </think> for direct non-thinking replies")
+	fs.Var(&c.ThinkLevel, "think-level", "V4.1 thinking effort, 1..100; 0 disables thinking")
 
 	// Diagnostics.
 	fs.BoolVar(&c.Inspect, "inspect", false, "load the model and print a summary only")
@@ -191,6 +195,8 @@ func (c *CLIConfig) SelectBackend() ds4.Backend {
 // ThinkMode resolves the thinking mode from --think/--think-max/--nothink.
 func (c *CLIConfig) ThinkMode() ds4.ThinkMode {
 	switch {
+	case c.ThinkLevel.Given:
+		return ds4.ThinkLevel(c.ThinkLevel.Level)
 	case c.NoThink:
 		return ds4.ThinkNone
 	case c.ThinkMax:
@@ -227,9 +233,10 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
 	switch {
-	case ok && model.GLM:
+	case ok && (model.GLM || model.DeepSeek41):
 		// libds4 rejects an external --mtp support model for GLM. GLM 5.2's
 		// optional next-token predictor is embedded in the base GGUF instead.
+		// DSpark and external MTP are not implemented for V4.1 either.
 		mtpPath = ""
 	case ok && model.DSpark != "":
 		// This checkpoint pins its own DSpark drafter; libds4 rejects every
@@ -295,6 +302,35 @@ func (c *ServerConfig) dsparkEnabled() bool {
 func (c *ServerConfig) dsparkConfidence() float32 {
 	return checkDsparkConfidence(c.DsparkConfidence)
 }
+
+// ThinkLevelFlag is the --think-level value: a V4.1 reasoning effort from 0
+// to 100, recorded as set only when the flag was given so a zero-value config
+// keeps the named default.
+type ThinkLevelFlag struct {
+	Level int
+	Given bool
+}
+
+// String implements pflag.Value.
+func (f *ThinkLevelFlag) String() string {
+	if !f.Given {
+		return ""
+	}
+	return fmt.Sprint(f.Level)
+}
+
+// Set implements pflag.Value.
+func (f *ThinkLevelFlag) Set(text string) error {
+	mode, err := ds4.ParseThinkLevel(text)
+	if err != nil {
+		return errors.New("--think-level requires an integer from 0 to 100")
+	}
+	f.Level, f.Given = mode.Level(), true
+	return nil
+}
+
+// Type implements pflag.Value.
+func (f *ThinkLevelFlag) Type() string { return "int" }
 
 // checkPower enforces upstream's 1..100 range for --power; 0 means unset.
 func checkPower(v int) int {
@@ -436,6 +472,7 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	// Model and runtime.
 	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path or installed catalog alias (see: ds4go model list)")
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
+	fs.StringVar(&c.MTP, "mtp-model", models.DefaultMTPPath(), "external MTP or DSpark support GGUF (same as --mtp)")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
 	fs.BoolVar(&c.Dspark, "dspark", false, "enable experimental DSpark runtime speculative decoding (needs the DSpark support GGUF via --mtp)")
@@ -523,9 +560,9 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
 	switch {
-	case ok && model.GLM:
+	case ok && (model.GLM || model.DeepSeek41):
 		// libds4 rejects an external --mtp support model for GLM; its
-		// predictor is embedded in the base GGUF.
+		// predictor is embedded in the base GGUF. V4.1 has no MTP or DSpark.
 		mtpPath = ""
 	case ok && model.DSpark != "":
 		// This checkpoint pins its own DSpark drafter and libds4 rejects

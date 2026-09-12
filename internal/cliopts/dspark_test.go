@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 
 	"github.com/spf13/pflag"
 )
@@ -136,5 +137,59 @@ func TestCLIOnlyPromptAndDiagnosticFlagsParse(t *testing.T) {
 	scfg := RegisterServer(sfs)
 	if err := sfs.Parse([]string{"--chdir", "/srv/ds4"}); err != nil || scfg.Chdir != "/srv/ds4" {
 		t.Errorf("--chdir: err=%v chdir=%q", err, scfg.Chdir)
+	}
+}
+
+// --think-level N (V4.1 effort) selects ThinkLevel(N); --think / --think-max
+// keep their meaning; --mtp-model is upstream's other spelling of --mtp.
+func TestThinkLevelAndMTPModelFlags(t *testing.T) {
+	fs := pflag.NewFlagSet("cli", pflag.ContinueOnError)
+	cfg := RegisterCLI(fs)
+	if err := fs.Parse([]string{"--think-level", "25", "--mtp-model", "/m/draft.gguf"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ThinkMode(); got != ds4.ThinkLevel(25) {
+		t.Errorf("ThinkMode() = %d, want ThinkLevel(25)", got)
+	}
+	if got := cfg.GenerateOptions().ThinkMode; got != ds4.ThinkLevel(25) {
+		t.Errorf("GenerateOptions().ThinkMode = %d, want ThinkLevel(25)", got)
+	}
+	if cfg.MTP != "/m/draft.gguf" {
+		t.Errorf("--mtp-model did not set MTP: %q", cfg.MTP)
+	}
+	zero := RegisterCLI(pflag.NewFlagSet("cli", pflag.ContinueOnError))
+	if got := zero.ThinkMode(); got != ds4.ThinkHigh {
+		t.Errorf("default ThinkMode() = %d, want ThinkHigh", got)
+	}
+	fs2 := pflag.NewFlagSet("cli", pflag.ContinueOnError)
+	cfg2 := RegisterCLI(fs2)
+	if err := fs2.Parse([]string{"--think-level", "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg2.ThinkMode(); got != ds4.ThinkLevel(0) {
+		t.Errorf("--think-level 0: ThinkMode() = %d, want ThinkLevel(0)", got)
+	}
+	sfs := pflag.NewFlagSet("server", pflag.ContinueOnError)
+	scfg := RegisterServer(sfs)
+	if err := sfs.Parse([]string{"--mtp-model", "/m/draft.gguf"}); err != nil || scfg.MTP != "/m/draft.gguf" {
+		t.Errorf("server --mtp-model: err=%v MTP=%q", err, scfg.MTP)
+	}
+}
+
+// DSpark and external MTP are not implemented for V4.1, so a V4.1 catalog
+// model drops --mtp the way GLM does.
+func TestEngineOptionsSuppressExternalMTPForDeepSeek41(t *testing.T) {
+	v41, ok := models.Lookup("v41-q2")
+	if !ok {
+		t.Fatal("missing v41-q2 catalog entry")
+	}
+	const mtp = "/models/deepseek-mtp.gguf"
+	cli := CLIConfig{Model: v41.FileName, MTP: mtp}
+	server := ServerConfig{Model: v41.FileName, MTP: mtp}
+	if got := cli.EngineOptions().MTPPath; got != "" {
+		t.Errorf("CLI MTPPath = %q, want suppressed", got)
+	}
+	if got := server.EngineOptions().MTPPath; got != "" {
+		t.Errorf("server MTPPath = %q, want suppressed", got)
 	}
 }

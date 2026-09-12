@@ -188,6 +188,11 @@ type rawSymbols struct {
 	ds4TokenAssistant                   func(e uintptr) int32
 	ds4EngineIsGLMDSA                   func(e uintptr) bool
 	ds4GLMReasoningEffortText           func(mode ThinkMode) string
+	ds4EngineIsDeepseek41               func(e uintptr) bool
+	ds4Deepseek41ReasoningEffortText    func(mode ThinkMode) string
+	ds4ChatAppendThinkPrefix            func(e uintptr, tokens *cTokens, mode ThinkMode)
+	ds4ThinkModeLevel                   func(mode ThinkMode) int32
+	ds4ThinkModeParseLevel              func(text string, out *ThinkMode) bool
 	ds4EnginePrefillChunk               func(e uintptr) uint32
 	ds4SessionPrefillCap                func(s uintptr) int32
 	ds4SessionCreate                    func(out *uintptr, e uintptr, ctxSize int32) int32

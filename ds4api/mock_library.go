@@ -84,6 +84,7 @@ const (
 type MockControls struct {
 	mu              sync.RWMutex
 	glm             bool
+	deepseek41      bool
 	vision          bool
 	multimodalFail  int // image index at which the mock multimodal append fails; -1 never
 	imatrix         *IMatrixCall
@@ -156,6 +157,21 @@ func (c *MockControls) SetVision(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.vision = enabled
+}
+
+// SetDeepSeek41 makes the mock engine report DeepSeek V4.1 Flash
+// (ds4_engine_is_deepseek41): thinking becomes an effort level and the think
+// prefix is a "Reasoning Effort" system line.
+func (c *MockControls) SetDeepSeek41(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deepseek41 = enabled
+}
+
+func (c *MockControls) isDeepSeek41() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.deepseek41
 }
 
 func (c *MockControls) hasVision() bool {
@@ -268,7 +284,16 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r.ds4EngineClose = mockEngineClose
 	r.ds4EngineSummary = func(e uintptr) {}
 	r.ds4BackendName = func(backend Backend) string { return "mock" }
-	r.ds4ThinkModeEnabled = func(mode ThinkMode) bool { return true }
+	r.ds4ThinkModeEnabled = func(mode ThinkMode) bool { return mockThinkModeEnabled(mode) }
+	r.ds4ThinkModeLevel = func(mode ThinkMode) int32 { return int32(mode.Level()) }
+	r.ds4ThinkModeParseLevel = func(text string, out *ThinkMode) bool {
+		mode, err := ParseThinkLevel(text)
+		if err != nil {
+			return false
+		}
+		*out = mode
+		return true
+	}
 	r.ds4ThinkModeName = func(mode ThinkMode) string { return "think" }
 	r.ds4ThinkMaxPrefix = func() string { return "<think_max>" }
 	r.ds4ThinkMaxMinContext = func() uint32 { return 32768 }
@@ -333,6 +358,35 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	// GLM DSA. Defaults model a DeepSeek engine (not GLM, EOS-only stops, no
 	// thinking-control markers); tests opt into GLM behaviour via MockControls.
 	r.ds4EngineIsGLMDSA = func(e uintptr) bool { return ctl.isGLM() }
+	r.ds4EngineIsDeepseek41 = func(e uintptr) bool { return ctl.isDeepSeek41() }
+	r.ds4Deepseek41ReasoningEffortText = func(mode ThinkMode) string {
+		level := mode.Level()
+		switch mode {
+		case ThinkHigh:
+			level = 75
+		case ThinkMax:
+			level = 100
+		}
+		if level <= 0 {
+			return ""
+		}
+		return fmt.Sprintf("Reasoning Effort: %d (range 1-100, the higher the value, the more thorough the reasoning)\n\n", level)
+	}
+	// Mirrors upstream chat_push_think_prefix: the family picks the form.
+	r.ds4ChatAppendThinkPrefix = func(e uintptr, tokens *cTokens, mode ThinkMode) {
+		switch {
+		case ctl.isGLM():
+			if effort := r.ds4GLMReasoningEffortText(mode); effort != "" {
+				mockChatAppendMessage(e, tokens, "system", effort)
+			}
+		case ctl.isDeepSeek41():
+			if effort := r.ds4Deepseek41ReasoningEffortText(mode); effort != "" {
+				mockChatAppendMessage(e, tokens, "system", effort)
+			}
+		case mode == ThinkMax:
+			r.ds4ChatAppendMaxEffortPrefix(e, tokens)
+		}
+	}
 	r.ds4GLMReasoningEffortText = func(mode ThinkMode) string {
 		switch mode {
 		case ThinkHigh:
@@ -846,7 +900,7 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 // mockThinkModeEnabled mirrors ds4_think_mode_enabled for the mock: thinking
 // markers are active for every mode except ThinkNone.
 func mockThinkModeEnabled(mode ThinkMode) bool {
-	return mode != ThinkNone
+	return mode != ThinkNone && mode.Level() != 0
 }
 
 // ---------------------------------------------------------------------------

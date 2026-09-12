@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+// ModelPart is one published piece of a split GGUF (see Model.Parts).
+type ModelPart struct {
+	FileName string  `json:"fileName"`
+	SizeGB   float64 `json:"sizeGB"`
+	// Bytes is the part's exact published size; the joiner truncates an
+	// interrupted join back to the first part's boundary with it.
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
 // Model describes a curated ds4 GGUF model.
 type Model struct {
 	Alias          string  `json:"alias"`
@@ -29,11 +39,18 @@ type Model struct {
 	Encoder string `json:"encoder,omitempty"`
 	// DSpark is the catalog alias of the DSpark support model this checkpoint
 	// requires, when it is not the default one (Vision-Exp has its own).
-	DSpark      string `json:"dspark,omitempty"`
-	Imatrix     bool   `json:"imatrix"`
-	Legacy      bool   `json:"legacy"`
-	Optional    bool   `json:"optional"`
-	Distributed bool   `json:"distributed"`
+	DSpark string `json:"dspark,omitempty"`
+	// DeepSeek41 marks a DeepSeek V4.1 Flash checkpoint: Metal-only upstream,
+	// no DSpark or external MTP, thinking as an effort level (--think-level).
+	DeepSeek41 bool `json:"deepseek41,omitempty"`
+	// Parts lists the pieces a GGUF is published as when Hugging Face's single
+	// file limit splits it. The downloader fetches each part, joins them into
+	// FileName, and verifies the joined file against SHA256.
+	Parts       []ModelPart `json:"parts,omitempty"`
+	Imatrix     bool        `json:"imatrix"`
+	Legacy      bool        `json:"legacy"`
+	Optional    bool        `json:"optional"`
+	Distributed bool        `json:"distributed"`
 	// DistributedRole and LayerRange describe a distributed split half. LayerRange
 	// is in upstream ds4 --layers form (e.g. "0:30", "31:output"); DistributedRole
 	// is "coordinator" or "worker". Both empty for non-distributed models.
@@ -62,6 +79,10 @@ const (
 	glm53FlashRepo = "antirez/glm-5.3-flash-gguf"
 	glm53FullRepo  = "antirez/glm-5.3-gguf"
 
+	// ds41Repo hosts DeepSeek V4.1 Flash (ds4's ds41f-* targets): a different
+	// model family from V4 Flash with its own GGUFs, tokenizer, and encoder.
+	ds41Repo = "antirez/deepseek-v4.1-flash-gguf"
+
 	// DefaultModelSymlink is the name of the active-model symlink in ModelsDir.
 	DefaultModelSymlink = "ds4flash.gguf"
 
@@ -81,11 +102,23 @@ var hfRepoBase = "https://huggingface.co/" + hfRepo + "/resolve/main"
 // an explicit Repo use hfRepoBase, which tests override to point at a local
 // server.
 func modelDownloadURL(m Model) string {
-	base := hfRepoBase
-	if m.Repo != "" && m.Repo != hfRepo {
-		base = "https://huggingface.co/" + m.Repo + "/resolve/main"
+	return repoDownloadBase(m.Repo) + "/" + m.FileName
+}
+
+// partDownloadURL returns the resolve URL of one piece of a split model.
+func partDownloadURL(m Model, part ModelPart) string {
+	return repoDownloadBase(m.Repo) + "/" + part.FileName
+}
+
+// repoDownloadBase derives a repo's resolve base from hfRepoBase by swapping
+// the default repo name, so a test that points hfRepoBase at a local server
+// captures every repo's downloads.
+func repoDownloadBase(repo string) string {
+	base := strings.TrimRight(hfRepoBase, "/")
+	if repo != "" && repo != hfRepo {
+		base = strings.Replace(base, hfRepo, repo, 1)
 	}
-	return strings.TrimRight(base, "/") + "/" + m.FileName
+	return base
 }
 
 var curated = []Model{
@@ -261,6 +294,59 @@ var curated = []Model{
 		SHA256:         "0807a67fd9ce5874bfc60d8d2461f50e11657e3dd94913d3473f85aa679bc877",
 		Optional:       true,
 		Notes:          "DSpark drafter for the Vision-Exp checkpoints only; the 0731 drafter is rejected",
+	},
+	{
+		Alias:          "v41-q2",
+		FileName:       "DeepSeek-V4.1-Flash-Q2.gguf",
+		Repo:           ds41Repo,
+		SizeGB:         340.6,
+		RecommendedRAM: "128 GB + SSD streaming; Metal only",
+		SHA256:         "1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42",
+		DeepSeek41:     true,
+		Vision:         true,
+		Encoder:        "v41-vision",
+		Imatrix:        true,
+		Notes:          "DeepSeek V4.1 Flash q2 (152 GiB main weights + 189 GiB on-disk Engram tables); one 128 GB Mac with --ssd-streaming, or two over RDMA; keep it on a fast local SSD",
+	},
+	{
+		Alias:          "v41-q4",
+		FileName:       "DeepSeek-V4.1-Flash-Q4.gguf",
+		Repo:           ds41Repo,
+		SizeGB:         483.0,
+		RecommendedRAM: ">=512 GB, or SSD streaming; Metal only",
+		SHA256:         "a5e2e2c3ada4b2e98d9f9e4b50f6d9c2a12c2c96f5da165c07e13aff9264984e",
+		DeepSeek41:     true,
+		Vision:         true,
+		Encoder:        "v41-vision",
+		Imatrix:        true,
+		Parts: []ModelPart{
+			{FileName: "DeepSeek-V4.1-Flash-Q4.gguf.part1", SizeGB: 447.0, Bytes: 480000000000, SHA256: "6442b1f9224079662c02003c0ef9ef6be6e2aff509510f681dab9e6cc41df246"},
+			{FileName: "DeepSeek-V4.1-Flash-Q4.gguf.part2", SizeGB: 35.9, Bytes: 38596067328, SHA256: "7c3e10646c918eeaffbc39305a75ec96117450262c61454ff194cef00d7617f0"},
+		},
+		Notes: "DeepSeek V4.1 Flash q4 (294 GiB main weights); published in two parts that are joined after download, allow 37 GiB extra while joining",
+	},
+	{
+		Alias:          "v41-vision",
+		FileName:       "DeepSeek-V4.1-Flash-Vision.gguf",
+		Repo:           ds41Repo,
+		SizeGB:         0.9,
+		RecommendedRAM: "optional",
+		SHA256:         "cc283f032b3e8b8d78aeb5fccaa14e97b859b0c53aae3cd6bffa690ddf0e9e15",
+		DeepSeek41:     true,
+		Optional:       true,
+		Notes:          "vision encoder for DeepSeek V4.1 Flash; V4 encoders do not work with V4.1",
+	},
+	{
+		Alias:          "glm53-fp8",
+		FileName:       "GLM-5.3-Flash-FP8.gguf",
+		Repo:           glm53FlashRepo,
+		SizeGB:         304.7,
+		RecommendedRAM: ">=384 GB",
+		SHA256:         "59275e79a5246835226230616b3865fb599c661f242c38316b1cf82869bd14c9",
+		GLM:            true,
+		Vision:         true,
+		Encoder:        "glm53-vision",
+		Notes:          "GLM 5.3 Flash FP8, the unquantized reference",
 	},
 	{
 		Alias:          "glm53-vision",

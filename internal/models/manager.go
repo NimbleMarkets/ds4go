@@ -204,6 +204,9 @@ func (m *Manager) Download(ctx context.Context, alias, token string, force bool)
 		return Model{}, err
 	}
 	out := filepath.Join(m.ModelsDir, model.FileName)
+	if len(model.Parts) > 0 {
+		return m.downloadSplit(ctx, model, token, force)
+	}
 	if st, err := os.Stat(out); err == nil && st.Size() > 0 {
 		if model.SHA256 != "" {
 			if meta, err := m.remoteMetadata(ctx, modelDownloadURL(model), token); err == nil {
@@ -258,19 +261,23 @@ func (m *Manager) Download(ctx context.Context, alias, token string, force bool)
 	}
 	defer stateLock.Close()
 
-	// The first inferenceable model becomes the default chat model. Adjunct
-	// models (Optional, e.g. mtp) and distributed splits (which run
-	// across hosts via --layers) are never eligible, and an existing default
-	// is never overridden by a later download.
+	return m.recordDownloadLocked(model, sha)
+}
+
+// recordDownloadLocked finishes a download under the state lock: the first
+// inferenceable model becomes the default chat model (adjunct models such as
+// mtp and distributed splits are never eligible, and an existing default is
+// never overridden), and the verified hash is saved to the config.
+func (m *Manager) recordDownloadLocked(model Model, sha string) (Model, error) {
 	if !model.Optional && !model.Distributed && !m.hasActiveDefaultLocked() {
-		if err := m.setLocked(alias); err != nil {
+		if err := m.setLocked(model.Alias); err != nil {
 			return Model{}, err
 		}
 	}
 	if sha != "" {
 		if models, cfg, err := m.List(); err == nil {
 			for i := range models {
-				if models[i].Alias == alias {
+				if models[i].Alias == model.Alias {
 					models[i].SHA256 = sha
 				}
 			}
@@ -400,6 +407,12 @@ func (m *Manager) DownloadDryRun(ctx context.Context, alias, token string) (Mode
 		fmt.Fprintf(m.Out, "  Catalog SHA: %s\n", model.SHA256)
 	}
 
+	for _, part := range model.Parts {
+		fmt.Fprintf(m.Out, "  Part:        %s (%s)\n", partDownloadURL(model, part), formatBytes(part.Bytes))
+	}
+	if len(model.Parts) > 0 {
+		fmt.Fprintf(m.Out, "  Join:        %d parts into %s, needing %s extra while joining\n", len(model.Parts), model.FileName, formatBytes(splitJoinScratchBytes(model)))
+	}
 	switch {
 	case m.installed(model):
 		fmt.Fprintln(m.Out, "  Local state: already installed (download would be skipped)")
@@ -589,6 +602,9 @@ func (m *Manager) installed(model Model) bool {
 }
 
 func (m *Manager) partial(model Model) (bool, int64) {
+	if len(model.Parts) > 0 {
+		return m.partialSplit(model)
+	}
 	st, err := os.Stat(filepath.Join(m.ModelsDir, model.FileName+".part"))
 	if err != nil || st.IsDir() || st.Size() <= 0 {
 		return false, 0

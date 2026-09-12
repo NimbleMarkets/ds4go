@@ -101,6 +101,14 @@ ds4go prompt -m glm53-q2 --image photo.png -p "What is this?"
 after another, checking the combined size against free space before the
 first byte moves.
 
+DeepSeek V4.1 Flash (`v41-q2`, `v41-q4`, encoder `v41-vision`) is a separate
+model family: Metal-only upstream, no DSpark or external MTP, and thinking as
+a numeric reasoning effort. `--think-level 25` (or `/think 25` in chat) sets
+1 to 100, 0 disables thinking, `--think` is 75 and `--think-max` 100. Q2 runs
+on one 128 GB Mac with `--ssd-streaming`; Q4 is published in two parts that
+`model download` fetches, joins, and verifies (allow 37 GiB extra while
+joining). GLM 5.3 Flash FP8 is `glm53-fp8`.
+
 Vision here means image understanding: the encoder turns a PNG or JPEG into
 embedding rows that are spliced into the prompt, and the model answers in
 text. Nothing generates or edits images.

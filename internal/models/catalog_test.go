@@ -355,3 +355,59 @@ func TestCuratedVisionModels(t *testing.T) {
 		}
 	}
 }
+
+// DeepSeek V4.1 Flash (antirez/deepseek-v4.1-flash-gguf) mirrors upstream
+// download_model.sh's ds41f-q2, ds41f-q4, and ds41f-vision targets; the Q4
+// GGUF is published as two parts the downloader joins. GLM 5.3 Flash FP8 is
+// upstream's glm53-fp8. Sizes are GiB and hashes are the LFS sha256 from the
+// Hugging Face tree; the joined Q4 identity comes from the upstream script.
+func TestCuratedDeepSeek41AndFP8Models(t *testing.T) {
+	type part struct {
+		file   string
+		sizeGB float64
+		bytes  int64
+		sha    string
+	}
+	want := map[string]struct {
+		file, repo, encoder string
+		sizeGB              float64
+		sha                 string
+		v41, glm, vision    bool
+		optional            bool
+		parts               []part
+	}{
+		"v41-q2":     {"DeepSeek-V4.1-Flash-Q2.gguf", ds41Repo, "v41-vision", 340.6, "1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42", true, false, true, false, nil},
+		"v41-q4":     {"DeepSeek-V4.1-Flash-Q4.gguf", ds41Repo, "v41-vision", 483.0, "a5e2e2c3ada4b2e98d9f9e4b50f6d9c2a12c2c96f5da165c07e13aff9264984e", true, false, true, false, []part{{"DeepSeek-V4.1-Flash-Q4.gguf.part1", 447.0, 480000000000, "6442b1f9224079662c02003c0ef9ef6be6e2aff509510f681dab9e6cc41df246"}, {"DeepSeek-V4.1-Flash-Q4.gguf.part2", 35.9, 38596067328, "7c3e10646c918eeaffbc39305a75ec96117450262c61454ff194cef00d7617f0"}}},
+		"v41-vision": {"DeepSeek-V4.1-Flash-Vision.gguf", ds41Repo, "", 0.9, "cc283f032b3e8b8d78aeb5fccaa14e97b859b0c53aae3cd6bffa690ddf0e9e15", true, false, false, true, nil},
+		"glm53-fp8":  {"GLM-5.3-Flash-FP8.gguf", glm53FlashRepo, "glm53-vision", 304.7, "59275e79a5246835226230616b3865fb599c661f242c38316b1cf82869bd14c9", false, true, true, false, nil},
+	}
+	found := map[string]bool{}
+	for _, m := range Curated() {
+		w, ok := want[m.Alias]
+		if !ok {
+			continue
+		}
+		found[m.Alias] = true
+		if m.FileName != w.file || m.Repo != w.repo || m.SizeGB != w.sizeGB || m.SHA256 != w.sha || m.Encoder != w.encoder ||
+			m.DeepSeek41 != w.v41 || m.GLM != w.glm || m.Vision != w.vision || m.Optional != w.optional {
+			t.Errorf("%s = %+v, want %+v", m.Alias, m, w)
+		}
+		if m.DSpark != "" {
+			t.Errorf("%s pins DSpark %q; DSpark is not implemented for V4.1", m.Alias, m.DSpark)
+		}
+		if len(m.Parts) != len(w.parts) {
+			t.Errorf("%s has %d parts, want %d", m.Alias, len(m.Parts), len(w.parts))
+			continue
+		}
+		for i, p := range w.parts {
+			if m.Parts[i].FileName != p.file || m.Parts[i].SizeGB != p.sizeGB || m.Parts[i].Bytes != p.bytes || m.Parts[i].SHA256 != p.sha {
+				t.Errorf("%s part %d = %+v, want %+v", m.Alias, i, m.Parts[i], p)
+			}
+		}
+	}
+	for alias := range want {
+		if !found[alias] {
+			t.Errorf("curated catalog is missing %q", alias)
+		}
+	}
+}

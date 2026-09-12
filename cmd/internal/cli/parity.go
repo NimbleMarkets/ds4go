@@ -59,12 +59,7 @@ func encodePrompt(engine *ds4.Engine, cfg *cliopts.CLIConfig, promptText string)
 	}
 	steps := []func() error{
 		func() error { return engine.ChatBegin(tokens) },
-		func() error {
-			if think == ds4.ThinkMax && !engine.IsGLMDSA() {
-				return engine.ChatAppendMaxEffortPrefix(tokens)
-			}
-			return nil
-		},
+		func() error { return engine.ChatAppendThinkPrefix(tokens, think) },
 		func() error {
 			if cfg.System == "" {
 				return nil
@@ -82,6 +77,22 @@ func encodePrompt(engine *ds4.Engine, cfg *cliopts.CLIConfig, promptText string)
 		}
 	}
 	return tokens, nil
+}
+
+// parseThinkCommand handles "/think [N]" as upstream's REPL does: bare /think
+// is normal thinking; a level is V4.1's reasoning effort, 0 to 100.
+func parseThinkCommand(engine *ds4.Engine, arg string) (ds4.ThinkMode, error) {
+	if arg == "" {
+		return ds4.ThinkHigh, nil
+	}
+	if !engine.IsDeepSeek41() {
+		return 0, errors.New("/think N requires V4.1 and a level from 0 to 100")
+	}
+	mode, err := ds4api.ParseThinkLevel(arg)
+	if err != nil {
+		return 0, errors.New("/think N requires V4.1 and a level from 0 to 100")
+	}
+	return mode, nil
 }
 
 // prefixHistory turns a --prefix-file into the opening chat history.

@@ -42,6 +42,34 @@ type chatRequest struct {
 	Tools               []chatTool         `json:"tools,omitempty"`
 	MaxTokens           int                `json:"max_tokens"`
 	MaxCompletionTokens int                `json:"max_completion_tokens"`
+	// ReasoningEffort follows ds4-server: "max", the OpenAI effort names
+	// ("xhigh" .. "minimal", all ThinkHigh here), "none", or null.
+	ReasoningEffort json.RawMessage `json:"reasoning_effort,omitempty"`
+}
+
+// thinkModeForRequest maps reasoning_effort to a think mode the way upstream
+// ds4-server's parse_reasoning_effort_name does; absent or null keeps the
+// server default.
+func thinkModeForRequest(req chatRequest) (ds4.ThinkMode, error) {
+	raw := strings.TrimSpace(string(req.ReasoningEffort))
+	if raw == "" || raw == "null" {
+		return serverThinkMode, nil
+	}
+	var name string
+	if err := json.Unmarshal(req.ReasoningEffort, &name); err != nil {
+		return 0, fmt.Errorf("reasoning_effort must be a string: %w", err)
+	}
+	switch name {
+	case "max":
+		return ds4.ThinkMax, nil
+	case "xhigh", "high", "medium", "low", "minimal":
+		// ds4 only exposes HIGH and MAX above zero, so every named effort
+		// collapses to HIGH; "none" is the way to disable thinking.
+		return ds4.ThinkHigh, nil
+	case "none":
+		return ds4.ThinkNone, nil
+	}
+	return 0, fmt.Errorf("unknown reasoning_effort %q", name)
 }
 
 type chatMessage struct {
@@ -170,7 +198,12 @@ func run(cfg *cliopts.ServerConfig) error {
 			return
 		}
 		defer session.Close()
-		prompt, err := buildPrompt(engine, images, req)
+		think, err := thinkModeForRequest(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		prompt, err := buildPrompt(engine, images, req, think)
 		if err != nil {
 			status := http.StatusInternalServerError
 			var ce clientError
@@ -188,7 +221,7 @@ func run(cfg *cliopts.ServerConfig) error {
 			return
 		}
 		var text string
-		_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, generateOptions(maxTokens, r.Context(), func(token int) {
+		_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, generateOptions(maxTokens, think, r.Context(), func(token int) {
 			if part, err := engine.TokenText(token); err == nil {
 				text += part
 			}
@@ -238,23 +271,24 @@ func run(cfg *cliopts.ServerConfig) error {
 	return newHTTPServer(addr, mux).ListenAndServe()
 }
 
-// serverThinkMode is the think mode prompts are rendered with. Generation
-// must stop-detect under the same mode: with a mismatch the closing think
-// marker ends the completion and the client only ever sees empty content.
+// serverThinkMode is the think mode prompts are rendered with unless the
+// request sets reasoning_effort. Generation must stop-detect under the same
+// mode: with a mismatch the closing think marker ends the completion and the
+// client only ever sees empty content.
 const serverThinkMode = ds4.ThinkHigh
 
 // generateOptions builds the per-request generation options.
-func generateOptions(maxTokens int, ctx context.Context, onToken func(int)) ds4.GenerateOptions {
+func generateOptions(maxTokens int, think ds4.ThinkMode, ctx context.Context, onToken func(int)) ds4.GenerateOptions {
 	return ds4.GenerateOptions{
 		MaxTokens: maxTokens,
 		StopOnEOS: true,
-		ThinkMode: serverThinkMode,
+		ThinkMode: think,
 		Context:   ctx,
 		OnToken:   onToken,
 	}
 }
 
-func buildPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, req chatRequest) (*ds4.Prompt, error) {
+func buildPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, req chatRequest, think ds4.ThinkMode) (*ds4.Prompt, error) {
 	tools, err := convertTools(req.Tools)
 	if err != nil {
 		return nil, clientError{err}
@@ -266,7 +300,7 @@ func buildPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, req chatRequest) 
 	if images == nil && historyHasImages(history) {
 		return nil, clientError{errors.New("request contains images but no vision encoder is loaded; start with --vision ENCODER.gguf")}
 	}
-	return ds4.BuildChatPromptMultimodal(engine, images, system, tools, history, serverThinkMode)
+	return ds4.BuildChatPromptMultimodal(engine, images, system, tools, history, think)
 }
 
 func historyHasImages(history []ds4.ChatMessage) bool {

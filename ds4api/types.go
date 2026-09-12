@@ -4,7 +4,10 @@
 // library at runtime through purego and wraps the public API from ds4.h.
 package ds4api
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Sampling defaults mirror the DS4_DEFAULT_* macros in ds4.h. The default
 // sampler keeps top-p at 1.0 and uses min-p as the active filter.
@@ -41,6 +44,46 @@ const (
 	// may downgrade it to ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax
 )
+
+// ThinkLevelBase is upstream's DS4_THINK_LEVEL_BASE: explicit numeric effort
+// (DeepSeek V4.1) is carried as ThinkLevelBase + level, outside the named
+// modes, so the ThinkMode type stays ABI-compatible.
+const ThinkLevelBase ThinkMode = 1000
+
+// ThinkLevel returns the ThinkMode for an explicit V4.1 reasoning effort, 0
+// (thinking off) to 100. It mirrors ds4_think_mode_parse_level's encoding
+// without needing a loaded library; ParseThinkLevel validates text input.
+func ThinkLevel(level int) ThinkMode {
+	return ThinkLevelBase + ThinkMode(level)
+}
+
+// Level returns the explicit effort a ThinkMode carries, or -1 for the named
+// modes (ds4_think_mode_level).
+func (m ThinkMode) Level() int {
+	if m < ThinkLevelBase || m > ThinkLevelBase+100 {
+		return -1
+	}
+	return int(m - ThinkLevelBase)
+}
+
+// ParseThinkLevel parses "--think-level" text the way ds4_think_mode_parse_level
+// does: decimal digits only, 0 to 100.
+func ParseThinkLevel(text string) (ThinkMode, error) {
+	if text == "" {
+		return 0, errors.New("ds4: think level must be an integer from 0 to 100")
+	}
+	level := 0
+	for _, c := range text {
+		if c < '0' || c > '9' || level > 100 {
+			return 0, fmt.Errorf("ds4: think level %q must be an integer from 0 to 100", text)
+		}
+		level = level*10 + int(c-'0')
+	}
+	if level > 100 {
+		return 0, fmt.Errorf("ds4: think level %q must be an integer from 0 to 100", text)
+	}
+	return ThinkLevel(level), nil
+}
 
 // LogType is the category used by ds4_log.
 type LogType int32

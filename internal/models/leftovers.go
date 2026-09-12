@@ -60,7 +60,11 @@ func (m *Manager) Leftovers() ([]Leftover, error) {
 		var base string
 		switch {
 		case strings.HasSuffix(name, ".part"):
-			kind, base = LeftoverPartial, strings.TrimSuffix(name, ".part")
+			kind, base = LeftoverPartial, splitPartBase(strings.TrimSuffix(name, ".part"))
+		case strings.HasSuffix(name, ".assembling"):
+			kind, base = LeftoverPartial, strings.TrimSuffix(name, ".assembling")
+		case splitPartPattern.MatchString(name):
+			kind, base = LeftoverPartial, splitPartBase(name)
 		case strings.HasSuffix(name, ".lock"):
 			kind, base = LeftoverLock, strings.TrimSuffix(name, ".lock")
 		case strings.Contains(name, ".bad-"):
@@ -98,7 +102,7 @@ func (m *Manager) RemoveLeftovers(items []Leftover) ([]Leftover, error) {
 		}
 		lockPath := item.Path
 		if item.Kind == LeftoverPartial {
-			lockPath = strings.TrimSuffix(item.Path, ".part") + ".lock"
+			lockPath = splitPartBase(strings.TrimSuffix(strings.TrimSuffix(item.Path, ".part"), ".assembling")) + ".lock"
 		}
 		if item.Kind != LeftoverQuarantined {
 			lock, err := TryLock(lockPath)

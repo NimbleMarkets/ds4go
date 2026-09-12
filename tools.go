@@ -353,23 +353,12 @@ type promptRenderOptions struct {
 
 type chatMessageRenderer func(ChatMessage, turnRenderInfo) (renderedChatMessage, error)
 
-// appendThinkPrefix emits the model-family reasoning-effort prefix, mirroring
-// ds4's chat_push_think_prefix. GLM DSA carries effort as a system message at
-// every enabled think mode, where DeepSeek uses a plain prompt prefix and only
-// at ThinkMax. It must be appended before the caller's own system message, as
-// ds4_encode_chat_prompt does.
+// appendThinkPrefix emits the model-family reasoning-effort prefix through
+// ds4_chat_append_think_prefix: GLM and DeepSeek V4.1 carry effort as a
+// system line, V4 uses its max-effort prefix at ThinkMax. It must be appended
+// before the caller's own system message, as ds4_encode_chat_prompt does.
 func appendThinkPrefix(engine *Engine, tokens *Tokens, think ThinkMode) error {
-	if engine.IsGLMDSA() {
-		effort := engine.GLMReasoningEffortText(think)
-		if effort == "" {
-			return nil
-		}
-		return engine.ChatAppendMessage(tokens, "system", effort)
-	}
-	if think == ThinkMax {
-		return engine.ChatAppendMaxEffortPrefix(tokens)
-	}
-	return nil
+	return engine.ChatAppendThinkPrefix(tokens, think)
 }
 
 func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools []dsml.Tool, history []ChatMessage, think ThinkMode, render chatMessageRenderer) (*Prompt, error) {
@@ -405,7 +394,7 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 		}
 	}
 	rendered, err := renderPromptMessages(history, render, promptRenderOptions{
-		thinking:    think == ThinkHigh || think == ThinkMax,
+		thinking:    ds4api.ThinkModeEnabled(think),
 		toolContext: len(tools) > 0 || historyUsesToolContext(history),
 		syntax:      syntax,
 	})

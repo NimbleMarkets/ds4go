@@ -133,7 +133,7 @@ func TestBuildPromptWithImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer plain.Close()
-	if _, err := buildPrompt(plain, nil, req); err == nil || !strings.Contains(err.Error(), "--vision") {
+	if _, err := buildPrompt(plain, nil, req, serverThinkMode); err == nil || !strings.Contains(err.Error(), "--vision") {
 		t.Errorf("text-only engine: err = %v, want a --vision hint", err)
 	}
 
@@ -145,7 +145,7 @@ func TestBuildPromptWithImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	prompt, err := buildPrompt(eng, ds4.NewImageEncoder(eng), req)
+	prompt, err := buildPrompt(eng, ds4.NewImageEncoder(eng), req, serverThinkMode)
 	if err != nil {
 		t.Fatalf("buildPrompt: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestGenerateOptionsMatchThePromptThinkMode(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	prompt, err := buildPrompt(eng, nil, req)
+	prompt, err := buildPrompt(eng, nil, req, serverThinkMode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestGenerateOptionsMatchThePromptThinkMode(t *testing.T) {
 		return out
 	}
 	const want = 6
-	first := run(generateOptions(want, nil, nil))
+	first := run(generateOptions(want, serverThinkMode, nil, nil))
 	if len(first) != want {
 		t.Fatalf("baseline generated %d tokens, want %d", len(first), want)
 	}
@@ -199,7 +199,38 @@ func TestGenerateOptionsMatchThePromptThinkMode(t *testing.T) {
 	if got := run(ds4.GenerateOptions{MaxTokens: want, StopOnEOS: true, ThinkMode: ds4.ThinkNone}); len(got) != 1 {
 		t.Fatalf("control: ThinkNone generated %d tokens, want 1 (stop at the marker); the mock is not exercising the rule", len(got))
 	}
-	if got := run(generateOptions(want, nil, nil)); len(got) != want {
+	if got := run(generateOptions(want, serverThinkMode, nil, nil)); len(got) != want {
 		t.Errorf("server options generated %d tokens, want %d: generation stopped at a thinking marker", len(got), want)
+	}
+}
+
+// reasoning_effort follows upstream ds4-server's mapping: "max" is ThinkMax,
+// the OpenAI effort names collapse to ThinkHigh, "none" disables thinking,
+// and absent or null keeps the server default.
+func TestThinkModeForRequestMapsReasoningEffort(t *testing.T) {
+	cases := map[string]ds4.ThinkMode{
+		"": serverThinkMode, "null": serverThinkMode,
+		`"max"`: ds4.ThinkMax, `"xhigh"`: ds4.ThinkHigh, `"high"`: ds4.ThinkHigh, `"medium"`: ds4.ThinkHigh,
+		`"low"`: ds4.ThinkHigh, `"minimal"`: ds4.ThinkHigh, `"none"`: ds4.ThinkNone,
+	}
+	for raw, want := range cases {
+		body := `{"messages":[]`
+		if raw != "" {
+			body += `,"reasoning_effort":` + raw
+		}
+		body += "}"
+		var req chatRequest
+		if err := json.Unmarshal([]byte(body), &req); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		got, err := thinkModeForRequest(req)
+		if err != nil || got != want {
+			t.Errorf("reasoning_effort %s = (%d, %v), want %d", raw, got, err, want)
+		}
+	}
+	var req chatRequest
+	_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":"bogus"}`), &req)
+	if _, err := thinkModeForRequest(req); err == nil {
+		t.Error("unknown reasoning_effort accepted")
 	}
 }

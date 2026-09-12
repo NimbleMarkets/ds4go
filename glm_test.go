@@ -586,3 +586,34 @@ func TestContinueDiscardsDraftAfterCancelInsideSpeculativeBlock(t *testing.T) {
 		t.Error("session left without a valid checkpoint after the cancel rewind")
 	}
 }
+
+// DeepSeek V4.1 carries reasoning effort as a system line, emitted through
+// the unified think prefix: ThinkHigh is 75, ThinkMax 100, a ThinkLevel its
+// own value, and level 0 renders exactly like ThinkNone.
+func TestBuildChatPromptDeepSeek41ReasoningEffort(t *testing.T) {
+	eng, ctl := glmMockEngine(t)
+	ctl.SetDeepSeek41(true)
+	for _, c := range []struct {
+		think ThinkMode
+		want  string
+	}{
+		{ThinkHigh, "Reasoning Effort: 75 (range"},
+		{ThinkMax, "Reasoning Effort: 100 (range"},
+		{ThinkLevel(25), "Reasoning Effort: 25 (range"},
+	} {
+		got := promptTokens(t, eng, "", c.think)
+		if !containsSubsequence(got, renderedTokens(t, eng, c.want)) {
+			t.Errorf("V4.1 prompt at think=%v does not contain %q", c.think, c.want)
+		}
+	}
+	none := promptTokens(t, eng, "sys", ThinkNone)
+	zero := promptTokens(t, eng, "sys", ThinkLevel(0))
+	if len(none) != len(zero) || containsSubsequence(zero, renderedTokens(t, eng, "Reasoning Effort:")) {
+		t.Errorf("level 0 prompt = %v, want the ThinkNone rendering %v", zero, none)
+	}
+	// The V4 path is unchanged: no effort line, max prefix at ThinkMax only.
+	ctl.SetDeepSeek41(false)
+	if containsSubsequence(promptTokens(t, eng, "", ThinkHigh), renderedTokens(t, eng, "Reasoning Effort:")) {
+		t.Error("V4 prompt gained a reasoning-effort line")
+	}
+}

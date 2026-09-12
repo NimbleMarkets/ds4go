@@ -222,6 +222,16 @@ func (l *Library) register() (err error) {
 	if _, err := purego.Dlsym(l.handle, "ds4_glm_reasoning_effort_text"); err == nil {
 		mustRegister(&r.ds4GLMReasoningEffortText, "ds4_glm_reasoning_effort_text")
 	}
+	// DeepSeek V4.1 Flash and think levels (upstream ds4 bd66c40): optional as
+	// a group; Engine.ChatAppendThinkPrefix falls back to the pre-V4.1 prefix
+	// logic when the unified appender is absent.
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_is_deepseek41"); err == nil {
+		mustRegister(&r.ds4EngineIsDeepseek41, "ds4_engine_is_deepseek41")
+		mustRegister(&r.ds4Deepseek41ReasoningEffortText, "ds4_deepseek41_reasoning_effort_text")
+		mustRegister(&r.ds4ChatAppendThinkPrefix, "ds4_chat_append_think_prefix")
+		mustRegister(&r.ds4ThinkModeLevel, "ds4_think_mode_level")
+		mustRegister(&r.ds4ThinkModeParseLevel, "ds4_think_mode_parse_level")
+	}
 	if _, err := purego.Dlsym(l.handle, "ds4_token_is_stop"); err == nil {
 		mustRegister(&r.ds4TokenIsStop, "ds4_token_is_stop")
 	}

@@ -81,6 +81,8 @@ const (
 	// ThinkMax requests maximum-effort thinking. ds4 may downgrade it to
 	// ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax = ds4api.ThinkMax
+	// ThinkLevelBase offsets explicit V4.1 reasoning effort (ThinkLevel).
+	ThinkLevelBase = ds4api.ThinkLevelBase
 
 	// SessionRewriteError means the rewrite failed.
 	SessionRewriteError = ds4api.SessionRewriteError
@@ -360,3 +362,10 @@ func isPathWithinSafeDomain(path string) bool {
 
 	return false
 }
+
+// ThinkLevel returns the ThinkMode for an explicit DeepSeek V4.1 reasoning
+// effort, 0 (thinking off) to 100. See ds4api.ThinkLevel.
+func ThinkLevel(level int) ThinkMode { return ds4api.ThinkLevel(level) }
+
+// ParseThinkLevel parses --think-level text (0 to 100). See ds4api.ParseThinkLevel.
+func ParseThinkLevel(text string) (ThinkMode, error) { return ds4api.ParseThinkLevel(text) }

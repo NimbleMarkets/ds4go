@@ -312,7 +312,7 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 			case "/help":
 				fmt.Println("Commands:")
 				fmt.Println("  /help          Show this help.")
-				fmt.Println("  /think         Use normal thinking mode.")
+				fmt.Println("  /think [N]     Use normal thinking, or V4.1 effort 0..100 (0 disables thinking).")
 				fmt.Println("  /think-max     Use Think Max only when context is at least 393216 tokens.")
 				fmt.Println("  /nothink       Disable thinking mode.")
 				fmt.Println("  /ctx N         Set context size for following prompts.")
@@ -323,8 +323,21 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 				continue
 
 			case "/think":
-				thinkMode = ds4.ThinkHigh
-				fmt.Println("Thinking mode: high.")
+				arg := ""
+				if len(parts) > 1 {
+					arg = parts[1]
+				}
+				mode, err := parseThinkCommand(engine, arg)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "ds4: "+err.Error())
+					continue
+				}
+				thinkMode = mode
+				if level := mode.Level(); level >= 0 {
+					fmt.Printf("Thinking mode: %d.\n", level)
+				} else {
+					fmt.Println("Thinking mode: high.")
+				}
 				continue
 
 			case "/think-max":

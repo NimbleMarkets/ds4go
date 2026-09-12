@@ -749,6 +749,58 @@ func (e *Engine) GLMReasoningEffortText(mode ThinkMode) string {
 	return e.lib.GLMReasoningEffortText(mode)
 }
 
+// IsDeepSeek41 reports whether the loaded model is DeepSeek V4.1 Flash
+// (ds4_engine_is_deepseek41); false on libraries that predate V4.1.
+func (e *Engine) IsDeepSeek41() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineIsDeepseek41 == nil {
+		return false
+	}
+	return e.lib.raw.ds4EngineIsDeepseek41(e.ptr)
+}
+
+// DeepSeek41ReasoningEffortText returns V4.1's reasoning-effort system line
+// for mode (ds4_deepseek41_reasoning_effort_text): ThinkHigh is effort 75,
+// ThinkMax 100, a ThinkLevel its own value; "" for none, level 0, and
+// libraries without V4.1.
+func (e *Engine) DeepSeek41ReasoningEffortText(mode ThinkMode) string {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.lib.raw.ds4Deepseek41ReasoningEffortText == nil {
+		return ""
+	}
+	return e.lib.raw.ds4Deepseek41ReasoningEffortText(mode)
+}
+
+// ChatAppendThinkPrefix appends the model family's reasoning-effort prefix
+// for mode (ds4_chat_append_think_prefix): GLM and V4.1 render a system
+// line, V4 renders its max-effort prefix at ThinkMax, and nothing otherwise.
+// Append it after ChatBegin and before the system message, as
+// ds4_encode_chat_prompt does. Older libraries get the same result through
+// the pre-V4.1 entry points.
+func (e *Engine) ChatAppendThinkPrefix(tokens *Tokens, mode ThinkMode) error {
+	if e.lib.raw.ds4ChatAppendThinkPrefix != nil {
+		unlock, err := e.require()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		e.lib.raw.ds4ChatAppendThinkPrefix(e.ptr, tokens.cptr(), mode)
+		return nil
+	}
+	if e.IsGLMDSA() {
+		if effort := e.GLMReasoningEffortText(mode); effort != "" {
+			return e.ChatAppendMessage(tokens, "system", effort)
+		}
+		return nil
+	}
+	if mode == ThinkMax {
+		return e.ChatAppendMaxEffortPrefix(tokens)
+	}
+	return nil
+}
+
 // PrefillChunk returns the engine's effective prefill chunk size
 // (ds4_engine_prefill_chunk), or 0 on libraries without the accessor.
 func (e *Engine) PrefillChunk() uint32 {

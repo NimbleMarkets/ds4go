@@ -110,7 +110,7 @@ func TestEncodePromptWithPrefixFile(t *testing.T) {
 	want2, _ := eng.NewTokens(nil)
 	defer want2.Free()
 	_ = eng.ChatBegin(want2)
-	_ = eng.ChatAppendMaxEffortPrefix(want2)
+	_ = eng.ChatAppendThinkPrefix(want2, ds4.ThinkMax)
 	_ = eng.ChatAppendMessage(want2, "system", "sys")
 	_ = ds4.AppendPromptPrefix(eng, want2, turns)
 	_ = eng.ChatAppendMessage(want2, "user", "now")
@@ -249,5 +249,24 @@ func TestRunDecodeConsistencyComparesLiveAndFresh(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+// /think [N] mirrors upstream's REPL: bare /think is ThinkHigh; a level needs
+// a V4.1 model and 0..100.
+func TestParseThinkCommand(t *testing.T) {
+	eng, ctl := mockCLIEngine(t)
+	if mode, err := parseThinkCommand(eng, ""); err != nil || mode != ds4.ThinkHigh {
+		t.Errorf("bare /think = (%d, %v), want ThinkHigh", mode, err)
+	}
+	if _, err := parseThinkCommand(eng, "25"); err == nil {
+		t.Error("/think 25 accepted on a non-V4.1 model")
+	}
+	ctl.SetDeepSeek41(true)
+	if mode, err := parseThinkCommand(eng, "25"); err != nil || mode != ds4.ThinkLevel(25) {
+		t.Errorf("/think 25 on V4.1 = (%d, %v), want ThinkLevel(25)", mode, err)
+	}
+	if _, err := parseThinkCommand(eng, "101"); err == nil {
+		t.Error("/think 101 accepted")
 	}
 }
