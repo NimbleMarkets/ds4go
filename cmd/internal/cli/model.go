@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	ds4 "github.com/NimbleMarkets/ds4go"
@@ -73,10 +74,10 @@ func newModelDownloadCommand() *cobra.Command {
 	var dryRun bool
 	var force bool
 	cmd := &cobra.Command{
-		Use:     "download [alias]",
+		Use:     "download [alias...]",
 		Aliases: []string{"pull"},
-		Short:   "Download a curated model from Hugging Face",
-		Args:    cobra.MaximumNArgs(1),
+		Short:   "Download curated models from Hugging Face, one after another",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			return runModelDownloadWithToken(args, token, dryRun, force)
@@ -328,34 +329,41 @@ func runModelSet(args []string) error {
 }
 
 func runModelDownloadWithToken(args []string, token string, dryRun, force bool) error {
-	alias := ""
-	if len(args) > 0 {
-		alias = args[0]
-	}
-	if len(args) == 0 {
+	aliases := args
+	if len(aliases) == 0 {
 		m := modelManager()
 		list, _, err := m.List()
 		if err != nil {
 			return err
 		}
 		list = filterDownloadable(list)
-		alias, err = tui.PickModelAlias("Select a model to download", list, os.Stdin, os.Stderr)
+		alias, err := tui.PickModelAlias("Select a model to download", list, os.Stdin, os.Stderr)
 		if err != nil {
 			return err
 		}
-	} else if len(args) != 1 {
-		return fmt.Errorf("usage: ds4go model download [alias]")
+		aliases = []string{alias}
 	}
 	if dryRun {
-		_, err := modelManager().DownloadDryRun(context.Background(), alias, token)
-		return err
+		for _, alias := range aliases {
+			if _, err := modelManager().DownloadDryRun(context.Background(), alias, token); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	model, err := modelManager().Download(context.Background(), alias, token, force)
-	if err != nil {
-		return err
+	installed, err := modelManager().DownloadMany(context.Background(), aliases, token, force)
+	for _, model := range installed {
+		fmt.Fprintf(os.Stdout, "Downloaded %s\n", model.Alias)
 	}
-	fmt.Fprintf(os.Stdout, "Downloaded %s\n", model.Alias)
-	return nil
+	if err != nil && len(aliases) > 1 {
+		done := make([]string, len(installed))
+		for i, model := range installed {
+			done[i] = model.Alias
+		}
+		fmt.Fprintf(os.Stderr, "installed: %s\nnot installed: %s\n",
+			strings.Join(done, " "), strings.Join(aliases[len(installed):], " "))
+	}
+	return err
 }
 
 func runModelDelete(args []string, assumeYes bool) error {

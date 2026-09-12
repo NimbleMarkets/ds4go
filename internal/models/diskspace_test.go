@@ -203,3 +203,117 @@ func TestDryRunReportsSpaceForMissingModelsDir(t *testing.T) {
 		t.Errorf("space report for a missing models dir = %q, want a real figure", report)
 	}
 }
+
+// multiServer serves one payload for every curated file and records the
+// order in which files were fetched.
+func multiServer(t *testing.T, payload string, aliases ...string) (*httptest.Server, *[]string) {
+	t.Helper()
+	sha := sha256Hex(payload)
+	for _, alias := range aliases {
+		setCuratedHash(t, alias, sha)
+	}
+	var fetched []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Linked-Size", strconv.Itoa(len(payload)))
+		w.Header().Set("X-Linked-Etag", sha)
+		if r.Method == http.MethodHead {
+			return
+		}
+		fetched = append(fetched, filepath.Base(r.URL.Path))
+		_, _ = io.WriteString(w, payload)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &fetched
+}
+
+func TestDownloadManyRejectsUnknownAliasBeforeAnyDownload(t *testing.T) {
+	m := testManager(t.TempDir())
+	srv, fetched := multiServer(t, "payload", "q2-imatrix")
+	withRepo(t, srv.URL)
+	withAvailableBytes(t, func(string) (uint64, error) { return 1 << 60, nil })
+	got, err := m.DownloadMany(context.Background(), []string{"q2-imatrix", "nope"}, "", false)
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v, want the unknown alias named", err)
+	}
+	if len(got) != 0 || len(*fetched) != 0 {
+		t.Errorf("downloaded %v (fetched %v) despite an unknown alias in the list", got, *fetched)
+	}
+}
+
+func TestDownloadManyDownloadsInOrder(t *testing.T) {
+	m := testManager(t.TempDir())
+	srv, fetched := multiServer(t, "payload", "q2-imatrix", "dspark-support")
+	withRepo(t, srv.URL)
+	withAvailableBytes(t, func(string) (uint64, error) { return 1 << 60, nil })
+	got, err := m.DownloadMany(context.Background(), []string{"dspark-support", "q2-imatrix"}, "", false)
+	if err != nil {
+		t.Fatalf("DownloadMany: %v", err)
+	}
+	if len(got) != 2 || got[0].Alias != "dspark-support" || got[1].Alias != "q2-imatrix" {
+		t.Errorf("returned %v, want both aliases in the order given", got)
+	}
+	a, _ := lookup("dspark-support")
+	b, _ := lookup("q2-imatrix")
+	if len(*fetched) != 2 || (*fetched)[0] != a.FileName || (*fetched)[1] != b.FileName {
+		t.Errorf("fetched %v, want %s then %s", *fetched, a.FileName, b.FileName)
+	}
+	for _, alias := range []string{"dspark-support", "q2-imatrix"} {
+		model, _ := lookup(alias)
+		if !m.installed(model) {
+			t.Errorf("%s not installed", alias)
+		}
+	}
+}
+
+func TestDownloadManyStopsAtFirstFailure(t *testing.T) {
+	m := testManager(t.TempDir())
+	srv, _ := multiServer(t, "payload", "q2-imatrix")
+	withRepo(t, srv.URL)
+	withAvailableBytes(t, func(string) (uint64, error) { return 1 << 60, nil })
+	// The second file's pinned hash does not match what the server sends.
+	setCuratedHash(t, "dspark-support", strings.Repeat("0", 64))
+	got, err := m.DownloadMany(context.Background(), []string{"q2-imatrix", "dspark-support", "vision-encoder"}, "", false)
+	if err == nil || !strings.Contains(err.Error(), "dspark-support") {
+		t.Fatalf("err = %v, want the failing alias named", err)
+	}
+	if len(got) != 1 || got[0].Alias != "q2-imatrix" {
+		t.Errorf("installed before the failure = %v, want just q2-imatrix", got)
+	}
+	if enc, _ := lookup("vision-encoder"); m.installed(enc) {
+		t.Error("download continued past the failure")
+	}
+}
+
+// One model may fit while the set does not: the combined catalog size is
+// checked before the first byte moves, so the run does not die hours in.
+func TestDownloadManyChecksCombinedSpaceUpFront(t *testing.T) {
+	m := testManager(t.TempDir())
+	srv, fetched := multiServer(t, "payload", "q2-imatrix", "dspark-support")
+	withRepo(t, srv.URL)
+	a, _ := lookup("q2-imatrix")
+	b, _ := lookup("dspark-support")
+	// Enough for the larger one alone (catalog size), not for both.
+	avail := uint64(max(a.SizeGB, b.SizeGB)*(1<<30)) + diskSpaceReserve + 1<<20
+	withAvailableBytes(t, func(string) (uint64, error) { return avail, nil })
+	got, err := m.DownloadMany(context.Background(), []string{"q2-imatrix", "dspark-support"}, "", false)
+	if err == nil {
+		t.Fatal("DownloadMany succeeded when the set does not fit")
+	}
+	for _, want := range []string{"not enough free space", "q2-imatrix", "dspark-support", "--force"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if len(got) != 0 || len(*fetched) != 0 {
+		t.Errorf("downloaded %v (fetched %v) despite failing the combined space check", got, *fetched)
+	}
+	// --force skips the combined check like the per-download one.
+	if _, err := m.DownloadMany(context.Background(), []string{"q2-imatrix", "dspark-support"}, "", true); err != nil {
+		t.Errorf("--force: %v", err)
+	}
+	// A single alias defers to Download's own remote-size check, which passes.
+	m2 := testManager(t.TempDir())
+	if _, err := m2.DownloadMany(context.Background(), []string{"q2-imatrix"}, "", false); err != nil {
+		t.Errorf("single alias: %v", err)
+	}
+}

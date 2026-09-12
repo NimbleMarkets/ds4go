@@ -92,10 +92,12 @@ Download a vision model together with its encoder, then attach an image to a
 prompt:
 
 ```sh
-ds4go model download glm53-q2
-ds4go model download glm53-vision
+ds4go model download glm53-q2 glm53-vision
 ds4go prompt -m glm53-q2 --image photo.png -p "What is this?"
 ```
+
+`model download` accepts several aliases and fetches them one after another,
+checking the combined size against free space before the first byte moves.
 
 From Go, an image is a content part holding encoded PNG or JPEG bytes (or a
 path). `ImageInputPNG` and `ImageInputJPEG` encode an `image.Image` for you:
