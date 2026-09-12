@@ -14,6 +14,7 @@ import (
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/dsml"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
+	"github.com/NimbleMarkets/ds4go/webtool"
 	"github.com/spf13/pflag"
 )
 
@@ -26,18 +27,20 @@ func main() {
 	fs := pflag.NewFlagSet("toolloop", pflag.ContinueOnError)
 	cfg := cliopts.RegisterCLI(fs)
 	mock := fs.Bool("mock", false, "run with ds4api.NewMockLibrary and scripted model output")
+	fetchImage := fs.Bool("fetch-image", false, "also register webtool's fetch_image (needs a vision model and encoder)")
+	allowPrivate := fs.Bool("allow-private-fetch", false, "let fetch_image reach loopback and private addresses")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, "Usage: toolloop [options]\n\nRun a DSML tool-calling loop with a Go add tool.\n\nOptions:\n")
 		fmt.Fprint(os.Stderr, fs.FlagUsagesWrapped(100))
 	}
 	cliopts.Parse(fs, os.Args[1:])
 
-	if err := run(cfg, *mock); err != nil {
+	if err := run(cfg, *mock, *fetchImage, *allowPrivate); err != nil {
 		fatal(err)
 	}
 }
 
-func run(cfg *cliopts.CLIConfig, mock bool) error {
+func run(cfg *cliopts.CLIConfig, mock, fetchImage, allowPrivate bool) error {
 	engine, err := openEngine(cfg, mock)
 	if err != nil {
 		return err
@@ -66,6 +69,16 @@ func run(cfg *cliopts.CLIConfig, mock bool) error {
 	}, addTool); err != nil {
 		return err
 	}
+	if fetchImage {
+		// fetch_image never starts Chrome, so no approval callback is needed.
+		web := webtool.NewWebHelper(webtool.Config{
+			VisionAvailable:   engine.HasVision,
+			AllowPrivateFetch: allowPrivate,
+		})
+		if err := reg.Register(web.FetchImageTool()); err != nil {
+			return err
+		}
+	}
 
 	system := cfg.System
 	if system != "" {
@@ -85,7 +98,10 @@ func run(cfg *cliopts.CLIConfig, mock bool) error {
 		Session:   session,
 		Tools:     reg,
 		ThinkMode: cfg.ThinkMode(),
-		Thinking:  cfg.ThinkMode() != ds4.ThinkNone,
+		Thinking:  ds4api.ThinkModeEnabled(cfg.ThinkMode()),
+	}
+	if engine.HasVision() {
+		loop.Images = ds4.NewImageEncoder(engine)
 	}
 	if mock {
 		loop.Thinking = false

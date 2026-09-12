@@ -2,7 +2,7 @@
 
 `webtool` provides browser-backed web tools for the `ds4` agent loop, matching the design of the upstream `ds4` inference engine's browser helper (`ds4_web.c`).
 
-It enables DeepSeek agent loops to search Google and visit web pages using a local Google Chrome or Chromium installation.
+It enables DeepSeek agent loops to search Google and visit web pages using a local Google Chrome or Chromium installation, and to fetch an image from the web as a visual observation for a vision model (`fetch_image`, which needs no browser).
 
 ## How it Works
 
@@ -13,7 +13,7 @@ It enables DeepSeek agent loops to search Google and visit web pages using a loc
 
 ## Usage
 
-You can initialize `webtool.NewWebHelper` and register its tools (`GoogleSearchTool()` and `VisitPageTool()`) directly into a `ds4.ToolRegistry`:
+You can initialize `webtool.NewWebHelper` and register its tools (`GoogleSearchTool()`, `VisitPageTool()`, and `FetchImageTool()`) directly into a `ds4.ToolRegistry`:
 
 ```go
 package main
@@ -93,4 +93,20 @@ The `webtool.Config` struct accepts the following configuration fields:
 | `ConfirmApproval` | `func(string) (bool, error)` | Required. Callback invoked to request permission from the user before starting Chrome for the first time. |
 | `Log` | `func(string)` | Optional logger callback for receiving status messages from the browser manager. |
 | `SearchProvider` | `string` | Search engine to use: `"google"`, `"duckduckgo"`, `"bing"`, `"yahoo"`, `"yandex"`, `"baidu"`, or `"brave"`. Defaults to `"google"`. |
+| `VisionAvailable` | `func() bool` | Whether the engine can encode images (`engine.HasVision`). When nil or false, `fetch_image` returns a text observation asking for `--vision`. |
+| `AllowPrivateFetch` | `bool` | Let `fetch_image` reach loopback, private, and link-local addresses, directly or via redirect. Off by default. |
+| `MaxImageBytes` | `int` | Cap on one fetched image. Defaults to 64 MiB, upstream's image limit. |
+| `HTTPClient` | `*http.Client` | Client used by `fetch_image`. Defaults to one with a 60 s timeout. |
+
+## fetch_image
+
+`fetch_image` downloads a PNG or JPEG over http(s) and returns it as an image
+observation, the web counterpart of `workspacetool`'s `view_image`. The tool
+loop must have an `Images` encoder set; the bytes travel in the observation so
+history re-renders without refetching. The body is accepted by file signature,
+not `Content-Type`, and capped at `MaxImageBytes`. Destinations that resolve
+to private, loopback, or link-local addresses are refused on every hop unless
+`AllowPrivateFetch` is set, so a model cannot be steered at services behind the
+tool's host. Without a vision encoder the tool answers with a text hint rather
+than failing, matching upstream `view_image`.
 

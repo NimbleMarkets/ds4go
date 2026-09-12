@@ -311,7 +311,8 @@ Run 'ds4go help <command>' for detailed usage.
   `read`, `more`, `list`, `search`, `view_image` (with a vision encoder),
   opt-in `write` / `edit`, and opt-in shell jobs.
 - [`webtool`](./webtool/README.md) exposes browser-backed `google_search` and
-  `visit_page` tools.
+  `visit_page` tools, and `fetch_image` for pulling a web image into a vision
+  model's context.
 - [`lsp/lsptool`](./lsp/README.md#tool-loop) adapts a language-server client as
   diagnostics, hover, symbols, and completion tools.
 

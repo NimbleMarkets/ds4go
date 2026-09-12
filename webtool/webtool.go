@@ -41,6 +41,17 @@ type Config struct {
 	// SearchProvider specifies the search engine to use.
 	// Supported values: "google" (default), "duckduckgo", "bing".
 	SearchProvider string
+	// VisionAvailable reports whether the engine can encode images. When nil
+	// or false, fetch_image returns a text observation asking for --vision.
+	VisionAvailable func() bool
+	// AllowPrivateFetch lets fetch_image reach loopback, private, and
+	// link-local addresses, on the first hop or via redirect. Off by default
+	// so a model cannot be steered at services behind the tool's host.
+	AllowPrivateFetch bool
+	// MaxImageBytes caps one fetched image. Zero means upstream's 64 MiB.
+	MaxImageBytes int
+	// HTTPClient serves fetch_image; nil uses a client with a 60 s timeout.
+	HTTPClient *http.Client
 }
 
 // WebHelper implements browser-backed web tools using Chrome DevTools Protocol.
