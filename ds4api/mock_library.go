@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -24,22 +23,41 @@ import (
 // fd, mirroring that callers retain their own descriptor after ds4_set_stderr_fd.
 var mockStderr mockStderrStream
 
+// mockStderrStream mirrors libds4's ds4_set_stderr_fd contract: the library
+// dups the caller's descriptor and owns the dup. Wrapping the caller's
+// number directly is unsafe in Go: os.NewFile registers a finalizer on the
+// inner file (clearing one on the outer *File does nothing), so once the
+// wrapper is unreachable the finalizer closes that number, which by then may
+// belong to something else, such as the directory handle the testing package
+// opens to remove a TempDir.
 type mockStderrStream struct {
-	mu sync.Mutex
-	f  *os.File
+	mu    sync.Mutex
+	f     *os.File
+	owned bool
 }
 
 func (m *mockStderrStream) set(fd int32) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.f != nil && m.owned {
+		_ = m.f.Close()
+	}
+	m.f, m.owned = nil, false
 	if fd < 0 {
-		m.f = nil
 		return
 	}
-	f := os.NewFile(uintptr(fd), "ds4-mock-stderr")
-	runtime.SetFinalizer(f, nil)
-	m.f = f
+	dup, owned := dupFd(int(fd))
+	f := os.NewFile(uintptr(dup), "ds4-mock-stderr")
+	if !owned {
+		// No dup on this platform: keep the wrapper alive for the process
+		// lifetime so its finalizer can never close the caller's handle.
+		mockStderrPinned = append(mockStderrPinned, f)
+	}
+	m.f, m.owned = f, owned
 }
+
+// mockStderrPinned holds wrappers that must never be finalized (see set).
+var mockStderrPinned []*os.File
 
 func (m *mockStderrStream) write(msg string) {
 	m.mu.Lock()

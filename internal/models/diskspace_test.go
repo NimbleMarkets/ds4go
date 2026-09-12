@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func sha256Hex(s string) string {
@@ -315,5 +318,66 @@ func TestDownloadManyChecksCombinedSpaceUpFront(t *testing.T) {
 	m2 := testManager(t.TempDir())
 	if _, err := m2.DownloadMany(context.Background(), []string{"q2-imatrix"}, "", false); err != nil {
 		t.Errorf("single alias: %v", err)
+	}
+}
+
+// A dropped connection mid-transfer must not abort a multi-hundred-GiB pull:
+// the downloader resumes from the bytes it has, as the upstream script's
+// re-run does, instead of surfacing "unexpected EOF".
+func TestDownloadResumesAfterConnectionDrop(t *testing.T) {
+	m := testManager(t.TempDir())
+	payload := strings.Repeat("y", 8192)
+	setCuratedHash(t, "q2-imatrix", sha256Hex(payload))
+	drops := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Linked-Size", strconv.Itoa(len(payload)))
+		w.Header().Set("X-Linked-Etag", sha256Hex(payload))
+		if r.Method == http.MethodHead {
+			return
+		}
+		start := 0
+		if rng := r.Header.Get("Range"); strings.HasPrefix(rng, "bytes=") {
+			fmt.Sscanf(rng, "bytes=%d-", &start)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		body := payload[start:]
+		if drops == 0 {
+			// Announce the full body, send half, then kill the connection.
+			drops++
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			_, _ = w.Write([]byte(body[:len(body)/2]))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				conn.Close()
+			}
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	withRepo(t, srv.URL)
+	withAvailableBytes(t, func(string) (uint64, error) { return 1 << 60, nil })
+	old := downloadRetryBase
+	downloadRetryBase = time.Millisecond
+	t.Cleanup(func() { downloadRetryBase = old })
+	var out strings.Builder
+	m.Out = &out
+	if _, err := m.Download(context.Background(), "q2-imatrix", "", false); err != nil {
+		t.Fatalf("Download after a connection drop: %v\n%s", err, out.String())
+	}
+	q2, _ := lookup("q2-imatrix")
+	data, err := os.ReadFile(filepath.Join(m.ModelsDir, q2.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != payload {
+		t.Errorf("file has %d bytes, want %d", len(data), len(payload))
+	}
+	if drops != 1 || !strings.Contains(out.String(), "retry") {
+		t.Errorf("drops=%d, output lacks a retry note:\n%s", drops, out.String())
 	}
 }

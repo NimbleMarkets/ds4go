@@ -631,6 +631,47 @@ func (m *Manager) downloadFile(ctx context.Context, url, out, token string, expe
 	return m.downloadFileAttempt(ctx, url, out, token, expectedSHA, true)
 }
 
+// downloadMaxRetries bounds the resumes attempted for one file after
+// transient network failures (a dropped connection, a reset, a timeout);
+// each resume continues from the bytes already on disk. Per-attempt backoff
+// doubles from downloadRetryBase.
+const downloadMaxRetries = 8
+
+var downloadRetryBase = 2 * time.Second
+
+func downloadRetryDelay(attempt int) time.Duration {
+	d := downloadRetryBase << (attempt - 1)
+	if max := 60 * time.Second; d > max {
+		d = max
+	}
+	return d
+}
+
+// retryable reports whether a download error is worth resuming: anything
+// that is not a cancellation or a deliberate refusal.
+func retryable(ctx context.Context, err error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return true
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if ctx == nil {
+		time.Sleep(d)
+		return nil
+	}
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // downloadChunkSize bounds each GET to the largest range the HF Xet CDN will
 // satisfy in a single response. Single ranges spanning more than ~200 GiB get
 // rejected with HTTP 400, and an open-ended `bytes=N-` request behaves the
@@ -685,6 +726,7 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 	}
 
 	first := true
+	retries := 0
 	for {
 		end := int64(-1)
 		if meta.Size > 0 {
@@ -710,6 +752,14 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 
 		resp, err := m.httpClient().Do(req)
 		if err != nil {
+			if retryable(ctx, err) && retries < downloadMaxRetries {
+				retries++
+				fmt.Fprintf(m.Out, "Transient error (%v); retry %d/%d in %s\n", err, retries, downloadMaxRetries, downloadRetryDelay(retries))
+				if err := sleepCtx(ctx, downloadRetryDelay(retries)); err != nil {
+					return "", err
+				}
+				continue
+			}
 			return "", fmt.Errorf("download %s: %w", url, err)
 		}
 
@@ -769,10 +819,18 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 		}
 		n, copyErr := io.Copy(f, src)
 		resp.Body.Close()
+		start += n // whatever arrived is on disk; a retry resumes after it
 		if copyErr != nil {
+			if retryable(ctx, copyErr) && retries < downloadMaxRetries {
+				retries++
+				fmt.Fprintf(m.Out, "Transient error after %s (%v); retry %d/%d in %s\n", formatBytes(start), copyErr, retries, downloadMaxRetries, downloadRetryDelay(retries))
+				if err := sleepCtx(ctx, downloadRetryDelay(retries)); err != nil {
+					return "", err
+				}
+				continue
+			}
 			return "", copyErr
 		}
-		start += n
 
 		// If we don't know the size, one open-ended GET fetched the whole
 		// file in a single response, so we're done.
