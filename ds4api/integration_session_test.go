@@ -18,6 +18,22 @@ import (
 	"testing"
 )
 
+// realBackend picks the graph backend for real-library runs from DS4_BACKEND
+// (metal, cuda, rocm, cpu); the default is Metal, the original test host.
+func realBackend(t *testing.T) Backend {
+	t.Helper()
+	switch os.Getenv("DS4_BACKEND") {
+	case "", "metal":
+		return BackendMetal
+	case "cuda":
+		return BackendCUDA
+	case "cpu":
+		return BackendCPU
+	}
+	t.Fatalf("DS4_BACKEND=%q: want metal, cuda, rocm, or cpu", os.Getenv("DS4_BACKEND"))
+	return BackendMetal
+}
+
 func realLibrary(t *testing.T) *Library {
 	t.Helper()
 	libPath := os.Getenv("DS4_LIB")
@@ -40,7 +56,7 @@ func TestRealLibraryRewindCheckpointSemantics(t *testing.T) {
 		t.Skip("DS4_MODEL must be set")
 	}
 	lib := realLibrary(t)
-	eng, err := lib.NewEngine(EngineOptions{ModelPath: model, Backend: BackendMetal})
+	eng, err := lib.NewEngine(EngineOptions{ModelPath: model, Backend: realBackend(t)})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -157,7 +173,7 @@ func TestRealLibraryGLMEmbeddedMTP(t *testing.T) {
 	lib := realLibrary(t)
 	eng, err := lib.NewEngine(EngineOptions{
 		ModelPath:           model,
-		Backend:             BackendMetal,
+		Backend:             realBackend(t),
 		GLMMTP:              true,
 		DsparkExactSampling: true,
 	})
@@ -180,4 +196,70 @@ func TestRealLibraryGLMEmbeddedMTP(t *testing.T) {
 	if !lib.SupportsLiveSteeringFFN() {
 		t.Error("SupportsLiveSteeringFFN() = false, want the upstream 87495f6 symbols")
 	}
+}
+
+// The V4.1 sync's think bindings against a real library: the unified prefix
+// must match what the family-specific entry points produced before, and the
+// pure-Go level encoding must agree with ds4's own.
+func TestRealLibraryThinkPrefix(t *testing.T) {
+	lib := realLibrary(t)
+	if lib.raw.ds4ChatAppendThinkPrefix == nil {
+		t.Skip("library predates ds4_chat_append_think_prefix")
+	}
+	for _, text := range []string{"0", "25", "100"} {
+		var fromLib ThinkMode
+		if !lib.raw.ds4ThinkModeParseLevel(text, &fromLib) {
+			t.Fatalf("ds4_think_mode_parse_level(%q) failed", text)
+		}
+		fromGo, err := ParseThinkLevel(text)
+		if err != nil || fromGo != fromLib {
+			t.Errorf("ParseThinkLevel(%q) = %d (%v), library says %d", text, fromGo, err, fromLib)
+		}
+		if got := lib.raw.ds4ThinkModeLevel(fromGo); int(got) != fromGo.Level() {
+			t.Errorf("Level() = %d, ds4_think_mode_level = %d", fromGo.Level(), got)
+		}
+	}
+	model := os.Getenv("DS4_MODEL")
+	if model == "" {
+		t.Skip("DS4_MODEL must be set for the prefix comparison")
+	}
+	eng, err := lib.NewEngine(EngineOptions{ModelPath: model, Backend: realBackend(t)})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Close()
+	for _, mode := range []ThinkMode{ThinkNone, ThinkHigh, ThinkMax} {
+		got, _ := eng.NewTokens(nil)
+		want, _ := eng.NewTokens(nil)
+		if err := eng.ChatAppendThinkPrefix(got, mode); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case eng.IsGLMDSA():
+			if effort := eng.GLMReasoningEffortText(mode); effort != "" {
+				_ = eng.ChatAppendMessage(want, "system", effort)
+			}
+		case eng.IsDeepSeek41():
+			if effort := eng.DeepSeek41ReasoningEffortText(mode); effort != "" {
+				_ = eng.ChatAppendMessage(want, "system", effort)
+			}
+		case mode == ThinkMax:
+			_ = eng.ChatAppendMaxEffortPrefix(want)
+		}
+		g, w := got.Slice(), want.Slice()
+		if len(g) != len(w) || !equalInts(g, w) {
+			t.Errorf("mode %d: ChatAppendThinkPrefix = %v, family path = %v", mode, g, w)
+		}
+		got.Free()
+		want.Free()
+	}
+}
+
+func equalInts(a, b []int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

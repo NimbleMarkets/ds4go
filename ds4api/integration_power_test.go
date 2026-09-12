@@ -23,7 +23,7 @@ func TestRealLibraryPowerRoundTrip(t *testing.T) {
 	}
 	eng, err := lib.NewEngine(EngineOptions{
 		ModelPath:    model,
-		Backend:      BackendMetal,
+		Backend:      realBackend(t),
 		PowerPercent: 37,
 	})
 	if err != nil {

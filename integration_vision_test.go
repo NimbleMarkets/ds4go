@@ -48,7 +48,14 @@ func TestRealLibraryVision(t *testing.T) {
 	if !lib.SupportsVision() {
 		t.Fatal("library lacks the vision API")
 	}
-	eng, err := lib.NewEngine(ds4api.EngineOptions{ModelPath: model, VisionPath: encoder, Backend: ds4api.BackendMetal, ContextSize: 8192})
+	backend := ds4api.BackendMetal
+	switch os.Getenv("DS4_BACKEND") {
+	case "cuda":
+		backend = ds4api.BackendCUDA
+	case "cpu":
+		backend = ds4api.BackendCPU
+	}
+	eng, err := lib.NewEngine(ds4api.EngineOptions{ModelPath: model, VisionPath: encoder, Backend: backend, ContextSize: 8192})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
