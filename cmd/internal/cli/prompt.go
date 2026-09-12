@@ -317,7 +317,7 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 				fmt.Println("  /nothink       Disable thinking mode.")
 				fmt.Println("  /ctx N         Set context size for following prompts.")
 				fmt.Println("  /power N       Set GPU duty cycle percentage, 1..100.")
-				fmt.Println("  /read FILE     Read a prompt from FILE and run it.")
+				fmt.Println("  /read FILE     Send FILE as the next turn: a PNG or JPEG as an image, anything else as text.")
 				fmt.Println("                 A PNG or JPEG is attached as an image instead (needs a vision encoder).")
 				fmt.Println("  /quit, /exit   Leave the prompt.")
 				continue

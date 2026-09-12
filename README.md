@@ -101,13 +101,37 @@ ds4go prompt -m glm53-q2 --image photo.png -p "What is this?"
 after another, checking the combined size against free space before the
 first byte moves.
 
+Vision here means image understanding: the encoder turns a PNG or JPEG into
+embedding rows that are spliced into the prompt, and the model answers in
+text. Nothing generates or edits images.
+
+In chat mode, `/read photo.png` sends an image as the next turn (the bytes are
+kept, so the file may change or disappear afterwards); `/read notes.txt` still
+reads a text prompt. Vision-Exp is a different DeepSeek checkpoint from Flash
+0731 and pins its own DSpark drafter, `vision-dspark-support`. Image prompts
+think before answering, so give them a few hundred tokens of budget.
+
 From Go, an image is a content part holding encoded PNG or JPEG bytes (or a
-path). `ImageInputPNG` and `ImageInputJPEG` encode an `image.Image` for you:
+path). `ImageInputPNG` and `ImageInputJPEG` encode an `image.Image` for you.
+The prompt is built with the multimodal builder and run through
+`GeneratePrompt`, which syncs the image spans; free the `Prompt` afterwards:
 
 ```go
-in, err := ds4.ImageInputPNG(img) // or ds4.ImageInputJPEG(img, 85) for photos
-parts := []ds4.ContentPart{{Text: "What is this?"}, {Image: &in}}
+images := ds4.NewImageEncoder(engine) // caches embeddings by image bytes
+in, err := ds4.ImageInputPNG(img)     // or ds4.ImageInputJPEG(img, 85) for photos
+history := []ds4.ChatMessage{{Role: "user", Parts: []ds4.ContentPart{
+	{Text: "What is this?"}, {Image: &in},
+}}}
+prompt, err := ds4.BuildChatPromptMultimodal(engine, images, "You are a helpful assistant", nil, history, ds4.ThinkHigh)
+defer prompt.Free()
+_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, ds4.GenerateOptions{
+	MaxTokens: 1024, StopOnEOS: true, ThinkMode: ds4.ThinkHigh,
+})
 ```
+
+Only user and tool messages may carry images. A `ToolLoop` handles them the
+same way once its `Images` field is set to the encoder; `workspacetool`'s
+`view_image` returns an image observation the loop feeds back to the model.
 
 Over HTTP, `examples/openai-compatible` accepts images the way upstream
 `ds4-server` does: `image_url` parts carrying inline `data:image/png;base64,...`
@@ -272,8 +296,8 @@ Run 'ds4go help <command>' for detailed usage.
 `ToolRegistry` for model-driven workflows:
 
 - [`workspacetool`](./workspacetool/README.md) exposes local workspace tools:
-  `read`, `more`, `list`, `search`, opt-in `write` / `edit`, and opt-in shell
-  jobs.
+  `read`, `more`, `list`, `search`, `view_image` (with a vision encoder),
+  opt-in `write` / `edit`, and opt-in shell jobs.
 - [`webtool`](./webtool/README.md) exposes browser-backed `google_search` and
   `visit_page` tools.
 - [`lsp/lsptool`](./lsp/README.md#tool-loop) adapts a language-server client as
