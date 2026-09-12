@@ -281,6 +281,33 @@ func (m *Manager) Download(ctx context.Context, alias, token string, force bool)
 	return model, nil
 }
 
+// WithEncoders appends each requested vision model's encoder alias right
+// after it when the encoder is neither installed nor already in the list,
+// so one download command yields a usable vision setup. Unknown aliases
+// pass through for DownloadMany to report. added lists the appended aliases.
+func (m *Manager) WithEncoders(aliases []string) (expanded, added []string) {
+	requested := make(map[string]bool, len(aliases))
+	for _, alias := range aliases {
+		requested[alias] = true
+	}
+	expanded = make([]string, 0, len(aliases)+1)
+	for _, alias := range aliases {
+		expanded = append(expanded, alias)
+		model, ok := lookup(alias)
+		if !ok || !model.Vision || model.Encoder == "" || requested[model.Encoder] {
+			continue
+		}
+		encoder, ok := lookup(model.Encoder)
+		if !ok || m.installed(encoder) {
+			continue
+		}
+		requested[model.Encoder] = true
+		expanded = append(expanded, model.Encoder)
+		added = append(added, model.Encoder)
+	}
+	return expanded, added
+}
+
 // DownloadMany downloads aliases one after another, in the order given.
 // Every alias is validated and the combined catalog size of the models not
 // yet installed is checked against the volume before the first byte moves,

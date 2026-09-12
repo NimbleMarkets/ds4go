@@ -72,7 +72,7 @@ func newModelInfoCommand() *cobra.Command {
 func newModelDownloadCommand() *cobra.Command {
 	var token string
 	var dryRun bool
-	var force bool
+	var force, noEncoder bool
 	cmd := &cobra.Command{
 		Use:     "download [alias...]",
 		Aliases: []string{"pull"},
@@ -80,9 +80,10 @@ func newModelDownloadCommand() *cobra.Command {
 		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runModelDownloadWithToken(args, token, dryRun, force)
+			return runModelDownloadWithToken(args, token, dryRun, force, noEncoder)
 		},
 	}
+	cmd.Flags().BoolVar(&noEncoder, "no-encoder", false, "do not add a vision model's encoder to the download")
 	cmd.Flags().StringVar(&token, "token", "", "Hugging Face token (defaults to HF_TOKEN or ~/.cache/huggingface/token)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be downloaded without downloading it")
 	cmd.Flags().BoolVar(&force, "force", false, "download even when the target volume looks too small")
@@ -328,7 +329,7 @@ func runModelSet(args []string) error {
 	return nil
 }
 
-func runModelDownloadWithToken(args []string, token string, dryRun, force bool) error {
+func runModelDownloadWithToken(args []string, token string, dryRun, force, noEncoder bool) error {
 	aliases := args
 	if len(aliases) == 0 {
 		m := modelManager()
@@ -342,6 +343,13 @@ func runModelDownloadWithToken(args []string, token string, dryRun, force bool) 
 			return err
 		}
 		aliases = []string{alias}
+	}
+	if !noEncoder {
+		var added []string
+		aliases, added = modelManager().WithEncoders(aliases)
+		for _, alias := range added {
+			fmt.Fprintf(os.Stderr, "also downloading %s, the vision encoder (--no-encoder to skip)\n", alias)
+		}
 	}
 	if dryRun {
 		for _, alias := range aliases {

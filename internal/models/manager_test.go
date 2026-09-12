@@ -593,3 +593,38 @@ func TestResolvePathMapsAnInstalledAliasToItsFile(t *testing.T) {
 		t.Errorf("ResolvePath(path) = %q, want it unchanged", got)
 	}
 }
+
+func TestWithEncodersAppendsMissingVisionEncoders(t *testing.T) {
+	m := testManager(t.TempDir())
+	got, added := m.WithEncoders([]string{"glm53-q2", "q2-imatrix", "vision-q2"})
+	want := []string{"glm53-q2", "glm53-vision", "q2-imatrix", "vision-q2", "vision-encoder"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("expanded = %v, want %v", got, want)
+	}
+	if strings.Join(added, " ") != "glm53-vision vision-encoder" {
+		t.Errorf("added = %v", added)
+	}
+}
+
+func TestWithEncodersSkipsInstalledListedAndUnknown(t *testing.T) {
+	m := testManager(t.TempDir())
+	enc, _ := lookup("glm53-vision")
+	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.ModelsDir, enc.FileName), []byte("gguf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Installed encoder: nothing to add.
+	if got, added := m.WithEncoders([]string{"glm53-q2"}); len(got) != 1 || len(added) != 0 {
+		t.Errorf("installed encoder: got %v added %v", got, added)
+	}
+	// Already requested (in either order): no duplicate.
+	if got, added := m.WithEncoders([]string{"vision-encoder", "vision-q2"}); len(got) != 2 || len(added) != 0 {
+		t.Errorf("listed encoder: got %v added %v", got, added)
+	}
+	// Unknown aliases pass through untouched for DownloadMany to report.
+	if got, added := m.WithEncoders([]string{"nope"}); len(got) != 1 || got[0] != "nope" || len(added) != 0 {
+		t.Errorf("unknown: got %v added %v", got, added)
+	}
+}
