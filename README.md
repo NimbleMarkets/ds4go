@@ -94,7 +94,15 @@ prompt:
 ```sh
 ds4go model download glm53-q2
 ds4go model download glm53-vision
-ds4go prompt -m ~/.ds4/models/GLM-5.3-Flash-Q2.gguf --image photo.png -p "What is this?"
+ds4go prompt -m glm53-q2 --image photo.png -p "What is this?"
+```
+
+From Go, an image is a content part holding encoded PNG or JPEG bytes (or a
+path). `ImageInputPNG` and `ImageInputJPEG` encode an `image.Image` for you:
+
+```go
+in, err := ds4.ImageInputPNG(img) // or ds4.ImageInputJPEG(img, 85) for photos
+parts := []ds4.ContentPart{{Text: "What is this?"}, {Image: &in}}
 ```
 
 DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM's
