@@ -86,6 +86,7 @@ type MockControls struct {
 	glm             bool
 	vision          bool
 	multimodalFail  int // image index at which the mock multimodal append fails; -1 never
+	imatrix         *IMatrixCall
 	stops           map[int32]bool
 	thinking        map[int32]bool
 	specArgmaxCall  int
@@ -161,6 +162,20 @@ func (c *MockControls) hasVision() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.vision
+}
+
+// IMatrixCall records the arguments of the last ds4_engine_collect_imatrix
+// call the mock served.
+type IMatrixCall struct {
+	Dataset, Output                                  string
+	CtxSize, MaxPrompts, MaxTokens, MinExpertSamples int
+}
+
+// LastIMatrixCall returns the most recent imatrix collection call, or nil.
+func (c *MockControls) LastIMatrixCall() *IMatrixCall {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.imatrix
 }
 
 // SetMultimodalAppendFailAt makes ds4_chat_append_multimodal_message fail
@@ -279,6 +294,9 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		return 0
 	}
 	r.ds4EngineCollectIMatrix = func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32, minExpertSamples int32) int32 {
+		ctl.mu.Lock()
+		ctl.imatrix = &IMatrixCall{Dataset: datasetPath, Output: outputPath, CtxSize: int(ctxSize), MaxPrompts: int(maxPrompts), MaxTokens: int(maxTokens), MinExpertSamples: int(minExpertSamples)}
+		ctl.mu.Unlock()
 		return 0
 	}
 	r.ds4EngineDumpTokens = func(e uintptr, tokens *cTokens) {}
@@ -924,6 +942,9 @@ type mockEngine struct {
 	placementCtxHint             int32
 	placementSessionCountHint    int32
 	shareSessionPrefillWorkspace bool
+	cudaTensorParallel           bool
+	ssdStreamingFullLayers       uint32
+	ssdStreamingFullLayersSet    bool
 }
 
 type mockSession struct {
@@ -1040,6 +1061,9 @@ func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
 		eng.placementCtxHint = opt.PlacementCtxHint
 		eng.placementSessionCountHint = opt.PlacementSessionCountHint
 		eng.shareSessionPrefillWorkspace = opt.ShareSessionPrefillWorkspace
+		eng.cudaTensorParallel = opt.CUDATensorParallel
+		eng.ssdStreamingFullLayers = opt.SSDStreamingFullLayers
+		eng.ssdStreamingFullLayersSet = opt.SSDStreamingFullLayersSet
 		if eng.powerPercent == 0 {
 			eng.powerPercent = 100
 		}

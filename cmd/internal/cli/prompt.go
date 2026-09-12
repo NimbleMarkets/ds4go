@@ -72,6 +72,9 @@ func newPromptCommand() *cobra.Command {
 }
 
 func run(cfg *cliopts.CLIConfig) error {
+	if err := validatePromptFlags(cfg); err != nil {
+		return err
+	}
 	cfg.Model = modelManager().ResolvePath(cfg.Model)
 	if err := preflightPromptModel(cfg.Model); err != nil {
 		return err
@@ -109,7 +112,9 @@ func run(cfg *cliopts.CLIConfig) error {
 		}
 		return nil
 	case cfg.IMatrixOut != "":
-		return engine.CollectIMatrix(cfg.IMatrixDataset, cfg.IMatrixOut, cfg.Ctx, cfg.IMatrixMaxPrompts, cfg.IMatrixMaxTokens)
+		return collectIMatrix(engine, cfg)
+	case cfg.PerplexityFile != "":
+		return runPerplexity(engine, cfg, os.Stdout)
 	}
 
 	if diag := diagnostic(cfg); diag != "" {
@@ -125,6 +130,17 @@ func run(cfg *cliopts.CLIConfig) error {
 	promptText, err := cfg.PromptText()
 	if err != nil {
 		return err
+	}
+	if cfg.DumpLogits != "" || cfg.DecodeConsistency > 0 {
+		prompt, err := encodePrompt(engine, cfg, promptText)
+		if err != nil {
+			return err
+		}
+		defer prompt.Free()
+		if cfg.DumpLogits != "" {
+			return dumpLogits(engine, session, cfg, prompt)
+		}
+		return runDecodeConsistency(engine, cfg, prompt, os.Stderr)
 	}
 	if cfg.DumpLogprobs != "" {
 		return dumpLogprobs(engine, session, cfg, promptText)
@@ -191,7 +207,7 @@ func runDiagnostic(engine *ds4.Engine, cfg *cliopts.CLIConfig, diag string) erro
 	if err != nil {
 		return err
 	}
-	prompt, err := engine.EncodeChatPrompt(cfg.System, promptText, cfg.ThinkMode())
+	prompt, err := encodePrompt(engine, cfg, promptText)
 	if err != nil {
 		return err
 	}
@@ -241,7 +257,7 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 		return err
 	}
 
-	tokens, err := engine.EncodeChatPrompt(cfg.System, promptText, cfg.ThinkMode())
+	tokens, err := encodePrompt(engine, cfg, promptText)
 	if err != nil {
 		return err
 	}
@@ -253,7 +269,11 @@ func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 }
 
 func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) error {
-	var history []cliMessage
+	// A --prefix-file seeds the conversation, as upstream's REPL does.
+	history, err := prefixHistory(cfg)
+	if err != nil {
+		return err
+	}
 	in := bufio.NewScanner(os.Stdin)
 	thinkMode := cfg.ThinkMode()
 	ctxSize := cfg.Ctx
@@ -450,7 +470,7 @@ type logprobScore struct {
 }
 
 func dumpLogprobs(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig, promptText string) error {
-	tokens, err := engine.EncodeChatPrompt(cfg.System, promptText, cfg.ThinkMode())
+	tokens, err := encodePrompt(engine, cfg, promptText)
 	if err != nil {
 		return err
 	}

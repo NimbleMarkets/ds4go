@@ -109,6 +109,11 @@ func main() {
 }
 
 func run(cfg *cliopts.ServerConfig) error {
+	if cfg.Chdir != "" {
+		if err := os.Chdir(cfg.Chdir); err != nil {
+			return fmt.Errorf("failed to chdir to %s: %w", cfg.Chdir, err)
+		}
+	}
 	cfg.Model = models.NewManager().ResolvePath(cfg.Model)
 	var engine *ds4.Engine
 	if cfg.Lib != "" {
