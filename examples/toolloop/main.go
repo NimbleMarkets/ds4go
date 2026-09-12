@@ -14,6 +14,7 @@ import (
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/dsml"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 	"github.com/NimbleMarkets/ds4go/webtool"
 	"github.com/spf13/pflag"
 )
@@ -129,6 +130,7 @@ func run(cfg *cliopts.CLIConfig, mock, fetchImage, allowPrivate bool) error {
 }
 
 func openEngine(cfg *cliopts.CLIConfig, mock bool) (*ds4.Engine, error) {
+	cfg.Model = models.NewManager().ResolvePath(cfg.Model)
 	if mock {
 		lib := ds4api.NewMockLibrary()
 		ds4.SetDefaultLibrary(lib)

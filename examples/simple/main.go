@@ -11,6 +11,7 @@ import (
 
 	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
+	"github.com/NimbleMarkets/ds4go/internal/models"
 	"github.com/spf13/pflag"
 )
 
@@ -31,6 +32,7 @@ func main() {
 }
 
 func run(cfg *cliopts.CLIConfig) error {
+	cfg.Model = models.NewManager().ResolvePath(cfg.Model)
 	var engine *ds4.Engine
 	if cfg.Lib != "" {
 		lib, err := ds4.Load(cfg.Lib)
