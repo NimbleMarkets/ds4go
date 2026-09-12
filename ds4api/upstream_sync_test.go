@@ -290,3 +290,33 @@ func TestNewEnginePassesTensorParallelAndFullLayers(t *testing.T) {
 		t.Errorf("mock saw tp=%v full=%d set=%v, want false/5/true", me.cudaTensorParallel, me.ssdStreamingFullLayers, me.ssdStreamingFullLayersSet)
 	}
 }
+
+// ds4_session_token_logprob returns 1 on success and 0 on failure, the
+// opposite of ds4's status-code convention; the wrapper must not read a
+// successful 1 as an error.
+func TestSessionTokenLogprobHonoursBooleanReturn(t *testing.T) {
+	lib, _ := NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	session, err := eng.NewSession(4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.Sync([]int{5, 6, 7}); err != nil {
+		t.Fatal(err)
+	}
+	score, err := session.TokenLogprob(3)
+	if err != nil {
+		t.Fatalf("TokenLogprob(3): %v", err)
+	}
+	if score.ID != 3 || score.Logprob == 0 {
+		t.Errorf("score = %+v", score)
+	}
+	if _, err := session.TokenLogprob(int(mockVocabSize) + 1); err == nil {
+		t.Error("out-of-range token succeeded")
+	}
+}

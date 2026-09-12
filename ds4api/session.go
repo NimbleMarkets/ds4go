@@ -371,9 +371,10 @@ func (s *Session) TokenLogprob(token int) (TokenScore, error) {
 	}
 	defer unlock()
 	var raw cTokenScore
-	code := s.lib.raw.ds4SessionTokenLogprob(s.ptr, int32(token), &raw)
-	if err := ds4Error("ds4_session_token_logprob", code); err != nil {
-		return TokenScore{}, err
+	// Unlike ds4's status-code entry points, this one returns 1 on success
+	// and 0 when the token is out of range or the logits are not finite.
+	if ok := s.lib.raw.ds4SessionTokenLogprob(s.ptr, int32(token), &raw); ok == 0 {
+		return TokenScore{}, fmt.Errorf("ds4_session_token_logprob failed for token %d", token)
 	}
 	return TokenScore{ID: int(raw.ID), Logit: raw.Logit, Logprob: raw.Logprob}, nil
 }

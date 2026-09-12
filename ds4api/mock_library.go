@@ -461,15 +461,17 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		}
 		return mockVocabSize
 	}
+	// Upstream returns 1 on success and 0 on failure (bad session, token
+	// out of range, non-finite logits), unlike the status-code entry points.
 	r.ds4SessionTokenLogprob = func(s uintptr, token int32, out *cTokenScore) int32 {
 		sess := mockSessionPtr(s)
-		if sess == nil {
-			return -1
+		if sess == nil || token < 0 || token >= mockVocabSize {
+			return 0
 		}
 		out.ID = token
 		out.Logit = 8.5
 		out.Logprob = -0.5
-		return 0
+		return 1
 	}
 	r.ds4SessionEval = mockSessionEval
 	r.ds4SessionEvalSpeculativeArgmax = func(s uintptr, firstToken, maxTokens, eosToken int32,
