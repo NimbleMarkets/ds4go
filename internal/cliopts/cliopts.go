@@ -37,6 +37,12 @@ type CLIConfig struct {
 	MTP                        string
 	MTPDraft                   int
 	MTPMargin                  float32
+	Dspark                     bool
+	DsparkConfidence           float32
+	DsparkStrict               bool
+	MTPExactSampling           bool
+	Vision                     string
+	Images                     []string
 	Ctx                        int
 	Metal                      bool
 	CUDA                       bool
@@ -53,9 +59,19 @@ type CLIConfig struct {
 	SSDStreamingCold           bool
 	SSDStreamingCacheExperts   string
 	SSDStreamingPreloadExperts uint32
+	SSDStreamingFullLayers     int // -1 = unset (auto); >= 0 mirrors --ssd-streaming-full-layers N
 	SimulateUsedMemory         string
 	PrefillChunk               uint32
+	Power                      int
+	MTPTiming                  bool
+	CUDATensorParallel         bool
 	ExpertProfile              string
+	RawPrompt                  bool
+	PrefixFile                 string
+	DumpLogits                 string
+	DecodeConsistency          int
+	PerplexityFile             string
+	IMatrixMinExpertSamples    int
 
 	// Prompt and generation.
 	Prompt     string
@@ -94,10 +110,16 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
-	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
+	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path or installed catalog alias (see: ds4go model list)")
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
+	fs.BoolVar(&c.Dspark, "dspark", false, "enable experimental DSpark runtime speculative decoding (needs the DSpark support GGUF via --mtp)")
+	fs.Float32Var(&c.DsparkConfidence, "dspark-confidence", 0, "DSpark draft confidence threshold in (0,1]; implies --dspark")
+	fs.BoolVar(&c.DsparkStrict, "dspark-strict", false, "DSpark strict verification (target-only acceptance); implies --dspark")
+	fs.BoolVar(&c.MTPExactSampling, "mtp-exact-sampling", false, "exact p/q acceptance for DSpark and GLM MTP drafts instead of opportunistic sampling")
+	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
+	fs.StringArrayVar(&c.Images, "image", nil, "PNG or JPEG to attach to the prompt; repeatable, attached in order after the text")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated for the session")
 	fs.BoolVar(&c.Metal, "metal", false, "use the Metal graph backend")
 	fs.BoolVar(&c.CUDA, "cuda", false, "use the CUDA graph backend")
@@ -114,6 +136,10 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.BoolVar(&c.SSDStreamingCold, "ssd-streaming-cold", false, "enable SSD streaming of experts with cold cache")
 	fs.StringVar(&c.SSDStreamingCacheExperts, "ssd-streaming-cache-experts", "", "routed experts to keep in VRAM (count or <N>GB)")
 	fs.Uint32Var(&c.SSDStreamingPreloadExperts, "ssd-streaming-preload-experts", 0, "experts to preload during startup")
+	fs.IntVar(&c.SSDStreamingFullLayers, "ssd-streaming-full-layers", -1, "GLM Metal streaming: keep the first N routed layers fully resident (default: auto from the expert budget; 0 disables)")
+	fs.IntVar(&c.Power, "power", 0, "GPU duty-cycle target, 1..100 (default 100)")
+	fs.BoolVar(&c.MTPTiming, "mtp-timing", false, "enable embedded MTP and print acceptance/timing counters")
+	fs.BoolVar(&c.CUDATensorParallel, "cuda-tensor-parallel", false, "enable the paired DeepSeek tensor/expert path on an even multi-GPU CUDA placement")
 	fs.StringVar(&c.SimulateUsedMemory, "simulate-used-memory", "", "simulate a specific amount of used GPU memory (e.g. 64GB)")
 	fs.Uint32Var(&c.PrefillChunk, "prefill-chunk", 0, "prefill chunk size")
 	fs.StringVar(&c.ExpertProfile, "expert-profile", "", "load one f32 expert profile from FILE")
@@ -121,6 +147,9 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	// Prompt and generation.
 	fs.StringVarP(&c.Prompt, "prompt", "p", "", "prompt to generate from")
 	fs.StringVar(&c.PromptFile, "prompt-file", "", "read the prompt text from FILE")
+	fs.BoolVar(&c.RawPrompt, "raw", false, "tokenize the one-shot prompt without chat markers")
+	fs.BoolVar(&c.RawPrompt, "raw-prompt", false, "same as --raw")
+	fs.StringVar(&c.PrefixFile, "prefix-file", "", "preload complete alternating USER:/ASSISTANT: turns from FILE before the live conversation")
 	fs.StringVar(&c.System, "system", "You are a helpful assistant", "system prompt; empty string disables the default")
 	fs.IntVarP(&c.Tokens, "tokens", "n", 50000, "maximum tokens to generate")
 	fs.Float32Var(&c.Temp, "temp", ds4.DefaultTemperature, "sampling temperature; 0 is greedy/deterministic")
@@ -140,6 +169,10 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.StringVar(&c.IMatrixOut, "imatrix-out", "", "collect a routed-MoE activation imatrix and write llama-compatible .dat")
 	fs.IntVar(&c.IMatrixMaxPrompts, "imatrix-max-prompts", 0, "stop imatrix collection after N prompts (0 = no limit)")
 	fs.IntVar(&c.IMatrixMaxTokens, "imatrix-max-tokens", 0, "stop imatrix collection after N prompt tokens (0 = no limit)")
+	fs.IntVar(&c.IMatrixMinExpertSamples, "imatrix-min-expert-samples", 0, "continue imatrix collection until every routed expert has N samples")
+	fs.StringVar(&c.DumpLogits, "dump-logits", "", "write full next-token logits for the prompt as JSON to FILE")
+	fs.IntVar(&c.DecodeConsistency, "decode-consistency", 0, "compare N-token decode logits with a fresh full prefill")
+	fs.StringVar(&c.PerplexityFile, "perplexity-file", "", "score the raw text in FILE with teacher-forced NLL")
 	fs.BoolVar(&c.HeadTest, "head-test", false, "run the output HC/logits head after the native slice")
 	fs.BoolVar(&c.FirstTokenTest, "first-token-test", false, "run an exact CPU whole-model pass for the first prompt token")
 	fs.BoolVar(&c.MetalGraphTest, "metal-graph-test", false, "compare first GPU-resident graph stages with CPU")
@@ -191,16 +224,25 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		simUsedBytes = b
 	}
 
+	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
-	if model, ok := models.ModelForPath(c.Model); ok && model.GLM {
+	switch {
+	case ok && model.GLM:
 		// libds4 rejects an external --mtp support model for GLM. GLM 5.2's
 		// optional next-token predictor is embedded in the base GGUF instead.
 		mtpPath = ""
+	case ok && model.DSpark != "":
+		// This checkpoint pins its own DSpark drafter; libds4 rejects every
+		// other one, including the installed 0731 model --mtp defaults to.
+		// An explicit --mtp is overridden for the same reason: any other
+		// drafter fails the engine open. Absent, the path stays empty.
+		mtpPath, _ = ds4.DSparkSupportPath(c.Model)
 	}
 
-	return ds4.EngineOptions{
+	opts := ds4.EngineOptions{
 		ModelPath:                  c.Model,
 		MTPPath:                    mtpPath,
+		VisionPath:                 c.Vision,
 		Backend:                    c.SelectBackend(),
 		NThreads:                   c.Threads,
 		ContextSize:                c.Ctx,
@@ -208,6 +250,10 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		PrefillChunk:               c.PrefillChunk,
 		MTPDraftTokens:             c.MTPDraft,
 		MTPMargin:                  c.MTPMargin,
+		Dspark:                     c.dsparkEnabled(),
+		DsparkStrict:               c.DsparkStrict,
+		DsparkExactSampling:        c.MTPExactSampling,
+		DsparkConfidenceThreshold:  c.dsparkConfidence(),
 		DirectionalSteeringFile:    c.DirSteeringFile,
 		ExpertProfilePath:          c.ExpertProfile,
 		DirectionalSteeringAttn:    c.DirSteeringAttn,
@@ -215,6 +261,12 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		SSDStreamingCacheExperts:   ssdExperts,
 		SSDStreamingCacheBytes:     ssdBytes,
 		SSDStreamingPreloadExperts: c.SSDStreamingPreloadExperts,
+		SSDStreamingFullLayers:     uint32(max(c.SSDStreamingFullLayers, 0)),
+		SSDStreamingFullLayersSet:  c.SSDStreamingFullLayers >= 0,
+		CUDATensorParallel:         c.CUDATensorParallel,
+		PowerPercent:               checkPower(c.Power),
+		GLMMTP:                     c.MTPTiming,
+		GLMMTPTiming:               c.MTPTiming,
 		SimulateUsedMemoryBytes:    simUsedBytes,
 		WarmWeights:                c.WarmWeights,
 		Quality:                    c.Quality,
@@ -222,6 +274,59 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		SSDStreamingCold:           c.SSDStreamingCold,
 		InspectOnly:                c.Inspect,
 	}
+	ds4.ApplyVisionDefaults(&opts)
+	return opts
+}
+
+// dsparkEnabled mirrors upstream ds4_cli.c: --dspark-confidence and
+// --dspark-strict each imply --dspark.
+func (c *CLIConfig) dsparkEnabled() bool {
+	return c.Dspark || c.DsparkStrict || c.DsparkConfidence != 0
+}
+
+func (c *CLIConfig) dsparkConfidence() float32 {
+	return checkDsparkConfidence(c.DsparkConfidence)
+}
+
+func (c *ServerConfig) dsparkEnabled() bool {
+	return c.Dspark || c.DsparkStrict || c.DsparkConfidence != 0
+}
+
+func (c *ServerConfig) dsparkConfidence() float32 {
+	return checkDsparkConfidence(c.DsparkConfidence)
+}
+
+// checkPower enforces upstream's 1..100 range for --power; 0 means unset.
+func checkPower(v int) int {
+	if v != 0 && (v < 1 || v > 100) {
+		fmt.Fprintf(os.Stderr, "ds4: --power must be between 1 and 100\n")
+		os.Exit(2)
+	}
+	return v
+}
+
+// checkDsparkConfidence enforces upstream's parse_float_range(0, 1) for
+// --dspark-confidence. Zero means unset: libds4 only reads the threshold
+// when it is non-zero (see ds4api's DsparkConfidenceThresholdSet).
+func checkDsparkConfidence(v float32) float32 {
+	if v < 0 || v > 1 {
+		fmt.Fprintf(os.Stderr, "ds4: --dspark-confidence must be within [0, 1]\n")
+		os.Exit(2)
+	}
+	return v
+}
+
+// ImageParts returns the prompt text followed by the --image files as content
+// parts, or nil when no images were given so callers keep the text-only path.
+func (c *CLIConfig) ImageParts(prompt string) []ds4.ContentPart {
+	if len(c.Images) == 0 {
+		return nil
+	}
+	parts := []ds4.ContentPart{{Text: prompt}}
+	for _, path := range c.Images {
+		parts = append(parts, ds4.ContentPart{Image: &ds4.ImageInput{Path: path}})
+	}
+	return parts
 }
 
 // GenerateOptions builds ds4.GenerateOptions from the parsed sampling flags.
@@ -270,6 +375,11 @@ type ServerConfig struct {
 	MTP                        string
 	MTPDraft                   int
 	MTPMargin                  float32
+	Dspark                     bool
+	DsparkConfidence           float32
+	DsparkStrict               bool
+	MTPExactSampling           bool
+	Vision                     string
 	Ctx                        int
 	Tokens                     int
 	Threads                    int
@@ -287,14 +397,21 @@ type ServerConfig struct {
 	SSDStreamingCold           bool
 	SSDStreamingCacheExperts   string
 	SSDStreamingPreloadExperts uint32
+	SSDStreamingFullLayers     int // -1 = unset (auto); >= 0 mirrors --ssd-streaming-full-layers N
 	SimulateUsedMemory         string
 	PrefillChunk               uint32
+	Power                      int
+	MTPTiming                  bool
+	CUDATensorParallel         bool
 
 	// HTTP API.
 	Host  string
 	Port  int
 	CORS  bool
 	Trace string
+	// Process and scheduling (ds4-server).
+	Chdir          string
+	BatchedSession int
 
 	// Disk KV cache.
 	KVDiskDir                      string
@@ -317,10 +434,15 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.StringVar(&c.Lib, "lib", "", "libds4 shared library path (ds4go addition; empty uses DS4_LIB or DS4_DIR/lib)")
 
 	// Model and runtime.
-	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path")
+	fs.StringVarP(&c.Model, "model", "m", models.DefaultModelPath(), "GGUF model path or installed catalog alias (see: ds4go model list)")
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
+	fs.BoolVar(&c.Dspark, "dspark", false, "enable experimental DSpark runtime speculative decoding (needs the DSpark support GGUF via --mtp)")
+	fs.Float32Var(&c.DsparkConfidence, "dspark-confidence", 0, "DSpark draft confidence threshold in (0,1]; implies --dspark")
+	fs.BoolVar(&c.DsparkStrict, "dspark-strict", false, "DSpark strict verification (target-only acceptance); implies --dspark")
+	fs.BoolVar(&c.MTPExactSampling, "mtp-exact-sampling", false, "exact p/q acceptance for DSpark and GLM MTP drafts instead of opportunistic sampling")
+	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated at startup")
 	fs.IntVarP(&c.Tokens, "tokens", "n", 393216, "default max output tokens when the client omits a limit")
 	fs.IntVarP(&c.Threads, "threads", "t", 0, "CPU helper threads for lightweight host-side work")
@@ -338,12 +460,18 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.BoolVar(&c.SSDStreamingCold, "ssd-streaming-cold", false, "enable SSD streaming of experts with cold cache")
 	fs.StringVar(&c.SSDStreamingCacheExperts, "ssd-streaming-cache-experts", "", "routed experts to keep in VRAM (count or <N>GB)")
 	fs.Uint32Var(&c.SSDStreamingPreloadExperts, "ssd-streaming-preload-experts", 0, "experts to preload during startup")
+	fs.IntVar(&c.SSDStreamingFullLayers, "ssd-streaming-full-layers", -1, "GLM Metal streaming: keep the first N routed layers fully resident (default: auto from the expert budget; 0 disables)")
+	fs.IntVar(&c.Power, "power", 0, "GPU duty-cycle target, 1..100 (default 100)")
+	fs.BoolVar(&c.MTPTiming, "mtp-timing", false, "enable embedded MTP and print acceptance/timing counters")
+	fs.BoolVar(&c.CUDATensorParallel, "cuda-tensor-parallel", false, "enable the paired DeepSeek tensor/expert path on an even multi-GPU CUDA placement")
 	fs.StringVar(&c.SimulateUsedMemory, "simulate-used-memory", "", "simulate a specific amount of used GPU memory (e.g. 64GB)")
 	fs.Uint32Var(&c.PrefillChunk, "prefill-chunk", 0, "prefill chunk size")
 
 	// HTTP API.
 	fs.StringVar(&c.Host, "host", "127.0.0.1", "bind address")
 	fs.IntVar(&c.Port, "port", 8000, "bind port")
+	fs.StringVar(&c.Chdir, "chdir", "", "change working directory before loading runtime assets")
+	fs.IntVar(&c.BatchedSession, "batched-session", 0, "keep N resident sessions and batch decode-ready requests")
 	fs.BoolVar(&c.CORS, "cors", false, "add Access-Control-Allow-* headers for browser JS clients")
 	fs.StringVar(&c.Trace, "trace", "", "write a human-readable session trace to FILE")
 
@@ -392,33 +520,59 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 		simUsedBytes = b
 	}
 
+	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
-	if model, ok := models.ModelForPath(c.Model); ok && model.GLM {
+	switch {
+	case ok && model.GLM:
+		// libds4 rejects an external --mtp support model for GLM; its
+		// predictor is embedded in the base GGUF.
 		mtpPath = ""
+	case ok && model.DSpark != "":
+		// This checkpoint pins its own DSpark drafter and libds4 rejects
+		// every other one, so an explicit --mtp is overridden too: it would
+		// only fail the engine open. Absent, the path stays empty.
+		mtpPath, _ = ds4.DSparkSupportPath(c.Model)
 	}
 
-	return ds4.EngineOptions{
-		ModelPath:                  c.Model,
-		MTPPath:                    mtpPath,
-		Backend:                    c.SelectBackend(),
-		NThreads:                   c.Threads,
-		ContextSize:                c.Ctx,
-		PlacementCtxHint:           c.Ctx,
-		PrefillChunk:               c.PrefillChunk,
-		MTPDraftTokens:             c.MTPDraft,
-		MTPMargin:                  c.MTPMargin,
-		DirectionalSteeringFile:    c.DirSteeringFile,
-		DirectionalSteeringAttn:    c.DirSteeringAttn,
-		DirectionalSteeringFFN:     c.DirSteeringFFN,
-		SSDStreamingCacheExperts:   ssdExperts,
-		SSDStreamingCacheBytes:     ssdBytes,
-		SSDStreamingPreloadExperts: c.SSDStreamingPreloadExperts,
-		SimulateUsedMemoryBytes:    simUsedBytes,
-		WarmWeights:                c.WarmWeights,
-		Quality:                    c.Quality,
-		SSDStreaming:               c.SSDStreaming,
-		SSDStreamingCold:           c.SSDStreamingCold,
+	opts := ds4.EngineOptions{
+		ModelPath:        c.Model,
+		MTPPath:          mtpPath,
+		VisionPath:       c.Vision,
+		Backend:          c.SelectBackend(),
+		NThreads:         c.Threads,
+		ContextSize:      c.Ctx,
+		PlacementCtxHint: c.Ctx,
+		// ds4-server plans placement for its resident session count and lets
+		// batched sessions share one prefill workspace.
+		PlacementSessionCountHint:    max(c.BatchedSession, 1),
+		ShareSessionPrefillWorkspace: c.BatchedSession > 0,
+		PrefillChunk:                 c.PrefillChunk,
+		MTPDraftTokens:               c.MTPDraft,
+		MTPMargin:                    c.MTPMargin,
+		Dspark:                       c.dsparkEnabled(),
+		DsparkStrict:                 c.DsparkStrict,
+		DsparkExactSampling:          c.MTPExactSampling,
+		DsparkConfidenceThreshold:    c.dsparkConfidence(),
+		DirectionalSteeringFile:      c.DirSteeringFile,
+		DirectionalSteeringAttn:      c.DirSteeringAttn,
+		DirectionalSteeringFFN:       c.DirSteeringFFN,
+		SSDStreamingCacheExperts:     ssdExperts,
+		SSDStreamingCacheBytes:       ssdBytes,
+		SSDStreamingPreloadExperts:   c.SSDStreamingPreloadExperts,
+		SSDStreamingFullLayers:       uint32(max(c.SSDStreamingFullLayers, 0)),
+		SSDStreamingFullLayersSet:    c.SSDStreamingFullLayers >= 0,
+		CUDATensorParallel:           c.CUDATensorParallel,
+		PowerPercent:                 checkPower(c.Power),
+		GLMMTP:                       c.MTPTiming,
+		GLMMTPTiming:                 c.MTPTiming,
+		SimulateUsedMemoryBytes:      simUsedBytes,
+		WarmWeights:                  c.WarmWeights,
+		Quality:                      c.Quality,
+		SSDStreaming:                 c.SSDStreaming,
+		SSDStreamingCold:             c.SSDStreamingCold,
 	}
+	ds4.ApplyVisionDefaults(&opts)
+	return opts
 }
 
 func parseGibArg(s string) (uint64, error) {

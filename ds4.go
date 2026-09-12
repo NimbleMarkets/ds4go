@@ -235,17 +235,27 @@ func defaultCallbackLibrary(load bool) (*ds4api.Library, error) {
 // ApplyMTPDefaults populates MTPPath, MTPDraftTokens, and MTPMargin with
 // sensible defaults when an MTP model is installed. GLM models suppress the
 // external MTP path because their optional predictor is embedded in the base
-// GGUF. For other model families, only empty or zero fields are filled, so
-// explicit caller settings are respected.
+// GGUF. A model that pins its own DSpark drafter (see DSparkSupportPath) gets
+// that drafter or none at all, never the standard MTP model. For other model
+// families, only empty or zero fields are filled, so explicit caller settings
+// are respected.
 func ApplyMTPDefaults(opts *EngineOptions) {
 	if opts == nil {
 		return
 	}
-	if model, ok := models.ModelForPath(opts.ModelPath); ok && model.GLM {
+	model, ok := models.ModelForPath(opts.ModelPath)
+	if ok && model.GLM {
 		opts.MTPPath = ""
 		return
 	}
-	if opts.MTPPath == "" {
+	if path, required := DSparkSupportPath(opts.ModelPath); required {
+		// This checkpoint pins its own drafter and libds4 rejects any other,
+		// so never fall back to the standard MTP model: when the pinned
+		// drafter is absent the engine opens without speculative decoding.
+		if opts.MTPPath == "" {
+			opts.MTPPath = path
+		}
+	} else if opts.MTPPath == "" {
 		opts.MTPPath = DefaultMTPPath()
 	}
 	if opts.MTPPath != "" && opts.MTPDraftTokens <= 0 {

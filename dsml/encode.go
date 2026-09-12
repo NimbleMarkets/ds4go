@@ -263,6 +263,25 @@ func RenderToolResult(content string) (string, error) {
 	return toolResultStart + escapeToolResultText(content) + toolResultEnd, nil
 }
 
+// RenderToolResultParts is the multimodal counterpart of RenderToolResult,
+// for tool-result text segments that alternate with images instead of one
+// contiguous payload. Each segment is escaped exactly as RenderToolResult
+// escapes its single payload, so no segment's text can smuggle a closing
+// sentinel; the wrapper markers are applied only to the first and last
+// returned segment (both, for a single segment), so together the segments
+// still read as one wrapped tool result.
+func RenderToolResultParts(texts []string) []string {
+	out := make([]string, len(texts))
+	for i, t := range texts {
+		out[i] = escapeToolResultText(t)
+	}
+	if len(out) > 0 {
+		out[0] = toolResultStart + out[0]
+		out[len(out)-1] += toolResultEnd
+	}
+	return out
+}
+
 // RenderAssistantTurn renders one assistant history turn as raw chat-template
 // text — role marker, think block, visible content, rendered tool calls, and
 // the end-of-sentence terminator — for rendered-chat tokenization, which maps

@@ -567,3 +567,64 @@ func testManager(dir string) *Manager {
 		ProgressOut: io.Discard,
 	}
 }
+
+func TestResolvePathMapsAnInstalledAliasToItsFile(t *testing.T) {
+	m := testManager(t.TempDir())
+	vision, ok := Lookup("vision-q2")
+	if !ok {
+		t.Fatal("vision-q2 missing from the catalog")
+	}
+	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(m.ModelsDir, vision.FileName)
+	if err := os.WriteFile(want, []byte("gguf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.ResolvePath("vision-q2"); got != want {
+		t.Errorf("ResolvePath(installed alias) = %q, want %q", got, want)
+	}
+	// An alias that is not installed and a plain path both pass through
+	// untouched: the caller's not-found handling reports them.
+	if got := m.ResolvePath("vision-encoder"); got != "vision-encoder" {
+		t.Errorf("ResolvePath(uninstalled alias) = %q, want it unchanged", got)
+	}
+	if got := m.ResolvePath("/tmp/custom.gguf"); got != "/tmp/custom.gguf" {
+		t.Errorf("ResolvePath(path) = %q, want it unchanged", got)
+	}
+}
+
+func TestWithEncodersAppendsMissingVisionEncoders(t *testing.T) {
+	m := testManager(t.TempDir())
+	got, added := m.WithEncoders([]string{"glm53-q2", "q2-imatrix", "vision-q2"})
+	want := []string{"glm53-q2", "glm53-vision", "q2-imatrix", "vision-q2", "vision-encoder"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("expanded = %v, want %v", got, want)
+	}
+	if strings.Join(added, " ") != "glm53-vision vision-encoder" {
+		t.Errorf("added = %v", added)
+	}
+}
+
+func TestWithEncodersSkipsInstalledListedAndUnknown(t *testing.T) {
+	m := testManager(t.TempDir())
+	enc, _ := lookup("glm53-vision")
+	if err := os.MkdirAll(m.ModelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.ModelsDir, enc.FileName), []byte("gguf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Installed encoder: nothing to add.
+	if got, added := m.WithEncoders([]string{"glm53-q2"}); len(got) != 1 || len(added) != 0 {
+		t.Errorf("installed encoder: got %v added %v", got, added)
+	}
+	// Already requested (in either order): no duplicate.
+	if got, added := m.WithEncoders([]string{"vision-encoder", "vision-q2"}); len(got) != 2 || len(added) != 0 {
+		t.Errorf("listed encoder: got %v added %v", got, added)
+	}
+	// Unknown aliases pass through untouched for DownloadMany to report.
+	if got, added := m.WithEncoders([]string{"nope"}); len(got) != 1 || got[0] != "nope" || len(added) != 0 {
+		t.Errorf("unknown: got %v added %v", got, added)
+	}
+}

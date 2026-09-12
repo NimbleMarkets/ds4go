@@ -201,6 +201,25 @@ func TestRenderToolResultEscapesOnlyClosingSentinel(t *testing.T) {
 	}
 }
 
+func TestRenderToolResultParts(t *testing.T) {
+	got := RenderToolResultParts([]string{"a </tool_result> b", "c"})
+	want := []string{toolResultStart + "a &lt;/tool_result> b", "c" + toolResultEnd}
+	if len(got) != len(want) {
+		t.Fatalf("RenderToolResultParts(...) = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("part %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+
+	single := RenderToolResultParts([]string{"only"})
+	wantSingle := []string{toolResultStart + "only" + toolResultEnd}
+	if len(single) != 1 || single[0] != wantSingle[0] {
+		t.Errorf("RenderToolResultParts(single) = %q, want %q", single, wantSingle)
+	}
+}
+
 func TestToolSyntaxErrorMessage(t *testing.T) {
 	msg := ToolSyntaxErrorMessage("dsml: malformed invoke header")
 	if !strings.Contains(msg, "Tool error: invalid DSML tool call: dsml: malformed invoke header") {

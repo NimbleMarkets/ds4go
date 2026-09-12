@@ -265,3 +265,58 @@ func TestSessionRewindSyncedRestoresCheckpoint(t *testing.T) {
 		t.Errorf("Pos() = %d, want 2", got)
 	}
 }
+
+// CUDATensorParallel and SSDStreamingFullLayers reach ds4_engine_options
+// (upstream --cuda-tensor-parallel and --ssd-streaming-full-layers). The
+// full-layers value travels with its _set companion so an explicit 0
+// ("disable") is distinguishable from unset.
+func TestNewEnginePassesTensorParallelAndFullLayers(t *testing.T) {
+	lib, _ := NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(EngineOptions{CUDATensorParallel: true, SSDStreamingFullLayers: 0, SSDStreamingFullLayersSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	me := mockEnginePtr(eng.ptr)
+	if !me.cudaTensorParallel || me.ssdStreamingFullLayers != 0 || !me.ssdStreamingFullLayersSet {
+		t.Errorf("mock saw tp=%v full=%d set=%v, want true/0/true", me.cudaTensorParallel, me.ssdStreamingFullLayers, me.ssdStreamingFullLayersSet)
+	}
+	eng2, err := lib.NewEngine(EngineOptions{SSDStreamingFullLayers: 5, SSDStreamingFullLayersSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng2.Close()
+	if me := mockEnginePtr(eng2.ptr); me.ssdStreamingFullLayers != 5 || !me.ssdStreamingFullLayersSet || me.cudaTensorParallel {
+		t.Errorf("mock saw tp=%v full=%d set=%v, want false/5/true", me.cudaTensorParallel, me.ssdStreamingFullLayers, me.ssdStreamingFullLayersSet)
+	}
+}
+
+// ds4_session_token_logprob returns 1 on success and 0 on failure, the
+// opposite of ds4's status-code convention; the wrapper must not read a
+// successful 1 as an error.
+func TestSessionTokenLogprobHonoursBooleanReturn(t *testing.T) {
+	lib, _ := NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	session, err := eng.NewSession(4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.Sync([]int{5, 6, 7}); err != nil {
+		t.Fatal(err)
+	}
+	score, err := session.TokenLogprob(3)
+	if err != nil {
+		t.Fatalf("TokenLogprob(3): %v", err)
+	}
+	if score.ID != 3 || score.Logprob == 0 {
+		t.Errorf("score = %+v", score)
+	}
+	if _, err := session.TokenLogprob(int(mockVocabSize) + 1); err == nil {
+		t.Error("out-of-range token succeeded")
+	}
+}

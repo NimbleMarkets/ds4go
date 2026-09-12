@@ -116,6 +116,28 @@ type cSessionSnapshot struct {
 	Cap uint64
 }
 
+// cVisionEmbedding mirrors ds4_vision_embedding. Data points at
+// token_count * ds4_engine_embd_dim floats malloc'd by libds4.
+type cVisionEmbedding struct {
+	Data          unsafe.Pointer
+	TokenCount    uint32
+	Layout        uint32
+	GridWidth     uint32
+	GridHeight    uint32
+	Width         uint32
+	Height        uint32
+	ContentWidth  uint32
+	ContentHeight uint32
+	Fingerprint   [32]uint8
+}
+
+// cVisionSpan mirrors ds4_vision_span: an embedding placed at a token offset
+// inside a prompt.
+type cVisionSpan struct {
+	TokenStart uint32
+	Embedding  cVisionEmbedding
+}
+
 type rawSymbols struct {
 	ds4EngineOpen                       func(out *uintptr, opt *cEngineOptions) int32
 	ds4EngineClose                      func(e uintptr)
@@ -217,4 +239,16 @@ type rawSymbols struct {
 	ds4SessionLoadLayerPayload          func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
 	ds4EngineLayerCount                 func(e uintptr) int32
 	ds4EngineLayerCompressRatio         func(e uintptr, layer uint32) uint32
+	ds4EngineHasVision                  func(e uintptr) bool
+	ds4EngineEmbdDim                    func(e uintptr) int32
+	ds4EngineVisionEncodeFile           func(e uintptr, path string, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4EngineVisionEncodeMemory         func(e uintptr, encoded unsafe.Pointer, encodedLen uintptr, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4VisionEmbeddingFree              func(emb *cVisionEmbedding)
+	ds4PromptAppendVision               func(e uintptr, tokens *cTokens, span *cVisionSpan, emb *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4ChatAppendMultimodalMessage      func(e uintptr, tokens *cTokens, role string, textParts unsafe.Pointer, embeddings unsafe.Pointer, imageCount uintptr, spans unsafe.Pointer, err unsafe.Pointer, errCap uintptr) int32
+	ds4SessionSyncMultimodal            func(s uintptr, prompt *cTokens, images unsafe.Pointer, imageCount uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionVisionPrefixMatches       func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionVisionStateMatches        func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionRebaseVisionState         func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionHasVisionState            func(s uintptr) bool
 }

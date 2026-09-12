@@ -40,6 +40,20 @@ func EnrichEngineOpenError(err error) error {
 	return fmt.Errorf("%w\nLock holder details: %s", err, strings.Join(details, "; "))
 }
 
+// IsVisionEncoderMissing reports whether err is libds4 refusing images
+// because no encoder is available: "vision encoder is not loaded" (the model
+// was opened without EngineOptions.VisionPath, i.e. CLI --vision) or "model
+// does not support image messages", its other image refusal. Both mean the
+// same thing to a caller: the prompt carries images this engine cannot see.
+func IsVisionEncoderMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "vision encoder is not loaded") ||
+		strings.Contains(msg, "model does not support image messages")
+}
+
 func extractPIDs(msg string) []int {
 	seen := map[int]struct{}{}
 	var out []int

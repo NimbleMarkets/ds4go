@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	ds4 "github.com/NimbleMarkets/ds4go"
@@ -71,17 +73,18 @@ func newModelInfoCommand() *cobra.Command {
 func newModelDownloadCommand() *cobra.Command {
 	var token string
 	var dryRun bool
-	var force bool
+	var force, noEncoder bool
 	cmd := &cobra.Command{
-		Use:     "download [alias]",
+		Use:     "download [alias...]",
 		Aliases: []string{"pull"},
-		Short:   "Download a curated model from Hugging Face",
-		Args:    cobra.MaximumNArgs(1),
+		Short:   "Download curated models from Hugging Face, one after another",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runModelDownloadWithToken(args, token, dryRun, force)
+			return runModelDownloadWithToken(args, token, dryRun, force, noEncoder)
 		},
 	}
+	cmd.Flags().BoolVar(&noEncoder, "no-encoder", false, "do not add a vision model's encoder to the download")
 	cmd.Flags().StringVar(&token, "token", "", "Hugging Face token (defaults to HF_TOKEN or ~/.cache/huggingface/token)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be downloaded without downloading it")
 	cmd.Flags().BoolVar(&force, "force", false, "download even when the target volume looks too small")
@@ -89,19 +92,100 @@ func newModelDownloadCommand() *cobra.Command {
 }
 
 func newModelDeleteCommand() *cobra.Command {
-	var assumeYes bool
+	var assumeYes, partial bool
 	cmd := &cobra.Command{
-		Use:     "delete [alias]",
+		Use:     "delete [alias...]",
 		Aliases: []string{"rm", "remove"},
 		Short:   "Delete a downloaded model from disk",
-		Args:    cobra.MaximumNArgs(1),
+		Long: "Delete a downloaded model from disk.\n\n" +
+			"With --partial, delete only partial downloads: the named models' .part files,\n" +
+			"or with no alias every partial, quarantined, and stale lock file in the models\n" +
+			"directory. Installed models are never touched and in-progress downloads are skipped.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+			if partial {
+				return runModelDeletePartial(args, assumeYes)
+			}
+			if len(args) > 1 {
+				return fmt.Errorf("usage: ds4go model delete [alias] (several aliases need --partial)")
+			}
 			return runModelDelete(args, assumeYes)
 		},
 	}
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVar(&partial, "partial", false, "delete only partial downloads (all of them when no alias is given)")
 	return cmd
+}
+
+func runModelDeletePartial(aliases []string, assumeYes bool) error {
+	m := modelManager()
+	if len(aliases) > 0 {
+		if !assumeYes {
+			fmt.Fprintf(os.Stdout, "About to delete the partial downloads of %s from %s (installed files are kept)\n", strings.Join(aliases, ", "), m.ModelsDir)
+			result, err := tui.Confirm("Are you sure?", false, os.Stdin, os.Stdout)
+			if err != nil {
+				return fmt.Errorf("read prompt response: %w", err)
+			}
+			if result != tui.ConfirmYes {
+				fmt.Fprintln(os.Stdout, "Cancelled")
+				return nil
+			}
+		}
+		for _, alias := range aliases {
+			if err := m.DeletePartial(alias); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	items, err := m.Leftovers()
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		fmt.Fprintf(os.Stdout, "No partial downloads in %s\n", m.ModelsDir)
+		return nil
+	}
+	var total int64
+	removable := 0
+	for _, item := range items {
+		note := ""
+		if item.Locked {
+			note = "  (download in progress, kept)"
+		} else {
+			total += item.Bytes
+			removable++
+		}
+		alias := item.Alias
+		if alias == "" {
+			alias = "-"
+		}
+		fmt.Fprintf(os.Stdout, "  %-11s %10s  %-22s %s%s\n", item.Kind, models.FormatBytes(item.Bytes), alias, filepath.Base(item.Path), note)
+	}
+	if removable == 0 {
+		fmt.Fprintln(os.Stdout, "Nothing to delete: every partial download is in progress")
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "About to delete %d file(s), freeing %s in %s\n", removable, models.FormatBytes(total), m.ModelsDir)
+	if !assumeYes {
+		result, err := tui.Confirm("Are you sure?", false, os.Stdin, os.Stdout)
+		if err != nil {
+			return fmt.Errorf("read prompt response: %w", err)
+		}
+		if result != tui.ConfirmYes {
+			fmt.Fprintln(os.Stdout, "Cancelled")
+			return nil
+		}
+	}
+	removed, err := m.RemoveLeftovers(items)
+	var freed int64
+	for _, item := range removed {
+		freed += item.Bytes
+	}
+	fmt.Fprintf(os.Stdout, "Deleted %d file(s), freed %s\n", len(removed), models.FormatBytes(freed))
+	return err
 }
 
 // unknownSubcommand prints the command's help text, then returns an error so
@@ -327,35 +411,49 @@ func runModelSet(args []string) error {
 	return nil
 }
 
-func runModelDownloadWithToken(args []string, token string, dryRun, force bool) error {
-	alias := ""
-	if len(args) > 0 {
-		alias = args[0]
-	}
-	if len(args) == 0 {
+func runModelDownloadWithToken(args []string, token string, dryRun, force, noEncoder bool) error {
+	aliases := args
+	if len(aliases) == 0 {
 		m := modelManager()
 		list, _, err := m.List()
 		if err != nil {
 			return err
 		}
 		list = filterDownloadable(list)
-		alias, err = tui.PickModelAlias("Select a model to download", list, os.Stdin, os.Stderr)
+		alias, err := tui.PickModelAlias("Select a model to download", list, os.Stdin, os.Stderr)
 		if err != nil {
 			return err
 		}
-	} else if len(args) != 1 {
-		return fmt.Errorf("usage: ds4go model download [alias]")
+		aliases = []string{alias}
+	}
+	if !noEncoder {
+		var added []string
+		aliases, added = modelManager().WithEncoders(aliases)
+		for _, alias := range added {
+			fmt.Fprintf(os.Stderr, "also downloading %s, the vision encoder (--no-encoder to skip)\n", alias)
+		}
 	}
 	if dryRun {
-		_, err := modelManager().DownloadDryRun(context.Background(), alias, token)
-		return err
+		for _, alias := range aliases {
+			if _, err := modelManager().DownloadDryRun(context.Background(), alias, token); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	model, err := modelManager().Download(context.Background(), alias, token, force)
-	if err != nil {
-		return err
+	installed, err := modelManager().DownloadMany(context.Background(), aliases, token, force)
+	for _, model := range installed {
+		fmt.Fprintf(os.Stdout, "Downloaded %s\n", model.Alias)
 	}
-	fmt.Fprintf(os.Stdout, "Downloaded %s\n", model.Alias)
-	return nil
+	if err != nil && len(aliases) > 1 {
+		done := make([]string, len(installed))
+		for i, model := range installed {
+			done[i] = model.Alias
+		}
+		fmt.Fprintf(os.Stderr, "installed: %s\nnot installed: %s\n",
+			strings.Join(done, " "), strings.Join(aliases[len(installed):], " "))
+	}
+	return err
 }
 
 func runModelDelete(args []string, assumeYes bool) error {
@@ -522,6 +620,9 @@ func printModelInfo(model models.Model, m *models.Manager) {
 	fmt.Fprintf(os.Stdout, "Path:            %s\n", m.ModelsDir+"/"+model.FileName)
 	fmt.Fprintf(os.Stdout, "Size:            %.1f GiB\n", model.SizeGB)
 	fmt.Fprintf(os.Stdout, "Recommended RAM: %s\n", model.RecommendedRAM)
+	if model.Encoder != "" {
+		fmt.Fprintf(os.Stdout, "Vision encoder:  %s\n", model.Encoder)
+	}
 	fmt.Fprintf(os.Stdout, "Installed:       %t\n", model.Installed)
 	if model.Partial {
 		fmt.Fprintf(os.Stdout, "Partial:         true (%s)\n", tui.FormatPartialModel(model.PartialBytes, model.SizeGB))

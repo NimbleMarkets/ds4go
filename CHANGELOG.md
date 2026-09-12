@@ -2,6 +2,30 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+Requires libds4 **v0.5.20260910** or newer.
+
+ * **Vision**: images in conversations for DeepSeek Flash Vision-Exp and GLM 5.3 Flash, from the CLI (`--image`, `/read`), from Go (`ChatMessage.Parts`, `BuildChatPromptMultimodal`, `ImageInputPNG`/`JPEG`), in the tool loop (`ToolLoop.Images`, `workspacetool` `view_image`), and over HTTP (inline data URIs in `examples/openai-compatible`).
+ * **Model management**: `--model` takes an installed catalog alias; `model download` takes several aliases and adds a vision model's encoder; `model delete --partial` clears stalled downloads.
+ * **Upstream flag parity**: DSpark decode, hardware and placement, raw and prefix prompts, logits/perplexity/decode-consistency diagnostics, and server `--chdir` / `--batched-session`.
+ * **Fixes**: a double free after a failed multi-image append, `/read` history tied to the file path, a zero-entry encoder cache that still cached, `Session.TokenLogprob` failing on every real call, and empty completions from the example server.
+
+<details>
+<summary>Full changelog</summary>
+
+ * **Vision**: images in conversations for DeepSeek Flash Vision-Exp and GLM 5.3 Flash. `ds4api` binds the vision API; `ChatMessage.Parts` carries ordered text and image parts; `BuildChatPromptMultimodal` returns a `Prompt` with image spans; `Generator.GeneratePrompt` and `ToolLoop.Images` sync it; an `ImageEncoder` caches embeddings by image bytes. CLI: `--vision`, `--image`, and `/read` with PNG/JPEG; catalog entries `vision-q2`, `vision-q2-q4`, `vision-mxfp4`, `vision-encoder`, `vision-dspark-support`, `glm53-vision`, with the encoder paired automatically when installed. `workspacetool` gains `view_image`. A catalog vision model auto-loads its installed encoder at startup (about 1 GiB of extra mapped weights); `--vision ""` is the unset default, not a way to switch that off, so remove or rename the encoder GGUF to run such a model text-only. Vision-Exp checkpoints pin their own DSpark drafter (`vision-dspark-support`): `--mtp` resolves to that drafter or to none, never to the 0731 support model, which libds4 rejects against them.
+ * **Vision from Go**: `ImageInputPNG` / `ImageInputJPEG` encode an `image.Image` into an `ImageInput`; `ParseOpenAIContent` decodes an OpenAI-wire `content` field (string, or text and inline data-URI `image_url` parts) into `ContentPart`s, with `MaxHTTPImages` (16) as upstream's per-request cap.
+ * **HTTP images**: `examples/openai-compatible` accepts inline PNG/JPEG data URIs in user and tool messages, caps requests at 16 images and a 64 MiB body, and rejects remote URLs and file paths, matching `ds4-server`. Images against a text-only engine answer 400 with the `--vision` hint.
+ * **`--model` aliases**: `ds4go prompt --model glm53-q2` resolves an installed catalog alias to its GGUF (also in the example server); an alias that is not installed now hints `ds4go model download <alias>`.
+ * **`model download`**: several aliases in one command, fetched in order with the combined size checked against free space first; a vision model's encoder is added automatically when missing (`--no-encoder` opts out); a failure stops the run and reports what was installed.
+ * **`model delete --partial`**: removes stalled `.part` downloads, quarantined `.bad-*` files, and stale lock files without touching installed models, per alias or as a sweep with a confirmation listing; in-progress downloads are kept.
+ * **Upstream flag parity**: `--dspark`, `--dspark-confidence`, `--dspark-strict`, `--mtp-exact-sampling`; `--power`, `--mtp-timing`, `--cuda-tensor-parallel`, `--ssd-streaming-full-layers` (both flag sets; the last two gain `EngineOptions` fields); `--raw` / `--raw-prompt`, `--prefix-file` (parser ported from `ds4_prompt_prefix.c`, seeds chat too), `--dump-logits`, `--decode-consistency`, `--perplexity-file`, `--imatrix-min-expert-samples`; server `--chdir` and `--batched-session`. Still absent: `--gpu-devices` / `--gpu-vram` (needs the GPU-config engine entry point and a VRAM probe libds4 does not export) and `--mixed-prefill-quantum` (a scheduler knob with nothing to drive in the example server).
+ * **Fixes**: a failed multi-image `ChatAppendMultimodalMessage` left Go handles pointing at buffers libds4 had already replaced and freed (double free on cleanup); `/read` kept the image path instead of its bytes, so re-rendered history broke if the file moved; `ImageEncoder.SetLimits(0, ...)` still cached one entry; `Session.TokenLogprob` read `ds4_session_token_logprob`'s success return (1) as an error, so it failed on every real call; the example server rendered prompts in thinking mode but stop-detected as if thinking were off, so every completion came back empty.
+ * **Chat mode prompt rendering**: `ds4go prompt` chat turns now render through the shared tool-aware prompt builder, so Think Max's prefix and GLM's reasoning-effort line appear in chat mode as upstream's CLI emits them, and assistant turns replay through the rendered-chat tokenizer.
+
+</details>
+
 ## v0.6.0 (2026-09-10)
 
 Requires libds4 **v0.5.20260910** or newer (NimbleMarkets/ds4 `nm-shared`, rebased on upstream ds4 6289c51). The engine options struct changed shape upstream, and older libraries misread it; `ds4go install` picks up the current release.

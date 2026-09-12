@@ -41,3 +41,10 @@ func TestModelFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestModelFlagsShowVisionEncoder(t *testing.T) {
+	got := ModelFlags(models.Model{Vision: true, Encoder: "glm53-vision", GLM: true})
+	if !strings.Contains(got, "vision: glm53-vision") || !strings.Contains(got, "glm") {
+		t.Fatalf("ModelFlags = %q", got)
+	}
+}

@@ -371,9 +371,10 @@ func (s *Session) TokenLogprob(token int) (TokenScore, error) {
 	}
 	defer unlock()
 	var raw cTokenScore
-	code := s.lib.raw.ds4SessionTokenLogprob(s.ptr, int32(token), &raw)
-	if err := ds4Error("ds4_session_token_logprob", code); err != nil {
-		return TokenScore{}, err
+	// Unlike ds4's status-code entry points, this one returns 1 on success
+	// and 0 when the token is out of range or the logits are not finite.
+	if ok := s.lib.raw.ds4SessionTokenLogprob(s.ptr, int32(token), &raw); ok == 0 {
+		return TokenScore{}, fmt.Errorf("ds4_session_token_logprob failed for token %d", token)
 	}
 	return TokenScore{ID: int(raw.ID), Logit: raw.Logit, Logprob: raw.Logprob}, nil
 }
@@ -475,11 +476,16 @@ func (s *Session) Rewind(pos int) {
 
 // RewindSynced rewinds to pos and then restores a valid checkpoint for the
 // retained prefix when the rewind lost it, mirroring upstream's
-// agent_worker_rewind / server_generation_rewind: after ds4_session_rewind the
-// retained tokens are copied and, if ds4_session_common_prefix no longer
-// covers them, synced again. A rewind at or past the current position is a
-// no-op.
-func (s *Session) RewindSynced(pos int) error {
+// agent_worker_rewind / server_generation_rewind. spans are the image spans
+// of the prompt the session was synced with, classified against the retained
+// prefix length: a span entirely inside it is kept and passed to the
+// multimodal sync, as the header requires for image-bearing sessions; a span
+// entirely after it is dropped; a span straddling the cut point is an error,
+// since the retained prefix would then contain a partial image. A rewind at
+// or past the current position is a no-op. Note that by the time a straddling
+// span is detected the session has already been rewound (Rewind is
+// unconditional), so on that error the session is left needing a fresh sync.
+func (s *Session) RewindSynced(pos int, spans ...VisionSpan) error {
 	if s == nil {
 		return errors.New("ds4: nil session")
 	}
@@ -496,7 +502,20 @@ func (s *Session) RewindSynced(pos int) error {
 		return err
 	}
 	defer prefix.Free()
-	return s.SyncTokens(prefix)
+	n := prefix.Len()
+	var kept []VisionSpan
+	for _, sp := range spans {
+		end := sp.TokenStart + sp.Embedding.TokenCount()
+		switch {
+		case end <= n:
+			kept = append(kept, sp)
+		case sp.TokenStart >= n:
+			// Entirely after the retained prefix: dropped.
+		default:
+			return fmt.Errorf("ds4: rewind position %d splits image span at %d..%d", pos, sp.TokenStart, end)
+		}
+	}
+	return s.SyncMultimodal(prefix, kept)
 }
 
 // Pos returns the current session token position.

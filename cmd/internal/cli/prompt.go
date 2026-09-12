@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -19,6 +21,37 @@ import (
 type cliMessage struct {
 	role    string
 	content string
+	// parts, when set, is the multimodal content (text and images) and
+	// replaces content for prompt rendering.
+	parts []ds4.ContentPart
+}
+
+// isImageFile reports whether data starts with a PNG or JPEG signature.
+func isImageFile(data []byte) bool {
+	return bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) || bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff})
+}
+
+// readInputMessage turns a /read file into the next user message: images
+// become an image part after a short caption, anything else is the text.
+// The image part carries the bytes rather than the path: chat history is
+// re-rendered every turn, and the file may be deleted or overwritten by then.
+func readInputMessage(path string, data []byte) cliMessage {
+	if isImageFile(data) {
+		return cliMessage{role: "user", parts: []ds4.ContentPart{
+			{Text: "[image: " + filepath.Base(path) + "]\n"},
+			{Image: &ds4.ImageInput{Data: data}},
+		}}
+	}
+	return cliMessage{role: "user", content: string(data)}
+}
+
+// visionHint is the one-line remedy when an image is used without an encoder.
+func visionHint(cfg *cliopts.CLIConfig) string {
+	hint := "start with --vision ENCODER.gguf"
+	if model, ok := models.ModelForPath(cfg.Model); ok && model.Encoder != "" {
+		hint += " (or: ds4go model download " + model.Encoder + ", which pairs automatically)"
+	}
+	return hint
 }
 
 func newPromptCommand() *cobra.Command {
@@ -39,6 +72,10 @@ func newPromptCommand() *cobra.Command {
 }
 
 func run(cfg *cliopts.CLIConfig) error {
+	if err := validatePromptFlags(cfg); err != nil {
+		return err
+	}
+	cfg.Model = modelManager().ResolvePath(cfg.Model)
 	if err := preflightPromptModel(cfg.Model); err != nil {
 		return err
 	}
@@ -68,9 +105,16 @@ func run(cfg *cliopts.CLIConfig) error {
 		if name := engine.ModelName(); name != "" {
 			fmt.Printf("Model: %s (id=%d)\n", name, engine.ModelID())
 		}
+		if engine.HasVision() {
+			fmt.Println("Vision encoder: loaded")
+		} else {
+			fmt.Println("Vision encoder: none")
+		}
 		return nil
 	case cfg.IMatrixOut != "":
-		return engine.CollectIMatrix(cfg.IMatrixDataset, cfg.IMatrixOut, cfg.Ctx, cfg.IMatrixMaxPrompts, cfg.IMatrixMaxTokens)
+		return collectIMatrix(engine, cfg)
+	case cfg.PerplexityFile != "":
+		return runPerplexity(engine, cfg, os.Stdout)
 	}
 
 	if diag := diagnostic(cfg); diag != "" {
@@ -86,6 +130,17 @@ func run(cfg *cliopts.CLIConfig) error {
 	promptText, err := cfg.PromptText()
 	if err != nil {
 		return err
+	}
+	if cfg.DumpLogits != "" || cfg.DecodeConsistency > 0 {
+		prompt, err := encodePrompt(engine, cfg, promptText)
+		if err != nil {
+			return err
+		}
+		defer prompt.Free()
+		if cfg.DumpLogits != "" {
+			return dumpLogits(engine, session, cfg, prompt)
+		}
+		return runDecodeConsistency(engine, cfg, prompt, os.Stderr)
 	}
 	if cfg.DumpLogprobs != "" {
 		return dumpLogprobs(engine, session, cfg, promptText)
@@ -120,6 +175,10 @@ func preflightPromptModel(path string) error {
 		}
 		return fmt.Errorf("configured default model %q is not available at %s\nRun: ds4go model download %s\nOr:  ds4go model set <installed-alias>", cfg.DefaultModel, path, cfg.DefaultModel)
 	}
+	if _, ok := models.Lookup(path); ok {
+		// A catalog alias that is not installed yet.
+		return fmt.Errorf("model %s is not installed\nRun: ds4go model download %s", path, path)
+	}
 	return fmt.Errorf("model file not found: %s\nUse --model PATH or run: ds4go model download %s", path, models.RecommendedModelAlias)
 }
 
@@ -148,7 +207,7 @@ func runDiagnostic(engine *ds4.Engine, cfg *cliopts.CLIConfig, diag string) erro
 	if err != nil {
 		return err
 	}
-	prompt, err := engine.EncodeChatPrompt(cfg.System, promptText, cfg.ThinkMode())
+	prompt, err := encodePrompt(engine, cfg, promptText)
 	if err != nil {
 		return err
 	}
@@ -173,28 +232,60 @@ func runDiagnostic(engine *ds4.Engine, cfg *cliopts.CLIConfig, diag string) erro
 }
 
 func generateOne(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig, promptText string) error {
-	tokens, err := engine.EncodeChatPrompt(cfg.System, promptText, cfg.ThinkMode())
-	if err != nil {
-		return err
-	}
-	defer tokens.Free()
-
 	opts := cfg.GenerateOptions()
 	opts.OnToken = func(token int) {
 		if text, err := engine.TokenText(token); err == nil {
 			fmt.Print(text)
 		}
 	}
+
+	if parts := cfg.ImageParts(promptText); parts != nil {
+		msgs := []ds4.ChatMessage{{Role: "user", Parts: parts}}
+		prompt, err := ds4.BuildChatPromptMultimodal(engine, ds4.NewImageEncoder(engine), cfg.System, nil, msgs, cfg.ThinkMode())
+		if err != nil {
+			if ds4.IsVisionEncoderMissing(err) {
+				fmt.Fprintln(os.Stderr, "ds4: this prompt has an image but no vision encoder is loaded; "+visionHint(cfg))
+			}
+			return err
+		}
+		defer prompt.Free()
+		_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, opts)
+		fmt.Println()
+		if err != nil && ds4.IsVisionEncoderMissing(err) {
+			fmt.Fprintln(os.Stderr, "ds4: this prompt has an image but no vision encoder is loaded; "+visionHint(cfg))
+		}
+		return err
+	}
+
+	tokens, err := encodePrompt(engine, cfg, promptText)
+	if err != nil {
+		return err
+	}
+	defer tokens.Free()
+
 	_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(tokens, opts)
 	fmt.Println()
 	return err
 }
 
 func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) error {
-	var history []cliMessage
+	// A --prefix-file seeds the conversation, as upstream's REPL does.
+	history, err := prefixHistory(cfg)
+	if err != nil {
+		return err
+	}
 	in := bufio.NewScanner(os.Stdin)
 	thinkMode := cfg.ThinkMode()
 	ctxSize := cfg.Ctx
+	images := ds4.NewImageEncoder(engine)
+
+	// Mirror --inspect's wording so it is clear up front whether /read can
+	// attach an image this session.
+	if engine.HasVision() {
+		fmt.Println("Vision encoder: loaded")
+	} else {
+		fmt.Println("Vision encoder: none")
+	}
 
 	defer func() {
 		if session != nil {
@@ -226,7 +317,8 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 				fmt.Println("  /nothink       Disable thinking mode.")
 				fmt.Println("  /ctx N         Set context size for following prompts.")
 				fmt.Println("  /power N       Set GPU duty cycle percentage, 1..100.")
-				fmt.Println("  /read FILE     Read a prompt from FILE and run it.")
+				fmt.Println("  /read FILE     Send FILE as the next turn: a PNG or JPEG as an image, anything else as text.")
+				fmt.Println("                 A PNG or JPEG is attached as an image instead (needs a vision encoder).")
 				fmt.Println("  /quit, /exit   Leave the prompt.")
 				continue
 
@@ -298,9 +390,8 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "ds4: failed to read %s: %v\n", filePath, err)
 					} else {
-						promptText := string(content)
 						fmt.Printf("[Reading prompt from %s...]\n", filePath)
-						err := runChatTurn(engine, session, cfg, &history, promptText, thinkMode)
+						err := runChatTurn(engine, session, cfg, images, &history, readInputMessage(filePath, content), thinkMode)
 						if err != nil {
 							fmt.Fprintf(os.Stderr, "Generation error: %v\n", err)
 						}
@@ -314,18 +405,21 @@ func chat(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig) erro
 			}
 		}
 
-		err := runChatTurn(engine, session, cfg, &history, line, thinkMode)
+		err := runChatTurn(engine, session, cfg, images, &history, cliMessage{role: "user", content: line}, thinkMode)
 		if err != nil {
 			return err
 		}
 	}
 }
 
-func runChatTurn(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig, history *[]cliMessage, promptText string, thinkMode ds4.ThinkMode) error {
-	*history = append(*history, cliMessage{role: "user", content: promptText})
-	prompt, err := buildChatPrompt(engine, cfg.System, *history, thinkMode)
+func runChatTurn(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig, images *ds4.ImageEncoder, history *[]cliMessage, msg cliMessage, thinkMode ds4.ThinkMode) error {
+	*history = append(*history, msg)
+	prompt, err := buildChatPrompt(engine, images, cfg.System, *history, thinkMode)
 	if err != nil {
 		*history = (*history)[:len(*history)-1]
+		if ds4.IsVisionEncoderMissing(err) {
+			fmt.Fprintln(os.Stderr, "ds4: this prompt has an image but no vision encoder is loaded; "+visionHint(cfg))
+		}
 		return err
 	}
 	defer prompt.Free()
@@ -341,42 +435,25 @@ func runChatTurn(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfi
 			fmt.Print(text)
 		}
 	}
-	_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, opts)
+	_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, opts)
 	fmt.Println()
 	if err != nil {
 		*history = (*history)[:len(*history)-1]
+		if ds4.IsVisionEncoderMissing(err) {
+			fmt.Fprintln(os.Stderr, "ds4: this prompt has an image but no vision encoder is loaded; "+visionHint(cfg))
+		}
 		return err
 	}
 	*history = append(*history, cliMessage{role: "assistant", content: response.String()})
 	return nil
 }
 
-func buildChatPrompt(engine *ds4.Engine, system string, history []cliMessage, think ds4.ThinkMode) (*ds4.Tokens, error) {
-	tokens, err := engine.NewTokens(nil)
-	if err != nil {
-		return nil, err
+func buildChatPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, system string, history []cliMessage, think ds4.ThinkMode) (*ds4.Prompt, error) {
+	msgs := make([]ds4.ChatMessage, 0, len(history))
+	for _, m := range history {
+		msgs = append(msgs, ds4.ChatMessage{Role: m.role, Content: m.content, Parts: m.parts})
 	}
-	if err := engine.ChatBegin(tokens); err != nil {
-		tokens.Free()
-		return nil, err
-	}
-	if system != "" {
-		if err := engine.ChatAppendMessage(tokens, "system", system); err != nil {
-			tokens.Free()
-			return nil, err
-		}
-	}
-	for _, msg := range history {
-		if err := engine.ChatAppendMessage(tokens, msg.role, msg.content); err != nil {
-			tokens.Free()
-			return nil, err
-		}
-	}
-	if err := engine.ChatAppendAssistantPrefix(tokens, think); err != nil {
-		tokens.Free()
-		return nil, err
-	}
-	return tokens, nil
+	return ds4.BuildChatPromptMultimodal(engine, images, system, nil, msgs, think)
 }
 
 // logprobStep is one greedy generation step recorded by --dump-logprobs.
@@ -393,7 +470,7 @@ type logprobScore struct {
 }
 
 func dumpLogprobs(engine *ds4.Engine, session *ds4.Session, cfg *cliopts.CLIConfig, promptText string) error {
-	tokens, err := engine.EncodeChatPrompt(cfg.System, promptText, cfg.ThinkMode())
+	tokens, err := encodePrompt(engine, cfg, promptText)
 	if err != nil {
 		return err
 	}

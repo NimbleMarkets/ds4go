@@ -75,6 +75,7 @@ workspace, err := workspacetool.New(workspacetool.Config{
 | `more` | Continue the previous chunked read. |
 | `list` | List one directory compactly. |
 | `search` | Search text files with literal or regexp matching. |
+| `view_image` | Open a PNG or JPEG in the workspace as an image observation; needs an engine opened with a vision encoder. |
 
 `RegisterEditing` registers the read-only tools plus:
 

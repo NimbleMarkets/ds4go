@@ -118,7 +118,15 @@ type ToolLoop struct {
 	// CompleteFunc overrides the default generator-backed completion path.
 	// When nil, Run uses Generator.GenerateTokens and Engine.TokenText.
 	CompleteFunc func(prompt *Tokens, opts GenerateOptions) (string, error)
+	// Images encodes image parts in the history and tool results. When nil,
+	// a history containing images is an error.
+	Images *ImageEncoder
 }
+
+// ErrCompleteFuncCannotCarryImages is returned when CompleteFunc is set and
+// the history has image parts: the override takes tokens only, and silently
+// dropping the images would change the model's input.
+var ErrCompleteFuncCannotCarryImages = errors.New("ds4go: CompleteFunc takes a token prompt and cannot carry images")
 
 // ToolLoopOptions configures one tool loop run.
 type ToolLoopOptions struct {
@@ -178,11 +186,11 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 		if err := ctx.Err(); err != nil {
 			return ToolLoopResult{}, err
 		}
-		prompt, err := l.Tools.BuildPrompt(l.Engine, opts.System, history, l.effectiveThinkMode())
+		prompt, err := l.Tools.BuildPromptMultimodal(l.Engine, l.Images, opts.System, history, l.effectiveThinkMode())
 		if err != nil {
 			return ToolLoopResult{}, err
 		}
-		text, err := l.CompleteTurn(prompt, opts.Generate, opts.OnStreamEvent)
+		text, err := l.CompletePrompt(prompt, opts.Generate, opts.OnStreamEvent)
 		prompt.Free()
 		if err != nil {
 			return ToolLoopResult{}, err
@@ -236,6 +244,19 @@ func (l ToolLoop) Run(opts ToolLoopOptions) (ToolLoopResult, error) {
 // that drive their own tool loop (custom execution, per-round UI events)
 // but want the library's stream-driven recovery behaviors.
 func (l ToolLoop) CompleteTurn(prompt *Tokens, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
+	return l.complete(&Prompt{Tokens: prompt}, opts, onEvent)
+}
+
+// CompletePrompt is CompleteTurn for a rendered Prompt. With no image spans it
+// behaves exactly like CompleteTurn; with spans it syncs through the
+// multimodal path. CompleteFunc cannot be used with an image prompt.
+func (l ToolLoop) CompletePrompt(prompt *Prompt, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
+	if len(prompt.Images) == 0 {
+		return l.CompleteTurn(prompt.Tokens, opts, onEvent)
+	}
+	if l.CompleteFunc != nil {
+		return "", ErrCompleteFuncCannotCarryImages
+	}
 	return l.complete(prompt, opts, onEvent)
 }
 
@@ -249,14 +270,14 @@ func (l ToolLoop) effectiveThinkMode() ThinkMode {
 	return l.ThinkMode
 }
 
-func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
+func (l ToolLoop) complete(prompt *Prompt, opts GenerateOptions, onEvent func(dsml.StreamEvent)) (string, error) {
 	// Stop detection has to agree with how the prompt was rendered: in a
 	// thinking turn the <think>/</think> markers are content, not turn-ending
 	// control tokens. The loop's think mode governs both, so it wins over
 	// whatever the caller left in GenerateOptions.
 	opts.ThinkMode = l.effectiveThinkMode()
 	if l.CompleteFunc != nil {
-		return l.CompleteFunc(prompt, opts)
+		return l.CompleteFunc(prompt.Tokens, opts)
 	}
 	// remaining is the turn's token budget shared across the initial
 	// generation, any think-recovery injection, and resumed generation,
@@ -290,12 +311,15 @@ func (l ToolLoop) complete(prompt *Tokens, opts GenerateOptions, onEvent func(ds
 		g := Generator{Engine: l.Engine, Session: l.Session}
 		if !started {
 			started = true
-			_, err := g.GenerateTokens(prompt, generate)
+			_, err := g.GeneratePrompt(prompt, generate)
 			return err
 		}
 		// Resumption after a think-recovery injection continues from the
 		// session's current logits; re-syncing the prompt would rewind the
-		// tokens generated so far.
+		// tokens generated so far. Images carries the prompt's spans so a
+		// span-aware rewind (a cut speculative block, think recovery) still
+		// has them.
+		generate.Images = prompt.Images
 		_, err := g.Continue(generate)
 		return err
 	}

@@ -281,6 +281,104 @@ func (m *Manager) Download(ctx context.Context, alias, token string, force bool)
 	return model, nil
 }
 
+// WithEncoders appends each requested vision model's encoder alias right
+// after it when the encoder is neither installed nor already in the list,
+// so one download command yields a usable vision setup. Unknown aliases
+// pass through for DownloadMany to report. added lists the appended aliases.
+func (m *Manager) WithEncoders(aliases []string) (expanded, added []string) {
+	requested := make(map[string]bool, len(aliases))
+	for _, alias := range aliases {
+		requested[alias] = true
+	}
+	expanded = make([]string, 0, len(aliases)+1)
+	for _, alias := range aliases {
+		expanded = append(expanded, alias)
+		model, ok := lookup(alias)
+		if !ok || !model.Vision || model.Encoder == "" || requested[model.Encoder] {
+			continue
+		}
+		encoder, ok := lookup(model.Encoder)
+		if !ok || m.installed(encoder) {
+			continue
+		}
+		requested[model.Encoder] = true
+		expanded = append(expanded, model.Encoder)
+		added = append(added, model.Encoder)
+	}
+	return expanded, added
+}
+
+// DownloadMany downloads aliases one after another, in the order given.
+// Every alias is validated and the combined catalog size of the models not
+// yet installed is checked against the volume before the first byte moves,
+// so a typo or a full disk fails up front rather than hours in. It stops at
+// the first failure and returns the models installed so far along with an
+// error naming the alias that failed. Each download still runs Download's
+// own remote-size space check.
+func (m *Manager) DownloadMany(ctx context.Context, aliases []string, token string, force bool) ([]Model, error) {
+	models := make([]Model, 0, len(aliases))
+	for _, alias := range aliases {
+		model, ok := lookup(alias)
+		if !ok {
+			return nil, unknownAlias(alias)
+		}
+		models = append(models, model)
+	}
+	if !force && len(models) > 1 {
+		if err := m.checkCombinedDiskSpace(models); err != nil {
+			return nil, err
+		}
+	}
+	installed := make([]Model, 0, len(models))
+	for _, model := range models {
+		got, err := m.Download(ctx, model.Alias, token, force)
+		if err != nil {
+			return installed, fmt.Errorf("%s: %w", model.Alias, err)
+		}
+		installed = append(installed, got)
+	}
+	return installed, nil
+}
+
+// checkCombinedDiskSpace estimates the space a set of downloads needs from
+// the catalog sizes of the models not already installed, less any partial
+// files, and refuses when the volume cannot hold all of them.
+func (m *Manager) checkCombinedDiskSpace(models []Model) error {
+	var remaining int64
+	var pending []string
+	for _, model := range models {
+		if m.installed(model) {
+			continue
+		}
+		total := int64(model.SizeGB * (1 << 30))
+		_, have := m.partial(model)
+		if total > have {
+			remaining += total - have
+		}
+		pending = append(pending, model.Alias)
+	}
+	if remaining <= 0 {
+		return nil
+	}
+	avail, err := availableBytesFor(m.ModelsDir)
+	if err != nil {
+		return nil
+	}
+	need := uint64(remaining) + diskSpaceReserve
+	if avail >= need {
+		return nil
+	}
+	return fmt.Errorf("not enough free space for %s:\n"+
+		"  need      %s  (%s remaining + %s reserve)\n"+
+		"  available %s  on %s\n"+
+		"  short by  %s\n"+
+		"Re-run with --force to download anyway",
+		strings.Join(pending, ", "),
+		formatBytes(int64(need)), formatBytes(remaining), formatBytes(diskSpaceReserve),
+		formatBytes(int64(avail)), m.ModelsDir,
+		formatBytes(int64(need-avail)))
+}
+
 // DownloadDryRun resolves alias and reports what Download would fetch — the
 // source URL, destination path, remote size/SHA256, and current local state —
 // without downloading anything.
@@ -471,6 +569,18 @@ func (m *Manager) hasActiveDefaultLocked() bool {
 		}
 	}
 	return false
+}
+
+// ResolvePath maps an installed catalog alias to its GGUF file under
+// ModelsDir, so --model accepts the same names as `model download`. Any
+// other value, including an alias that is not installed, is returned
+// unchanged for the caller to report.
+func (m *Manager) ResolvePath(value string) string {
+	model, ok := Lookup(value)
+	if !ok || !m.installed(model) {
+		return value
+	}
+	return filepath.Join(m.ModelsDir, model.FileName)
 }
 
 func (m *Manager) installed(model Model) bool {
@@ -907,6 +1017,9 @@ func huggingFaceToken() string {
 	}
 	return strings.TrimSpace(string(b))
 }
+
+// FormatBytes renders n in the binary units the CLI uses.
+func FormatBytes(n int64) string { return formatBytes(n) }
 
 func formatBytes(n int64) string {
 	const unit = 1024

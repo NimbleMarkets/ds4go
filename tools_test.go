@@ -553,3 +553,37 @@ func TestHistoryUsesToolContext(t *testing.T) {
 		t.Fatal("assistant tool calls not reported as tool context")
 	}
 }
+
+func TestExecuteToolCallsKeepsImageParts(t *testing.T) {
+	reg := NewToolRegistry()
+	reg.MustRegister(MultimodalTool{ToolSchema: ToolSchema{Name: "shot", Parameters: json.RawMessage(`{"type":"object"}`)},
+		Handler: func(ctx context.Context, args json.RawMessage) (ToolResult, error) {
+			return ToolResult{Parts: []ContentPart{{Text: "[shot]\n"}, {Image: &ImageInput{Data: []byte("png")}}}}, nil
+		}})
+	reg.MustRegister(MultimodalTool{ToolSchema: ToolSchema{Name: "plain", Parameters: json.RawMessage(`{"type":"object"}`)},
+		Handler: func(ctx context.Context, args json.RawMessage) (ToolResult, error) {
+			return ToolResult{Parts: []ContentPart{{Text: "a"}, {Text: "b"}}}, nil
+		}})
+	msgs, err := reg.ExecuteToolCalls(context.Background(), []ToolCall{{ID: "1", Name: "shot", Arguments: "{}"}, {ID: "2", Name: "plain", Arguments: "{}"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 || msgs[0].Role != "tool" || msgs[0].ToolCallID != "1" {
+		t.Fatalf("messages = %+v", msgs)
+	}
+	if len(msgs[0].Parts) != 2 || msgs[0].Parts[1].Image == nil || msgs[0].Content != "" {
+		t.Errorf("image result = %+v, want Parts with the image and empty Content", msgs[0])
+	}
+	if msgs[1].Parts != nil || msgs[1].Content != "ab" {
+		t.Errorf("text-only result = %+v, want Content \"ab\" and no Parts", msgs[1])
+	}
+}
+
+func TestMultimodalToolInvokeIsTextOnly(t *testing.T) {
+	tool := MultimodalTool{ToolSchema: ToolSchema{Name: "x"}, Handler: func(context.Context, json.RawMessage) (ToolResult, error) {
+		return ToolResult{Parts: []ContentPart{{Text: "t"}, {Image: &ImageInput{Data: []byte("p")}}}}, nil
+	}}
+	if _, err := tool.Invoke(context.Background(), nil); err == nil {
+		t.Fatal("Invoke returned an image result as text")
+	}
+}

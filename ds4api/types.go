@@ -193,6 +193,15 @@ type EngineOptions struct {
 	SSDStreamingCacheBytes uint64
 	// SSDStreamingPreloadExperts is the number of experts to preload during startup.
 	SSDStreamingPreloadExperts uint32
+	// SSDStreamingFullLayers keeps the first N routed layers fully resident
+	// under GLM Metal streaming (upstream --ssd-streaming-full-layers). ds4
+	// only reads it when SSDStreamingFullLayersSet is true, so an explicit 0
+	// ("disable") stays distinct from the default of auto-sizing.
+	SSDStreamingFullLayers    uint32
+	SSDStreamingFullLayersSet bool
+	// CUDATensorParallel enables the paired DeepSeek tensor/expert path on an
+	// even multi-GPU CUDA placement (upstream --cuda-tensor-parallel).
+	CUDATensorParallel bool
 	// SimulateUsedMemoryBytes simulates a specific amount of used GPU memory in bytes.
 	SimulateUsedMemoryBytes uint64
 	// WarmWeights asks ds4 to warm model weights after load.

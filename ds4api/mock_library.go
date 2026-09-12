@@ -6,6 +6,7 @@
 package ds4api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -54,6 +55,17 @@ func (m *mockStderrStream) write(msg string) {
 // mocks: TestSessionCopyLogits asserts the two agree.
 const mockVocabSize int32 = 129280
 
+// mockEmbdDim is the row width the mock vision encoder reports and produces.
+// Untyped so it compares directly against both Engine.EmbdDim's int and the
+// raw ds4EngineEmbdDim int32 return without an explicit conversion.
+const mockEmbdDim = 8
+
+// mockImageToken is the placeholder id the mock chat/prompt appenders emit
+// for each embedding row. mockImageStart and mockImageEnd bracket the block
+// ds4_prompt_append_vision writes.
+const mockImageToken int32 = 7
+const mockImageStart, mockImageEnd int32 = 8, 9
+
 // Mock special-token ids and prefill geometry. The role tokens double as GLM
 // generation stops in the mock's ds4_token_is_stop.
 const (
@@ -72,12 +84,16 @@ const (
 type MockControls struct {
 	mu              sync.RWMutex
 	glm             bool
+	vision          bool
+	multimodalFail  int // image index at which the mock multimodal append fails; -1 never
+	imatrix         *IMatrixCall
 	stops           map[int32]bool
 	thinking        map[int32]bool
 	specArgmaxCall  int
 	specSampledCall int
 	syncCalls       int
 	rewindCalls     int
+	multimodalSyncs int
 }
 
 // SyncCalls reports how many ds4_session_sync calls the mock has served, so
@@ -93,6 +109,14 @@ func (c *MockControls) RewindCalls() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.rewindCalls
+}
+
+// MultimodalSyncCalls reports how many ds4_session_sync_multimodal calls the
+// mock served.
+func (c *MockControls) MultimodalSyncCalls() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.multimodalSyncs
 }
 
 func (c *MockControls) count(field *int) {
@@ -124,6 +148,49 @@ func (c *MockControls) SetGLM(enabled bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.glm = enabled
+}
+
+// SetVision makes the mock engine report a loaded vision encoder
+// (ds4_engine_has_vision) so encode and multimodal calls succeed.
+func (c *MockControls) SetVision(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.vision = enabled
+}
+
+func (c *MockControls) hasVision() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.vision
+}
+
+// IMatrixCall records the arguments of the last ds4_engine_collect_imatrix
+// call the mock served.
+type IMatrixCall struct {
+	Dataset, Output                                  string
+	CtxSize, MaxPrompts, MaxTokens, MinExpertSamples int
+}
+
+// LastIMatrixCall returns the most recent imatrix collection call, or nil.
+func (c *MockControls) LastIMatrixCall() *IMatrixCall {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.imatrix
+}
+
+// SetMultimodalAppendFailAt makes ds4_chat_append_multimodal_message fail
+// when it reaches image index (0-based) after appending the earlier ones, the
+// way libds4 fails on a bad layout mid-message. Pass -1 to restore success.
+func (c *MockControls) SetMultimodalAppendFailAt(index int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.multimodalFail = index
+}
+
+func (c *MockControls) multimodalAppendFailAt() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.multimodalFail
 }
 
 // SetStopTokens overrides the token ids the mock reports as generation stops
@@ -192,8 +259,9 @@ func NewMockLibrary() *Library {
 func NewMockLibraryWithControls() (*Library, *MockControls) {
 	lib := &Library{path: "mock", handle: 0}
 	r := &lib.raw
-	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}}
+	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}, multimodalFail: -1}
 	mockStderr.set(-1)
+	_ = loadCRuntime() // idempotent; cMalloc/cFree below require it.
 
 	// Engine lifecycle.
 	r.ds4EngineOpen = mockEngineOpen
@@ -226,6 +294,9 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		return 0
 	}
 	r.ds4EngineCollectIMatrix = func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32, minExpertSamples int32) int32 {
+		ctl.mu.Lock()
+		ctl.imatrix = &IMatrixCall{Dataset: datasetPath, Output: outputPath, CtxSize: int(ctxSize), MaxPrompts: int(maxPrompts), MaxTokens: int(maxTokens), MinExpertSamples: int(minExpertSamples)}
+		ctl.mu.Unlock()
 		return 0
 	}
 	r.ds4EngineDumpTokens = func(e uintptr, tokens *cTokens) {}
@@ -336,6 +407,9 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	}
 	r.ds4SessionSync = func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32 {
 		ctl.count(&ctl.syncCalls)
+		if sess := mockSessionPtr(s); sess != nil {
+			sess.images = nil
+		}
 		return mockSessionSync(s, prompt, err, errLen)
 	}
 	r.ds4SessionRewriteRequiresRebuild = func(liveLen int32, canonicalLen int32, common int32) bool { return true }
@@ -387,15 +461,17 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		}
 		return mockVocabSize
 	}
+	// Upstream returns 1 on success and 0 on failure (bad session, token
+	// out of range, non-finite logits), unlike the status-code entry points.
 	r.ds4SessionTokenLogprob = func(s uintptr, token int32, out *cTokenScore) int32 {
 		sess := mockSessionPtr(s)
-		if sess == nil {
-			return -1
+		if sess == nil || token < 0 || token >= mockVocabSize {
+			return 0
 		}
 		out.ID = token
 		out.Logit = 8.5
 		out.Logprob = -0.5
-		return 0
+		return 1
 	}
 	r.ds4SessionEval = mockSessionEval
 	r.ds4SessionEvalSpeculativeArgmax = func(s uintptr, firstToken, maxTokens, eosToken int32,
@@ -588,6 +664,182 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		return 100
 	}
 
+	// Vision.
+	r.ds4EngineHasVision = func(e uintptr) bool { return mockEnginePtr(e) != nil && ctl.hasVision() }
+	r.ds4EngineEmbdDim = func(e uintptr) int32 { return mockEmbdDim }
+	r.ds4EngineVisionEncodeMemory = func(e uintptr, encoded unsafe.Pointer, n uintptr, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32 {
+		if !ctl.hasVision() {
+			mockWriteError(err, errCap, "vision encoder is not loaded")
+			return 0
+		}
+		mockVisionEncode(unsafe.Slice((*byte)(encoded), int(n)), out)
+		return 1
+	}
+	r.ds4EngineVisionEncodeFile = func(e uintptr, path string, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32 {
+		if !ctl.hasVision() {
+			mockWriteError(err, errCap, "vision encoder is not loaded")
+			return 0
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			mockWriteError(err, errCap, rerr.Error())
+			return 0
+		}
+		mockVisionEncode(data, out)
+		return 1
+	}
+	r.ds4VisionEmbeddingFree = func(emb *cVisionEmbedding) {
+		if emb != nil && emb.Data != nil {
+			cFree(emb.Data)
+		}
+		*emb = cVisionEmbedding{}
+	}
+	r.ds4PromptAppendVision = func(e uintptr, tokens *cTokens, span *cVisionSpan, emb *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32 {
+		if !ctl.hasVision() || emb == nil || emb.Data == nil {
+			mockWriteError(err, errCap, "invalid vision prompt input")
+			return 0
+		}
+		mockTokensPush(tokens, mockImageStart)
+		*span = cVisionSpan{TokenStart: uint32(tokens.Len)}
+		for i := uint32(0); i < emb.TokenCount; i++ {
+			mockTokensPush(tokens, mockImageToken)
+		}
+		mockTokensPush(tokens, mockImageEnd)
+		span.Embedding = *emb
+		*emb = cVisionEmbedding{}
+		return 1
+	}
+	r.ds4ChatAppendMultimodalMessage = func(e uintptr, tokens *cTokens, role string, textParts unsafe.Pointer, embeddings unsafe.Pointer, imageCount uintptr, spans unsafe.Pointer, err unsafe.Pointer, errCap uintptr) int32 {
+		parts := unsafe.Slice((**byte)(textParts), int(imageCount)+1)
+		text := func(i int) string { return goString(unsafe.Pointer(parts[i])) }
+		if imageCount == 0 {
+			mockChatAppendMessage(e, tokens, role, text(0))
+			return 1
+		}
+		if !ctl.hasVision() {
+			mockWriteError(err, errCap, "model does not support image messages")
+			return 0
+		}
+		embs := unsafe.Slice((*cVisionEmbedding)(embeddings), int(imageCount))
+		outSpans := unsafe.Slice((*cVisionSpan)(spans), int(imageCount))
+		oldLen := tokens.Len
+		failAt := ctl.multimodalAppendFailAt()
+		for _, word := range strings.Fields(role + ":") {
+			mockTokensPush(tokens, mockWordToken(word))
+		}
+		for i := range embs {
+			for _, word := range strings.Fields(text(i)) {
+				mockTokensPush(tokens, mockWordToken(word))
+			}
+			if i == failAt {
+				// Upstream unwinds by handing the already-moved images back
+				// through the embeddings array (their replacement buffers,
+				// the originals are gone) and rewinding the tokens.
+				for j := 0; j < i; j++ {
+					embs[j] = outSpans[j].Embedding
+					outSpans[j] = cVisionSpan{}
+				}
+				tokens.Len = oldLen
+				mockWriteError(err, errCap, "invalid DeepSeek vision embedding layout")
+				return 0
+			}
+			outSpans[i] = cVisionSpan{TokenStart: uint32(tokens.Len)}
+			for k := uint32(0); k < embs[i].TokenCount; k++ {
+				mockTokensPush(tokens, mockImageToken)
+			}
+			// The DeepSeek path rebuilds the block and frees the caller's
+			// buffer; the span carries the replacement.
+			outSpans[i].Embedding = mockReplaceEmbedding(embs[i])
+			embs[i] = cVisionEmbedding{}
+		}
+		for _, word := range strings.Fields(text(int(imageCount))) {
+			mockTokensPush(tokens, mockWordToken(word))
+		}
+		return 1
+	}
+
+	mockIdentities := func(images unsafe.Pointer, n uintptr) []mockImageIdentity {
+		if n == 0 {
+			return nil
+		}
+		c := unsafe.Slice((*cVisionSpan)(images), int(n))
+		out := make([]mockImageIdentity, len(c))
+		for i := range c {
+			out[i] = mockImageIdentity{start: int(c[i].TokenStart), count: int(c[i].Embedding.TokenCount), fp: c[i].Embedding.Fingerprint}
+		}
+		return out
+	}
+	r.ds4SessionSyncMultimodal = func(s uintptr, prompt *cTokens, images unsafe.Pointer, n uintptr, err unsafe.Pointer, errLen uintptr) int32 {
+		ctl.count(&ctl.multimodalSyncs)
+		sess := mockSessionPtr(s)
+		if sess == nil {
+			return -1
+		}
+		if n != 0 && !ctl.hasVision() {
+			mockWriteError(err, errLen, "vision encoder is not loaded")
+			return 1
+		}
+		ids := mockIdentities(images, n)
+		prev := 0
+		for _, id := range ids {
+			if id.count == 0 || id.start < prev || id.start+id.count > int(prompt.Len) {
+				mockWriteError(err, errLen, "invalid or overlapping image token span")
+				return 1
+			}
+			prev = id.start + id.count
+		}
+		if rc := mockSessionSync(s, prompt, err, errLen); rc != 0 {
+			return rc
+		}
+		sess.images = ids
+		return 0
+	}
+	r.ds4SessionVisionPrefixMatches = func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.checkpointInvalid {
+			return false
+		}
+		ids := mockIdentities(images, n)
+		if len(ids) < len(sess.images) {
+			return false
+		}
+		for i, have := range sess.images {
+			if ids[i] != have {
+				return false
+			}
+		}
+		for _, id := range ids[len(sess.images):] {
+			if id.start < len(sess.evaluated) {
+				return false
+			}
+		}
+		return true
+	}
+	r.ds4SessionVisionStateMatches = func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		sess := mockSessionPtr(s)
+		return sess != nil && int(n) == len(sess.images) && r.ds4SessionVisionPrefixMatches(s, images, n)
+	}
+	r.ds4SessionRebaseVisionState = func(s uintptr, images unsafe.Pointer, n uintptr) bool {
+		sess := mockSessionPtr(s)
+		if sess == nil || int(n) != len(sess.images) {
+			return false
+		}
+		c := unsafe.Slice((*cVisionSpan)(images), int(n))
+		for i := range c {
+			if c[i].Embedding.Fingerprint != sess.images[i].fp || int(c[i].Embedding.TokenCount) != sess.images[i].count {
+				return false
+			}
+		}
+		for i := range c {
+			c[i].TokenStart = uint32(sess.images[i].start)
+		}
+		return true
+	}
+	r.ds4SessionHasVisionState = func(s uintptr) bool {
+		sess := mockSessionPtr(s)
+		return sess != nil && len(sess.images) > 0
+	}
+
 	return lib, ctl
 }
 
@@ -692,6 +944,9 @@ type mockEngine struct {
 	placementCtxHint             int32
 	placementSessionCountHint    int32
 	shareSessionPrefillWorkspace bool
+	cudaTensorParallel           bool
+	ssdStreamingFullLayers       uint32
+	ssdStreamingFullLayersSet    bool
 }
 
 type mockSession struct {
@@ -704,6 +959,14 @@ type mockSession struct {
 	ctxSize           int32
 	tokenSnapshot     cTokens
 	cancelID          uintptr
+	images            []mockImageIdentity
+}
+
+// mockImageIdentity records one image's offset, row count, and content
+// fingerprint as the mock session last synced it.
+type mockImageIdentity struct {
+	start, count int
+	fp           [32]byte
 }
 
 var (
@@ -800,6 +1063,9 @@ func mockEngineOpen(out *uintptr, opt *cEngineOptions) int32 {
 		eng.placementCtxHint = opt.PlacementCtxHint
 		eng.placementSessionCountHint = opt.PlacementSessionCountHint
 		eng.shareSessionPrefillWorkspace = opt.ShareSessionPrefillWorkspace
+		eng.cudaTensorParallel = opt.CUDATensorParallel
+		eng.ssdStreamingFullLayers = opt.SSDStreamingFullLayers
+		eng.ssdStreamingFullLayersSet = opt.SSDStreamingFullLayersSet
 		if eng.powerPercent == 0 {
 			eng.powerPercent = 100
 		}
@@ -922,6 +1188,31 @@ func mockWriteError(err unsafe.Pointer, errLen uintptr, msg string) {
 	buf := unsafe.Slice((*byte)(err), int(errLen))
 	n := copy(buf[:len(buf)-1], msg)
 	buf[n] = 0
+}
+
+// mockReplaceEmbedding mirrors ds4_prompt_append_deepseek4_vision's handling
+// of the caller's buffer: the rows are copied into a fresh malloc block and
+// the original is freed, so the embedding the span carries is a different
+// allocation from the one the caller passed in.
+func mockReplaceEmbedding(emb cVisionEmbedding) cVisionEmbedding {
+	size := uintptr(emb.TokenCount) * uintptr(mockEmbdDim) * 4
+	block := cMalloc(size)
+	copy(unsafe.Slice((*byte)(block), size), unsafe.Slice((*byte)(emb.Data), size))
+	cFree(emb.Data)
+	emb.Data = block
+	return emb
+}
+
+// mockVisionEncode builds a deterministic embedding: 1 + len%4 rows of
+// mockEmbdDim floats holding the row index, fingerprint sha256(bytes).
+func mockVisionEncode(bytes []byte, out *cVisionEmbedding) {
+	rows := 1 + len(bytes)%4
+	data := cMalloc(uintptr(rows) * uintptr(mockEmbdDim) * 4)
+	floats := unsafe.Slice((*float32)(data), rows*int(mockEmbdDim))
+	for i := range floats {
+		floats[i] = float32(i / int(mockEmbdDim))
+	}
+	*out = cVisionEmbedding{Data: data, TokenCount: uint32(rows), Layout: 0, GridWidth: uint32(rows), GridHeight: 1, Width: 64, Height: 64, ContentWidth: 64, ContentHeight: 64, Fingerprint: sha256.Sum256(bytes)}
 }
 
 func mockSessionArgmax(s uintptr) int32 {
