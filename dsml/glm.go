@@ -38,12 +38,20 @@ const (
 	SyntaxDSML Syntax = iota
 	// SyntaxGLM is GLM DSA's <tool_call> markup.
 	SyntaxGLM
+	// SyntaxDSML41 is DeepSeek V4.1's DSML: the same grammar with a space
+	// inside every tag ("<｜DSML｜ calls>", "<｜DSML｜ invoke>",
+	// "<｜DSML｜ parameter>"), a shorter tools prompt, and a double-escape
+	// rule for a literal escaped close tag (upstream AGENT_TOOL_SYNTAX_DSML41).
+	SyntaxDSML41
 )
 
 // String implements fmt.Stringer using ds4's own syntax labels.
 func (s Syntax) String() string {
-	if s == SyntaxGLM {
+	switch s {
+	case SyntaxGLM:
 		return "glm"
+	case SyntaxDSML41:
+		return "dsml41"
 	}
 	return "dsml"
 }

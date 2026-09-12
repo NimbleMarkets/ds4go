@@ -107,7 +107,9 @@ a numeric reasoning effort. `--think-level 25` (or `/think 25` in chat) sets
 1 to 100, 0 disables thinking, `--think` is 75 and `--think-max` 100. Q2 runs
 on one 128 GB Mac with `--ssd-streaming`; Q4 is published in two parts that
 `model download` fetches, joins, and verifies (allow 37 GiB extra while
-joining). GLM 5.3 Flash FP8 is `glm53-fp8`.
+joining). GLM 5.3 Flash FP8 is `glm53-fp8`. V4.1 speaks a spaced DSML
+dialect for tool calls; `ToolSyntax` picks it automatically, so tool loops
+need no changes.
 
 Vision here means image understanding: the encoder turns a PNG or JPEG into
 embedding rows that are spliced into the prompt, and the model answers in

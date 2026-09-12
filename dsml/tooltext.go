@@ -83,8 +83,10 @@ func unescapeToolText(s, end string) string {
 // executable. Mirrors upstream find_tool_structural_text.
 var structuralWrappers = func() [][2]string {
 	var w [][2]string
-	for _, syn := range dsmlSyntaxes {
-		w = append(w, [2]string{syn.paramStart, syn.paramEnd})
+	for _, table := range [][]dsmlSyntax{dsmlSyntaxes, dsml41Syntaxes} {
+		for _, syn := range table {
+			w = append(w, [2]string{syn.paramStart, syn.paramEnd})
+		}
 	}
 	w = append(w, [2]string{glmArgKeyStart, glmArgKeyEnd}, [2]string{glmArgValueStart, glmArgValueEnd})
 	return w

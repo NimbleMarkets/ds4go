@@ -40,14 +40,17 @@ func (s *ReplayStore) Remember(id, exact string) error {
 		return nil
 	}
 	trimmed := strings.TrimSpace(exact)
-	if !strings.HasPrefix(trimmed, "<"+dsmlMarker+toolCallsBlockName+">") &&
-		!strings.HasPrefix(trimmed, "<"+dsmlMarkerShort+toolCallsBlockName+">") &&
-		!strings.HasPrefix(trimmed, "<tool_calls>") {
+	opened, closed := false, false
+	for _, table := range [][]dsmlSyntax{dsmlSyntaxes, dsml41Syntaxes} {
+		for _, syn := range table {
+			opened = opened || strings.HasPrefix(trimmed, syn.toolStart)
+			closed = closed || strings.Contains(trimmed, syn.toolEnd)
+		}
+	}
+	if !opened {
 		return fmt.Errorf("dsml: exact replay block for %q is not a tool_calls block", id)
 	}
-	if !strings.Contains(trimmed, toolCallsEndToken) &&
-		!strings.Contains(trimmed, "</"+dsmlMarkerShort+toolCallsBlockName+">") &&
-		!strings.Contains(trimmed, "</tool_calls>") {
+	if !closed {
 		return fmt.Errorf("dsml: exact replay block for %q is unterminated", id)
 	}
 	s.mu.Lock()

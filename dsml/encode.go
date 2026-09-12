@@ -38,6 +38,31 @@ var toolsSectionTemplate = "## Tools\n\n" +
 	"You MUST strictly follow the above defined tool name and parameter schemas " +
 	"to invoke tool calls. Use the exact parameter names from the schemas."
 
+// dsml41ToolsSectionTemplate is ds4-server's V4.1 tools instruction block
+// (append_tools_prompt_text with v41), verbatim. The single %s is the schemas.
+var dsml41ToolsSectionTemplate = "## Tools\n\n" +
+	"You can invoke tools using this format:\n\n" +
+	"<" + dsmlMarker + " calls>\n" +
+	"<" + dsmlMarker + " invoke name=\"$TOOL_NAME\">\n" +
+	"<" + dsmlMarker + " parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</" + dsmlMarker + " parameter>\n" +
+	"</" + dsmlMarker + " invoke>\n" +
+	"</" + dsmlMarker + " calls>\n\n" +
+	"String values use string=\"true\"; all other values use JSON and string=\"false\". " +
+	"Inside string values only, escape a literal </" + dsmlMarker + " parameter> as &lt;/" + dsmlMarker + " parameter>. " +
+	"To write that escaped spelling literally, use &amp;lt;/" + dsmlMarker + " parameter>. Other HTML entities are unchanged.\n\n" +
+	"Finish reasoning with </think> before tool calls or a final response.\n\n" +
+	"### Available Tool Schemas\n\n%s\n\n" +
+	"You MUST strictly follow the above defined tool name and parameter schemas " +
+	"to invoke tool calls. Use the exact parameter names from the schemas."
+
+// dsml41SyntaxReminder is ds4-agent's agent_dsml41_syntax_reminder.
+const dsml41SyntaxReminder = "DSML syntax reminder:\n" +
+	"<" + dsmlMarker + " calls>\n" +
+	"<" + dsmlMarker + " invoke name=\"$TOOL_NAME\">\n" +
+	"<" + dsmlMarker + " parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</" + dsmlMarker + " parameter>\n" +
+	"</" + dsmlMarker + " invoke>\n" +
+	"</" + dsmlMarker + " calls>\n"
+
 // RenderToolsSection renders the "## Tools" instruction block for the given
 // tools. The caller prepends the result to the system message content before
 // passing the system message to libds4's chat helpers. An empty tool list
@@ -55,6 +80,10 @@ func RenderToolsSectionSyntax(syntax Syntax, tools []Tool) (string, error) {
 	}
 	if len(tools) == 0 {
 		return "", nil
+	}
+	template := toolsSectionTemplate
+	if syntax == SyntaxDSML41 {
+		template = dsml41ToolsSectionTemplate
 	}
 	schemas := make([]string, len(tools))
 	for i, t := range tools {
@@ -75,33 +104,39 @@ func RenderToolsSectionSyntax(syntax Syntax, tools []Tool) (string, error) {
 			canonicalJSONString(t.Name), canonicalJSONString(t.Description),
 			canonicalSchemaParams(params))
 	}
-	return fmt.Sprintf(toolsSectionTemplate, strings.Join(schemas, "\n")), nil
+	return fmt.Sprintf(template, strings.Join(schemas, "\n")), nil
 }
 
 // RenderToolCall renders one assistant "<｜DSML｜invoke>" block.
 func RenderToolCall(call ToolCall) (string, error) {
+	return renderToolCallSyn(dsmlSyntaxes[0], call)
+}
+
+func renderToolCallSyn(syn dsmlSyntax, call ToolCall) (string, error) {
 	if err := validateTagAttribute("tool name", call.Name); err != nil {
 		return "", err
 	}
-	body, err := encodeArguments(call.Arguments)
+	body, err := encodeArgumentsSyn(syn, call.Arguments)
 	if err != nil {
 		return "", err
 	}
 	if body != "" {
 		body = "\n" + body
 	}
-	return invokeStartToken + " name=\"" + dsmlEscapeAttr(call.Name) + "\">" + body + "\n" +
-		invokeEndToken, nil
+	return syn.invokeStart + " name=\"" + dsmlEscapeAttr(call.Name) + "\">" + body + "\n" +
+		syn.invokeEnd, nil
 }
 
 // WrapToolCalls wraps rendered invoke blocks in a "<｜DSML｜tool_calls>" block.
 func WrapToolCalls(invokes []string) string {
+	return wrapToolCallsSyn(dsmlSyntaxes[0], invokes)
+}
+
+func wrapToolCallsSyn(syn dsmlSyntax, invokes []string) string {
 	if len(invokes) == 0 {
 		return ""
 	}
-	return "\n\n<" + dsmlMarker + toolCallsBlockName + ">\n" +
-		strings.Join(invokes, "\n") +
-		"\n" + toolCallsEndToken
+	return "\n\n" + syn.toolStart + "\n" + strings.Join(invokes, "\n") + "\n" + syn.toolEnd
 }
 
 // RenderToolCalls renders an assistant "<｜DSML｜tool_calls>" block. The
@@ -120,15 +155,16 @@ func RenderToolCallsSyntax(syntax Syntax, calls []ToolCall) (string, error) {
 	if len(calls) == 0 {
 		return "", nil
 	}
+	syn := syntaxTable(syntax)[0]
 	invokes := make([]string, len(calls))
 	for i, c := range calls {
-		invoke, err := RenderToolCall(c)
+		invoke, err := renderToolCallSyn(syn, c)
 		if err != nil {
 			return "", err
 		}
 		invokes[i] = invoke
 	}
-	return WrapToolCalls(invokes), nil
+	return wrapToolCallsSyn(syn, invokes), nil
 }
 
 // encodeArguments renders a tool call's JSON-object arguments string as
@@ -138,9 +174,13 @@ func RenderToolCallsSyntax(syntax Syntax, calls []ToolCall) (string, error) {
 // Invalid or non-object arguments render as one string parameter named
 // "arguments", matching ds4-server's fallback path.
 func encodeArguments(argsJSON string) (string, error) {
+	return encodeArgumentsSyn(dsmlSyntaxes[0], argsJSON)
+}
+
+func encodeArgumentsSyn(syn dsmlSyntax, argsJSON string) (string, error) {
 	pairs, err := orderedJSONPairs(argsJSON)
 	if err != nil {
-		return parameterElement("arguments", argsJSON, true)
+		return parameterElementSyn(syn, "arguments", argsJSON, true)
 	}
 	lines := make([]string, 0, len(pairs))
 	for _, p := range pairs {
@@ -149,7 +189,7 @@ func encodeArguments(argsJSON string) (string, error) {
 		}
 		var s string
 		if json.Unmarshal(p.value, &s) == nil {
-			line, err := parameterElement(p.key, s, true)
+			line, err := parameterElementSyn(syn, p.key, s, true)
 			if err != nil {
 				return "", err
 			}
@@ -160,7 +200,7 @@ func encodeArguments(argsJSON string) (string, error) {
 		if err := json.Compact(&buf, p.value); err != nil {
 			return "", fmt.Errorf("dsml: could not compact argument %q: %w", p.key, err)
 		}
-		line, err := parameterElement(p.key, buf.String(), false)
+		line, err := parameterElementSyn(syn, p.key, buf.String(), false)
 		if err != nil {
 			return "", err
 		}
@@ -171,16 +211,20 @@ func encodeArguments(argsJSON string) (string, error) {
 
 // parameterElement renders one "<｜DSML｜parameter>" element.
 func parameterElement(name, value string, isString bool) (string, error) {
+	return parameterElementSyn(dsmlSyntaxes[0], name, value, isString)
+}
+
+func parameterElementSyn(syn dsmlSyntax, name, value string, isString bool) (string, error) {
 	if err := validateTagAttribute("parameter name", name); err != nil {
 		return "", err
 	}
 	if isString {
-		value = escapeParameterText(value)
+		value = escapeToolText(value, syn.paramEnd)
 	} else {
-		value = escapeJSONLiteral(value)
+		value = escapeJSONLiteralSyn(syn, value)
 	}
-	return parameterStartToken + " name=\"" + dsmlEscapeAttr(name) + "\" string=\"" +
-		boolStr(isString) + "\">" + value + parameterEndToken, nil
+	return syn.paramStart + " name=\"" + dsmlEscapeAttr(name) + "\" string=\"" +
+		boolStr(isString) + "\">" + value + syn.paramEnd, nil
 }
 
 // jsonPair is one key/value entry of a JSON object, in document order.
@@ -335,6 +379,17 @@ func ToolSyntaxErrorMessageSyntax(syntax Syntax, detail string) string {
 		b.WriteString("\nThe previous assistant output was not executed because the tool-call syntax was " +
 			"malformed. Emit a new valid tool call, or answer normally if no tool is needed.\n")
 		b.WriteString(glmSyntaxReminder)
+		return b.String()
+	}
+	if syntax == SyntaxDSML41 {
+		b.WriteString("Tool error: invalid DSML tool call")
+		if detail != "" {
+			b.WriteString(": ")
+			b.WriteString(detail)
+		}
+		b.WriteString("\nThe previous assistant output was not executed because the DSML syntax was malformed. " +
+			"Emit a new valid tool call, or answer normally if no tool is needed.\n")
+		b.WriteString(dsml41SyntaxReminder)
 		return b.String()
 	}
 	b.WriteString("Tool error: invalid DSML tool call")

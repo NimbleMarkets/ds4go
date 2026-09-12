@@ -299,7 +299,7 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 			return
 		}
 	} else {
-		for _, syn := range dsmlSyntaxes {
+		for _, syn := range syntaxTable(d.syntaxMode) {
 			if strings.Contains(region, syn.toolStart) {
 				d.thinkStanza = true
 				return
@@ -317,7 +317,7 @@ func (d *StreamDecoder) processContent(events *[]StreamEvent) {
 		return
 	}
 	eosIdx := bytes.Index(d.buf, []byte(eosToken))
-	_, rawStart, syn, implicit, hasTool := findToolBlockStart(string(d.buf), 0)
+	_, rawStart, syn, implicit, hasTool := findToolBlockStartSyntax(d.syntaxMode, string(d.buf), 0)
 
 	if hasTool && (eosIdx < 0 || rawStart < eosIdx) {
 		// Tool block (explicit or implicit) appears before EOS (or EOS absent).
@@ -905,8 +905,10 @@ func classifyTagStart(buf []byte, prefix string) tagStartState {
 // intentionally excluded: its "</" is shared with ordinary markup, so values
 // that contain HTML/XML stay under the configured sampling settings.
 var markerParamCloses = []struct{ closeTag, anchor string }{
-	{parameterEndToken, "</" + dsmlMarker},                          // </｜DSML｜parameter>
-	{"</" + dsmlMarkerShort + "parameter>", "</" + dsmlMarkerShort}, // </DSML｜parameter>
+	{parameterEndToken, "</" + dsmlMarker},                           // </｜DSML｜parameter>
+	{"</" + dsmlMarkerShort + "parameter>", "</" + dsmlMarkerShort},  // </DSML｜parameter>
+	{"</" + dsmlMarker + " parameter>", "</" + dsmlMarker},           // </｜DSML｜ parameter> (V4.1)
+	{"</" + dsmlMarkerShort + " parameter>", "</" + dsmlMarkerShort}, // </DSML｜ parameter> (V4.1)
 }
 
 // lastAngleTail returns buf from its last '<' to the end, or nil if there is no
@@ -957,7 +959,7 @@ func (d *StreamDecoder) contentTailFormsOpener() bool {
 	if d.syntaxMode == SyntaxGLM {
 		return matchPartial(tail, glmToolCallStart)
 	}
-	for _, syn := range dsmlSyntaxes {
+	for _, syn := range syntaxTable(d.syntaxMode) {
 		if matchPartial(tail, syn.toolStart) || matchPartial(tail, syn.invokeStart) {
 			return true
 		}

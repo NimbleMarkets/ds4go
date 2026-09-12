@@ -58,6 +58,37 @@ var dsmlSyntaxes = []dsmlSyntax{
 	},
 }
 
+// dsml41Syntaxes are DeepSeek V4.1's spaced tags (upstream DS41_* markers)
+// and the missing-bar near miss the agent also accepts.
+var dsml41Syntaxes = []dsmlSyntax{
+	{
+		toolStart:   "<" + dsmlMarker + " calls>",
+		toolEnd:     "</" + dsmlMarker + " calls>",
+		invokeStart: "<" + dsmlMarker + " invoke",
+		invokeEnd:   "</" + dsmlMarker + " invoke>",
+		paramStart:  "<" + dsmlMarker + " parameter",
+		paramEnd:    "</" + dsmlMarker + " parameter>",
+	},
+	{
+		toolStart:   "<" + dsmlMarkerShort + " calls>",
+		toolEnd:     "</" + dsmlMarkerShort + " calls>",
+		invokeStart: "<" + dsmlMarkerShort + " invoke",
+		invokeEnd:   "</" + dsmlMarkerShort + " invoke>",
+		paramStart:  "<" + dsmlMarkerShort + " parameter",
+		paramEnd:    "</" + dsmlMarkerShort + " parameter>",
+	},
+}
+
+// syntaxTable returns the tag forms a syntax parses and renders. Each
+// DSML dialect is strict about its own forms, as upstream's per-syntax
+// forms tables are.
+func syntaxTable(syntax Syntax) []dsmlSyntax {
+	if syntax == SyntaxDSML41 {
+		return dsml41Syntaxes
+	}
+	return dsmlSyntaxes
+}
+
 // ParseCompletion parses one assistant completion (raw model output) into a
 // ParsedMessage.
 //
@@ -97,7 +128,7 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 		}
 	}
 
-	start, rawStart, syn, implicit, ok := findToolBlockStart(text, searchFrom)
+	start, rawStart, syn, implicit, ok := findToolBlockStartSyntax(syntax, text, searchFrom)
 	if !ok {
 		_, content, _ := readUntilStop(contentBase, text, []string{eosToken})
 		content = strings.TrimSpace(content)
@@ -178,6 +209,12 @@ func rawCompletionMessage(text, reason string, thinking bool) ParsedMessage {
 }
 
 func findToolBlockStart(text string, from int) (start int, rawStart int, syn dsmlSyntax, implicit bool, ok bool) {
+	return findToolBlockStartSyntax(SyntaxDSML, text, from)
+}
+
+// findToolBlockStartSyntax is findToolBlockStart over one syntax's tag forms.
+func findToolBlockStartSyntax(syntax Syntax, text string, from int) (start int, rawStart int, syn dsmlSyntax, implicit bool, ok bool) {
+	table := syntaxTable(syntax)
 	best := -1
 	var bestSyn dsmlSyntax
 	bestImplicit := false
@@ -188,13 +225,13 @@ func findToolBlockStart(text string, from int) (start int, rawStart int, syn dsm
 			bestImplicit = imp
 		}
 	}
-	for _, candidate := range dsmlSyntaxes {
+	for _, candidate := range table {
 		consider(indexFrom(text, from, candidate.toolStart), candidate, false)
 	}
 	// A bare invoke with no enclosing tool_calls wrapper is an implicit
 	// single-call block. "Earliest match wins" means a well-formed block still
 	// selects its toolStart, which precedes the invoke.
-	for _, candidate := range dsmlSyntaxes {
+	for _, candidate := range table {
 		pos := from
 		for {
 			pos = indexFrom(text, pos, candidate.invokeStart)

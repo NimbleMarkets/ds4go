@@ -20,6 +20,15 @@ import "strings"
 // input unchanged and false otherwise. Callers should re-parse the repaired
 // text and keep their original result if the re-parse still yields no calls.
 func RepairCompletion(text string) (string, bool) {
+	return RepairCompletionSyntax(SyntaxDSML, text)
+}
+
+// RepairCompletionSyntax is [RepairCompletion] for an explicit DSML dialect.
+// GLM has no wrapper block to repair and is returned unchanged.
+func RepairCompletionSyntax(syntax Syntax, text string) (string, bool) {
+	if syntax == SyntaxGLM {
+		return text, false
+	}
 	normalized := normalizeMarkers(text)
 	scanFrom := 0
 	if end := lastStructuralIndex(normalized, thinkingEndToken); end >= 0 {
@@ -31,7 +40,7 @@ func RepairCompletion(text string) (string, bool) {
 	// plain) rather than first occurrence; dsmlSyntaxes is in that order.
 	var syn dsmlSyntax
 	found := false
-	for _, candidate := range dsmlSyntaxes {
+	for _, candidate := range syntaxTable(syntax) {
 		if strings.Contains(scan, candidate.toolStart) {
 			syn = candidate
 			found = true

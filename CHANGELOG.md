@@ -9,10 +9,13 @@ levels need **v0.6.20260912** (NimbleMarkets/ds4 `nm-shared` at 9ecf8af),
 which `ds4go install` picks up. Older libraries keep working with the named
 think modes.
 
+ * **DeepSeek V4.1 Flash**: catalog entries, think levels, split downloads, and its DSML41 tool-call dialect; `webtool` gains `fetch_image`.
  * **Vision**: images in conversations for DeepSeek Flash Vision-Exp and GLM 5.3 Flash, from the CLI (`--image`, `/read`), from Go (`ChatMessage.Parts`, `BuildChatPromptMultimodal`, `ImageInputPNG`/`JPEG`), in the tool loop (`ToolLoop.Images`, `workspacetool` `view_image`), and over HTTP (inline data URIs in `examples/openai-compatible`).
  * **Model management**: `--model` takes an installed catalog alias; `model download` takes several aliases and adds a vision model's encoder; `model delete --partial` clears stalled downloads.
  * **Upstream flag parity**: DSpark decode, hardware and placement, raw and prefix prompts, logits/perplexity/decode-consistency diagnostics, and server `--chdir` / `--batched-session`.
  * **Upstream sync (libds4 v0.6.20260912)**: DeepSeek V4.1 Flash in the catalog (`v41-q2`, `v41-q4` as a joined two-part download, `v41-vision`) plus `glm53-fp8`; think levels (`--think-level N`, `/think N`, `ThinkLevel`/`ParseThinkLevel`, `reasoning_effort` on the example server); the unified think prefix (`Engine.ChatAppendThinkPrefix`) with a fallback for older libraries; `--mtp-model`.
+ * **DSML41**: DeepSeek V4.1's tool-call dialect (`dsml.SyntaxDSML41`, selected automatically for V4.1 engines): spaced tags (`<｜DSML｜ calls>`, `<｜DSML｜ invoke>`, `<｜DSML｜ parameter>`), ds4-server's V4.1 tools prompt and escape rule (a literal escaped close tag is double-escaped), strict per-dialect parsing, streaming, repair, replay validation, and parallel tool results rendered in call order as ds4-server does.
+ * **`webtool` fetch_image**: download a PNG/JPEG over http(s) as a visual observation, the web counterpart of `view_image`; signature-checked, capped at 64 MiB, private/loopback/link-local destinations refused on every hop unless `AllowPrivateFetch`. The toolloop example gains `--fetch-image`; all examples resolve catalog aliases for `--model`.
  * **Fixes**: a double free after a failed multi-image append, `/read` history tied to the file path, a zero-entry encoder cache that still cached, `Session.TokenLogprob` failing on every real call, and empty completions from the example server.
 
 <details>

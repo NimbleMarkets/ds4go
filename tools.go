@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -463,6 +464,9 @@ func ToolSyntax(engine *Engine) dsml.Syntax {
 	if engine != nil && engine.IsGLMDSA() {
 		return dsml.SyntaxGLM
 	}
+	if engine != nil && engine.IsDeepSeek41() {
+		return dsml.SyntaxDSML41
+	}
 	return dsml.SyntaxDSML
 }
 
@@ -478,12 +482,12 @@ func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thi
 	if err != nil {
 		return ChatMessage{}, err
 	}
-	if len(parsed.ToolCalls) == 0 && syntax == dsml.SyntaxDSML {
+	if len(parsed.ToolCalls) == 0 && syntax != dsml.SyntaxGLM {
 		// A completion truncated by the token limit mid-stanza degrades to
 		// plain content under the strict parse. Repair the missing closers
 		// and adopt the result only when it actually recovers a call.
-		if repaired, ok := dsml.RepairCompletion(text); ok {
-			if reparsed, rerr := dsml.ParseCompletion(repaired, thinking); rerr == nil && len(reparsed.ToolCalls) > 0 {
+		if repaired, ok := dsml.RepairCompletionSyntax(syntax, text); ok {
+			if reparsed, rerr := dsml.ParseCompletionSyntax(syntax, repaired, thinking); rerr == nil && len(reparsed.ToolCalls) > 0 {
 				parsed = reparsed
 			}
 		}
@@ -845,6 +849,9 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 			lastUser = i
 		}
 	}
+	if opts.syntax == dsml.SyntaxDSML41 {
+		history = orderToolResultsByCall(history)
+	}
 	out := make([]renderedChatMessage, 0, len(history))
 	for i := 0; i < len(history); {
 		if history[i].Role == "tool" {
@@ -991,4 +998,38 @@ func (r *ToolRegistry) nextToolCallID() string {
 	}
 	n := r.nextID.Add(1)
 	return "call_" + strconv.FormatUint(n, 10)
+}
+
+// orderToolResultsByCall returns history with each run of consecutive tool
+// results sorted into the order the preceding assistant turn issued its
+// calls, mirroring ds4-server's V4.1 renderer (ds41_order_messages): parallel
+// tool replies can arrive out of order, and V4.1 expects them in call order.
+// Results whose call ID is unknown rank first, as upstream ranks them.
+func orderToolResultsByCall(history []ChatMessage) []ChatMessage {
+	out := make([]ChatMessage, len(history))
+	copy(out, history)
+	rank := map[string]int{}
+	for i := 0; i < len(out); {
+		if out[i].Role == "assistant" && len(out[i].ToolCalls) > 0 {
+			rank = map[string]int{}
+			for j, call := range out[i].ToolCalls {
+				if call.ID != "" {
+					rank[call.ID] = j
+				}
+			}
+		}
+		if out[i].Role != "tool" {
+			i++
+			continue
+		}
+		start := i
+		for i < len(out) && out[i].Role == "tool" {
+			i++
+		}
+		run := out[start:i]
+		sort.SliceStable(run, func(a, b int) bool {
+			return rank[run[a].ToolCallID] < rank[run[b].ToolCallID]
+		})
+	}
+	return out
 }

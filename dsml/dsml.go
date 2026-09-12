@@ -163,7 +163,13 @@ func escapeParameterText(s string) string {
 }
 
 func escapeJSONLiteral(s string) string {
-	return strings.ReplaceAll(s, parameterEndToken, "\\u003c/"+dsmlMarker+"parameter>")
+	return escapeJSONLiteralSyn(dsmlSyntaxes[0], s)
+}
+
+// escapeJSONLiteralSyn keeps a JSON literal from closing its parameter early
+// by spelling the dialect's close tag with a JSON escape for '<'.
+func escapeJSONLiteralSyn(syn dsmlSyntax, s string) string {
+	return strings.ReplaceAll(s, syn.paramEnd, "\\u003c"+syn.paramEnd[1:])
 }
 
 func escapeToolResultText(s string) string {
