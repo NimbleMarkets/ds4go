@@ -119,9 +119,13 @@ The prompt is built with the multimodal builder and run through
 ```go
 images := ds4.NewImageEncoder(engine) // caches embeddings by image bytes
 in, err := ds4.ImageInputPNG(img)     // or ds4.ImageInputJPEG(img, 85) for photos
-history := []ds4.ChatMessage{{Role: "user", Parts: []ds4.ContentPart{
-	{Text: "What is this?"}, {Image: &in},
-}}}
+parts := []ds4.ContentPart{
+	{Text: "What is this?"},
+	{Image: &in},
+}
+history := []ds4.ChatMessage{
+	{Role: "user", Parts: parts},
+}
 prompt, err := ds4.BuildChatPromptMultimodal(engine, images, "You are a helpful assistant", nil, history, ds4.ThinkHigh)
 defer prompt.Free()
 _, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, ds4.GenerateOptions{
