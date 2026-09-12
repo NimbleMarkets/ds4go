@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -91,19 +92,100 @@ func newModelDownloadCommand() *cobra.Command {
 }
 
 func newModelDeleteCommand() *cobra.Command {
-	var assumeYes bool
+	var assumeYes, partial bool
 	cmd := &cobra.Command{
-		Use:     "delete [alias]",
+		Use:     "delete [alias...]",
 		Aliases: []string{"rm", "remove"},
 		Short:   "Delete a downloaded model from disk",
-		Args:    cobra.MaximumNArgs(1),
+		Long: "Delete a downloaded model from disk.\n\n" +
+			"With --partial, delete only partial downloads: the named models' .part files,\n" +
+			"or with no alias every partial, quarantined, and stale lock file in the models\n" +
+			"directory. Installed models are never touched and in-progress downloads are skipped.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+			if partial {
+				return runModelDeletePartial(args, assumeYes)
+			}
+			if len(args) > 1 {
+				return fmt.Errorf("usage: ds4go model delete [alias] (several aliases need --partial)")
+			}
 			return runModelDelete(args, assumeYes)
 		},
 	}
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVar(&partial, "partial", false, "delete only partial downloads (all of them when no alias is given)")
 	return cmd
+}
+
+func runModelDeletePartial(aliases []string, assumeYes bool) error {
+	m := modelManager()
+	if len(aliases) > 0 {
+		if !assumeYes {
+			fmt.Fprintf(os.Stdout, "About to delete the partial downloads of %s from %s (installed files are kept)\n", strings.Join(aliases, ", "), m.ModelsDir)
+			result, err := tui.Confirm("Are you sure?", false, os.Stdin, os.Stdout)
+			if err != nil {
+				return fmt.Errorf("read prompt response: %w", err)
+			}
+			if result != tui.ConfirmYes {
+				fmt.Fprintln(os.Stdout, "Cancelled")
+				return nil
+			}
+		}
+		for _, alias := range aliases {
+			if err := m.DeletePartial(alias); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	items, err := m.Leftovers()
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		fmt.Fprintf(os.Stdout, "No partial downloads in %s\n", m.ModelsDir)
+		return nil
+	}
+	var total int64
+	removable := 0
+	for _, item := range items {
+		note := ""
+		if item.Locked {
+			note = "  (download in progress, kept)"
+		} else {
+			total += item.Bytes
+			removable++
+		}
+		alias := item.Alias
+		if alias == "" {
+			alias = "-"
+		}
+		fmt.Fprintf(os.Stdout, "  %-11s %10s  %-22s %s%s\n", item.Kind, models.FormatBytes(item.Bytes), alias, filepath.Base(item.Path), note)
+	}
+	if removable == 0 {
+		fmt.Fprintln(os.Stdout, "Nothing to delete: every partial download is in progress")
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "About to delete %d file(s), freeing %s in %s\n", removable, models.FormatBytes(total), m.ModelsDir)
+	if !assumeYes {
+		result, err := tui.Confirm("Are you sure?", false, os.Stdin, os.Stdout)
+		if err != nil {
+			return fmt.Errorf("read prompt response: %w", err)
+		}
+		if result != tui.ConfirmYes {
+			fmt.Fprintln(os.Stdout, "Cancelled")
+			return nil
+		}
+	}
+	removed, err := m.RemoveLeftovers(items)
+	var freed int64
+	for _, item := range removed {
+		freed += item.Bytes
+	}
+	fmt.Fprintf(os.Stdout, "Deleted %d file(s), freed %s\n", len(removed), models.FormatBytes(freed))
+	return err
 }
 
 // unknownSubcommand prints the command's help text, then returns an error so

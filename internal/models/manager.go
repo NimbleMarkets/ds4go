@@ -1018,6 +1018,9 @@ func huggingFaceToken() string {
 	return strings.TrimSpace(string(b))
 }
 
+// FormatBytes renders n in the binary units the CLI uses.
+func FormatBytes(n int64) string { return formatBytes(n) }
+
 func formatBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
