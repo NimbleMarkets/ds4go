@@ -27,7 +27,9 @@ import (
 )
 
 const (
-	maxChatRequestBytes = 4 << 20
+	// maxChatRequestBytes matches upstream ds4-server's 64 MiB HTTP body cap,
+	// sized for inline image data URIs.
+	maxChatRequestBytes = 64 << 20
 
 	httpReadHeaderTimeout = 10 * time.Second
 	httpReadTimeout       = 30 * time.Second
@@ -36,10 +38,10 @@ const (
 )
 
 type chatRequest struct {
-	Messages            []chatMessage `json:"messages"`
-	Tools               []chatTool    `json:"tools,omitempty"`
-	MaxTokens           int           `json:"max_tokens"`
-	MaxCompletionTokens int           `json:"max_completion_tokens"`
+	Messages            []chatInputMessage `json:"messages"`
+	Tools               []chatTool         `json:"tools,omitempty"`
+	MaxTokens           int                `json:"max_tokens"`
+	MaxCompletionTokens int                `json:"max_completion_tokens"`
 }
 
 type chatMessage struct {
@@ -48,6 +50,20 @@ type chatMessage struct {
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
+
+// chatInputMessage is the request-side message: content may be a string or
+// an array of text and image_url parts (ds4.ParseOpenAIContent).
+type chatInputMessage struct {
+	Role       string          `json:"role"`
+	Content    json.RawMessage `json:"content"`
+	ToolCalls  []chatToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+}
+
+// clientError marks a request-shaped failure the handler reports as 400.
+type clientError struct{ error }
+
+func (e clientError) Unwrap() error { return e.error }
 
 type chatResponse struct {
 	ID      string       `json:"id"`
@@ -113,6 +129,10 @@ func run(cfg *cliopts.ServerConfig) error {
 		}
 	}
 	defer engine.Close()
+	var images *ds4.ImageEncoder
+	if engine.HasVision() {
+		images = ds4.NewImageEncoder(engine)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
@@ -145,9 +165,14 @@ func run(cfg *cliopts.ServerConfig) error {
 			return
 		}
 		defer session.Close()
-		prompt, err := buildPrompt(engine, req)
+		prompt, err := buildPrompt(engine, images, req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			status := http.StatusInternalServerError
+			var ce clientError
+			if errors.As(err, &ce) {
+				status = http.StatusBadRequest
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		defer prompt.Free()
@@ -158,7 +183,7 @@ func run(cfg *cliopts.ServerConfig) error {
 			return
 		}
 		var text string
-		_, err = (ds4.Generator{Engine: engine, Session: session}).GenerateTokens(prompt, ds4.GenerateOptions{
+		_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, ds4.GenerateOptions{
 			MaxTokens: maxTokens,
 			StopOnEOS: true,
 			Context:   r.Context(),
@@ -213,16 +238,30 @@ func run(cfg *cliopts.ServerConfig) error {
 	return newHTTPServer(addr, mux).ListenAndServe()
 }
 
-func buildPrompt(engine *ds4.Engine, req chatRequest) (*ds4.Tokens, error) {
+func buildPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, req chatRequest) (*ds4.Prompt, error) {
 	tools, err := convertTools(req.Tools)
 	if err != nil {
-		return nil, err
+		return nil, clientError{err}
 	}
 	system, history, err := convertMessages(req.Messages)
 	if err != nil {
-		return nil, err
+		return nil, clientError{err}
 	}
-	return ds4.BuildChatPrompt(engine, system, tools, history, ds4.ThinkHigh)
+	if images == nil && historyHasImages(history) {
+		return nil, clientError{errors.New("request contains images but no vision encoder is loaded; start with --vision ENCODER.gguf")}
+	}
+	return ds4.BuildChatPromptMultimodal(engine, images, system, tools, history, ds4.ThinkHigh)
+}
+
+func historyHasImages(history []ds4.ChatMessage) bool {
+	for _, msg := range history {
+		for _, part := range msg.Parts {
+			if part.Image != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func decodeChatRequest(w http.ResponseWriter, r *http.Request, maxBytes int64) (chatRequest, error) {
@@ -286,20 +325,37 @@ func convertTools(tools []chatTool) ([]dsml.Tool, error) {
 	return out, nil
 }
 
-func convertMessages(messages []chatMessage) (string, []ds4.ChatMessage, error) {
+func convertMessages(messages []chatInputMessage) (string, []ds4.ChatMessage, error) {
 	var systemParts []string
 	history := make([]ds4.ChatMessage, 0, len(messages))
 	seenCallIDs := map[string]bool{}
-	for _, msg := range messages {
+	imageCount := 0
+	for i, msg := range messages {
+		text, parts, err := ds4.ParseOpenAIContent(msg.Content)
+		if err != nil {
+			return "", nil, fmt.Errorf("message %d: %w", i, err)
+		}
+		if parts != nil && msg.Role != "user" && msg.Role != "tool" {
+			return "", nil, fmt.Errorf("message %d: images are only accepted in user and tool messages", i)
+		}
+		for _, part := range parts {
+			if part.Image != nil {
+				imageCount++
+			}
+		}
+		if imageCount > ds4.MaxHTTPImages {
+			return "", nil, fmt.Errorf("request has more than %d images", ds4.MaxHTTPImages)
+		}
 		switch msg.Role {
 		case "system":
-			if msg.Content != "" {
-				systemParts = append(systemParts, msg.Content)
+			if text != "" {
+				systemParts = append(systemParts, text)
 			}
 		case "user":
 			history = append(history, ds4.ChatMessage{
 				Role:    "user",
-				Content: msg.Content,
+				Content: text,
+				Parts:   parts,
 			})
 		case "assistant":
 			calls := make([]ds4.ToolCall, len(msg.ToolCalls))
@@ -315,7 +371,7 @@ func convertMessages(messages []chatMessage) (string, []ds4.ChatMessage, error) 
 			}
 			history = append(history, ds4.ChatMessage{
 				Role:      "assistant",
-				Content:   msg.Content,
+				Content:   text,
 				ToolCalls: calls,
 			})
 		case "tool":
@@ -324,7 +380,8 @@ func convertMessages(messages []chatMessage) (string, []ds4.ChatMessage, error) 
 			}
 			history = append(history, ds4.ChatMessage{
 				Role:       "tool",
-				Content:    msg.Content,
+				Content:    text,
+				Parts:      parts,
 				ToolCallID: msg.ToolCallID,
 			})
 		default:

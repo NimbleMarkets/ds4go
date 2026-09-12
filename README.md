@@ -105,6 +105,12 @@ in, err := ds4.ImageInputPNG(img) // or ds4.ImageInputJPEG(img, 85) for photos
 parts := []ds4.ContentPart{{Text: "What is this?"}, {Image: &in}}
 ```
 
+Over HTTP, `examples/openai-compatible` accepts images the way upstream
+`ds4-server` does: `image_url` parts carrying inline `data:image/png;base64,...`
+or `data:image/jpeg;base64,...` URIs in user and tool messages, at most 16
+images per request and a 64 MiB body. Remote URLs and file paths are rejected.
+`ds4.ParseOpenAIContent` is the reusable parser behind it.
+
 DeepSeek speculative decoding uses a separate MTP support-model GGUF. GLM's
 optional next-token predictor is embedded in the base model instead, and
 `libds4` rejects an external MTP path for GLM. When a curated GLM model is
