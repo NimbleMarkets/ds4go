@@ -183,16 +183,11 @@ func run(cfg *cliopts.ServerConfig) error {
 			return
 		}
 		var text string
-		_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, ds4.GenerateOptions{
-			MaxTokens: maxTokens,
-			StopOnEOS: true,
-			Context:   r.Context(),
-			OnToken: func(token int) {
-				if part, err := engine.TokenText(token); err == nil {
-					text += part
-				}
-			},
-		})
+		_, err = (ds4.Generator{Engine: engine, Session: session}).GeneratePrompt(prompt, generateOptions(maxTokens, r.Context(), func(token int) {
+			if part, err := engine.TokenText(token); err == nil {
+				text += part
+			}
+		}))
 		if err != nil {
 			if err == context.Canceled {
 				return
@@ -238,6 +233,22 @@ func run(cfg *cliopts.ServerConfig) error {
 	return newHTTPServer(addr, mux).ListenAndServe()
 }
 
+// serverThinkMode is the think mode prompts are rendered with. Generation
+// must stop-detect under the same mode: with a mismatch the closing think
+// marker ends the completion and the client only ever sees empty content.
+const serverThinkMode = ds4.ThinkHigh
+
+// generateOptions builds the per-request generation options.
+func generateOptions(maxTokens int, ctx context.Context, onToken func(int)) ds4.GenerateOptions {
+	return ds4.GenerateOptions{
+		MaxTokens: maxTokens,
+		StopOnEOS: true,
+		ThinkMode: serverThinkMode,
+		Context:   ctx,
+		OnToken:   onToken,
+	}
+}
+
 func buildPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, req chatRequest) (*ds4.Prompt, error) {
 	tools, err := convertTools(req.Tools)
 	if err != nil {
@@ -250,7 +261,7 @@ func buildPrompt(engine *ds4.Engine, images *ds4.ImageEncoder, req chatRequest) 
 	if images == nil && historyHasImages(history) {
 		return nil, clientError{errors.New("request contains images but no vision encoder is loaded; start with --vision ENCODER.gguf")}
 	}
-	return ds4.BuildChatPromptMultimodal(engine, images, system, tools, history, ds4.ThinkHigh)
+	return ds4.BuildChatPromptMultimodal(engine, images, system, tools, history, serverThinkMode)
 }
 
 func historyHasImages(history []ds4.ChatMessage) bool {

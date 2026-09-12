@@ -154,3 +154,52 @@ func TestBuildPromptWithImages(t *testing.T) {
 		t.Errorf("prompt has %d image spans, want 1", len(prompt.Images))
 	}
 }
+
+// The prompt is rendered in a thinking mode, so generation must not treat the
+// closing think marker as a stop: with a mismatched ThinkMode the completion
+// is only the reasoning block and the client sees empty content.
+func TestGenerateOptionsMatchThePromptThinkMode(t *testing.T) {
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(ds4.EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	var req chatRequest
+	if err := json.Unmarshal([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := buildPrompt(eng, nil, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prompt.Free()
+
+	run := func(opts ds4.GenerateOptions) []int {
+		t.Helper()
+		session, err := eng.NewSession(4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		out, err := (ds4.Generator{Engine: eng, Session: session}).GeneratePrompt(prompt, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	const want = 6
+	first := run(generateOptions(want, nil, nil))
+	if len(first) != want {
+		t.Fatalf("baseline generated %d tokens, want %d", len(first), want)
+	}
+	// From now on the second generated token is a thinking-control marker.
+	ctl.SetThinkingControlTokens(first[1])
+	// The stop token itself is not emitted, so ThinkNone yields one token.
+	if got := run(ds4.GenerateOptions{MaxTokens: want, StopOnEOS: true, ThinkMode: ds4.ThinkNone}); len(got) != 1 {
+		t.Fatalf("control: ThinkNone generated %d tokens, want 1 (stop at the marker); the mock is not exercising the rule", len(got))
+	}
+	if got := run(generateOptions(want, nil, nil)); len(got) != want {
+		t.Errorf("server options generated %d tokens, want %d: generation stopped at a thinking marker", len(got), want)
+	}
+}
