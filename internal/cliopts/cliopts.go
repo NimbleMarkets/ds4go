@@ -37,6 +37,10 @@ type CLIConfig struct {
 	MTP                        string
 	MTPDraft                   int
 	MTPMargin                  float32
+	Dspark                     bool
+	DsparkConfidence           float32
+	DsparkStrict               bool
+	MTPExactSampling           bool
 	Vision                     string
 	Images                     []string
 	Ctx                        int
@@ -100,6 +104,10 @@ func RegisterCLI(fs *pflag.FlagSet) *CLIConfig {
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
+	fs.BoolVar(&c.Dspark, "dspark", false, "enable experimental DSpark runtime speculative decoding (needs the DSpark support GGUF via --mtp)")
+	fs.Float32Var(&c.DsparkConfidence, "dspark-confidence", 0, "DSpark draft confidence threshold in (0,1]; implies --dspark")
+	fs.BoolVar(&c.DsparkStrict, "dspark-strict", false, "DSpark strict verification (target-only acceptance); implies --dspark")
+	fs.BoolVar(&c.MTPExactSampling, "mtp-exact-sampling", false, "exact p/q acceptance for DSpark and GLM MTP drafts instead of opportunistic sampling")
 	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
 	fs.StringArrayVar(&c.Images, "image", nil, "PNG or JPEG to attach to the prompt; repeatable, attached in order after the text")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated for the session")
@@ -221,6 +229,10 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 		PrefillChunk:               c.PrefillChunk,
 		MTPDraftTokens:             c.MTPDraft,
 		MTPMargin:                  c.MTPMargin,
+		Dspark:                     c.dsparkEnabled(),
+		DsparkStrict:               c.DsparkStrict,
+		DsparkExactSampling:        c.MTPExactSampling,
+		DsparkConfidenceThreshold:  c.dsparkConfidence(),
 		DirectionalSteeringFile:    c.DirSteeringFile,
 		ExpertProfilePath:          c.ExpertProfile,
 		DirectionalSteeringAttn:    c.DirSteeringAttn,
@@ -237,6 +249,35 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 	}
 	ds4.ApplyVisionDefaults(&opts)
 	return opts
+}
+
+// dsparkEnabled mirrors upstream ds4_cli.c: --dspark-confidence and
+// --dspark-strict each imply --dspark.
+func (c *CLIConfig) dsparkEnabled() bool {
+	return c.Dspark || c.DsparkStrict || c.DsparkConfidence != 0
+}
+
+func (c *CLIConfig) dsparkConfidence() float32 {
+	return checkDsparkConfidence(c.DsparkConfidence)
+}
+
+func (c *ServerConfig) dsparkEnabled() bool {
+	return c.Dspark || c.DsparkStrict || c.DsparkConfidence != 0
+}
+
+func (c *ServerConfig) dsparkConfidence() float32 {
+	return checkDsparkConfidence(c.DsparkConfidence)
+}
+
+// checkDsparkConfidence enforces upstream's parse_float_range(0, 1) for
+// --dspark-confidence. Zero means unset: libds4 only reads the threshold
+// when it is non-zero (see ds4api's DsparkConfidenceThresholdSet).
+func checkDsparkConfidence(v float32) float32 {
+	if v < 0 || v > 1 {
+		fmt.Fprintf(os.Stderr, "ds4: --dspark-confidence must be within [0, 1]\n")
+		os.Exit(2)
+	}
+	return v
 }
 
 // ImageParts returns the prompt text followed by the --image files as content
@@ -298,6 +339,10 @@ type ServerConfig struct {
 	MTP                        string
 	MTPDraft                   int
 	MTPMargin                  float32
+	Dspark                     bool
+	DsparkConfidence           float32
+	DsparkStrict               bool
+	MTPExactSampling           bool
 	Vision                     string
 	Ctx                        int
 	Tokens                     int
@@ -350,6 +395,10 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.StringVar(&c.MTP, "mtp", models.DefaultMTPPath(), "optional MTP support GGUF used for draft-token probes")
 	fs.IntVar(&c.MTPDraft, "mtp-draft", 1, "maximum autoregressive MTP draft tokens per speculative step")
 	fs.Float32Var(&c.MTPMargin, "mtp-margin", 3, "minimum recursive-draft confidence for the fast N=2 verifier")
+	fs.BoolVar(&c.Dspark, "dspark", false, "enable experimental DSpark runtime speculative decoding (needs the DSpark support GGUF via --mtp)")
+	fs.Float32Var(&c.DsparkConfidence, "dspark-confidence", 0, "DSpark draft confidence threshold in (0,1]; implies --dspark")
+	fs.BoolVar(&c.DsparkStrict, "dspark-strict", false, "DSpark strict verification (target-only acceptance); implies --dspark")
+	fs.BoolVar(&c.MTPExactSampling, "mtp-exact-sampling", false, "exact p/q acceptance for DSpark and GLM MTP drafts instead of opportunistic sampling")
 	fs.StringVar(&c.Vision, "vision", "", "vision encoder GGUF for the selected model (defaults to the catalog encoder when installed)")
 	fs.IntVarP(&c.Ctx, "ctx", "c", 32768, "context size allocated at startup")
 	fs.IntVarP(&c.Tokens, "tokens", "n", 393216, "default max output tokens when the client omits a limit")
@@ -447,6 +496,10 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 		PrefillChunk:               c.PrefillChunk,
 		MTPDraftTokens:             c.MTPDraft,
 		MTPMargin:                  c.MTPMargin,
+		Dspark:                     c.dsparkEnabled(),
+		DsparkStrict:               c.DsparkStrict,
+		DsparkExactSampling:        c.MTPExactSampling,
+		DsparkConfidenceThreshold:  c.dsparkConfidence(),
 		DirectionalSteeringFile:    c.DirSteeringFile,
 		DirectionalSteeringAttn:    c.DirSteeringAttn,
 		DirectionalSteeringFFN:     c.DirSteeringFFN,
