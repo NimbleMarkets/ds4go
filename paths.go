@@ -59,16 +59,19 @@ func DefaultMTPPath() string {
 	return ""
 }
 
-// DefaultLibraryPath returns the preferred libds4 shared-library path.
+// DefaultLibraryPath returns the preferred libds4 shared-library path, or ""
+// when none is installed.
 //
-// Search order is DS4_LIB, DS4_DIR/lib, executable-local paths, and finally
-// the platform library name for system loader lookup.
+// Search order is DS4_LIB, DS4_DIR/lib, then executable-local paths.
 //
 // The current working directory is deliberately NOT searched: loading a
 // shared library from the CWD would let an attacker who can write a file
 // into a directory the user happens to run ds4go from plant a malicious
-// libds4 and gain code execution (binary planting). Use DS4_LIB or DS4_DIR
-// to load a library from a non-default location.
+// libds4 and gain code execution (binary planting). For the same reason a
+// bare library name is never returned for the OS loader to resolve: dyld
+// and Windows LoadLibrary both search the working directory for a leaf
+// name. Use DS4_LIB or DS4_DIR to load a library from a non-default
+// location.
 func DefaultLibraryPath() string {
 	if path := os.Getenv("DS4_LIB"); path != "" {
 		return path
@@ -83,12 +86,8 @@ func DefaultLibraryPath() string {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))
 	}
-	candidates = append(candidates, name)
 
 	for _, candidate := range candidates {
-		if candidate == name {
-			return candidate
-		}
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			return candidate
 		}

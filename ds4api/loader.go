@@ -342,8 +342,10 @@ func (l *Library) register() (err error) {
 }
 
 // defaultLibraryPath resolves libds4 from DS4_LIB and executable-local
-// paths. The current working directory is deliberately not searched, to
-// avoid loading an attacker-planted library (binary planting).
+// paths, or returns "" when neither has it. The current working directory
+// is deliberately not searched, and a bare library name is never handed to
+// the OS loader (which would search the working directory on macOS and
+// Windows), to avoid loading an attacker-planted library (binary planting).
 func defaultLibraryPath() string {
 	if path := os.Getenv("DS4_LIB"); path != "" {
 		return path
@@ -355,12 +357,8 @@ func defaultLibraryPath() string {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))
 	}
-	candidates = append(candidates, name)
 
 	for _, candidate := range candidates {
-		if candidate == name {
-			return candidate
-		}
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			return candidate
 		}
@@ -381,10 +379,11 @@ func libraryFileName() string {
 
 // verifyLibrary performs integrity checks on a resolved libds4 path before it
 // is loaded into the process. A bare library name (no directory component) is
-// left to the OS loader's trusted search and skipped here.
+// refused: the OS loader would search the working directory for it on macOS
+// and Windows, bypassing every check below.
 func verifyLibrary(path string) error {
 	if filepath.Base(path) == path {
-		return nil // bare name: OS loader policy applies
+		return fmt.Errorf("ds4: refusing to load %q: give a path to the library (a bare name is resolved through the working directory)", path)
 	}
 	fi, err := os.Stat(path)
 	if err != nil {

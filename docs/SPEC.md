@@ -22,14 +22,19 @@ The root `ds4.DefaultLibraryPath` loader policy checks:
 2. `$DS4_DIR/lib/libds4.*` when `DS4_DIR` is set, otherwise `~/.ds4/lib/libds4.*`
 3. `libds4.*` in the executable directory
 4. `libds4.*` in a `lib/` directory next to the executable
-5. the bare platform library name, letting the OS dynamic loader resolve `libds4.*`
+
+When none exists the result is "not found" rather than the bare platform
+name: dyld and Windows `LoadLibrary` search the working directory for a leaf
+name, which is the planting vector the search order exists to avoid.
 
 The low-level `ds4api.Load("")` policy does not use `DS4_DIR`. It checks:
 
 1. `DS4_LIB`
 2. `libds4.*` in the executable directory
 3. `libds4.*` in a `lib/` directory next to the executable
-4. the bare platform library name, letting the OS dynamic loader resolve `libds4.*`
+
+and likewise returns "not found" rather than a bare name; `ds4api.Load`
+refuses a bare name outright.
 
 The current working directory and repository root are intentionally not searched
 to avoid loading an attacker-planted shared library.

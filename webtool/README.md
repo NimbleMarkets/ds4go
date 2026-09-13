@@ -73,7 +73,7 @@ The following tools are exposed to the DeepSeek model:
   ```
 
 ### `visit_page`
-* **Description**: `Open a URL in a visible browser and return rendered page Markdown.`
+* **Description**: `Open a URL in a visible browser and return rendered page Markdown.` Only http(s) URLs are opened; loopback, private, and link-local destinations are refused unless `AllowPrivateFetch`, including the page a redirect lands on.
 * **Arguments**:
   ```json
   {
@@ -94,7 +94,7 @@ The `webtool.Config` struct accepts the following configuration fields:
 | `Log` | `func(string)` | Optional logger callback for receiving status messages from the browser manager. |
 | `SearchProvider` | `string` | Search engine to use: `"google"`, `"duckduckgo"`, `"bing"`, `"yahoo"`, `"yandex"`, `"baidu"`, or `"brave"`. Defaults to `"google"`. |
 | `VisionAvailable` | `func() bool` | Whether the engine can encode images (`engine.HasVision`). When nil or false, `fetch_image` returns a text observation asking for `--vision`. |
-| `AllowPrivateFetch` | `bool` | Let `fetch_image` reach loopback, private, and link-local addresses, directly or via redirect. Off by default. |
+| `AllowPrivateFetch` | `bool` | Let `fetch_image` and `visit_page` reach loopback, private, and link-local addresses, directly or via redirect. Off by default. Non-http(s) schemes such as `file://` are refused either way. |
 | `MaxImageBytes` | `int` | Cap on one fetched image. Defaults to 64 MiB, upstream's image limit. |
 | `HTTPClient` | `*http.Client` | Client used by `fetch_image`. Defaults to one with a 60 s timeout. |
 
@@ -107,6 +107,9 @@ history re-renders without refetching. The body is accepted by file signature,
 not `Content-Type`, and capped at `MaxImageBytes`. Destinations that resolve
 to private, loopback, or link-local addresses are refused on every hop unless
 `AllowPrivateFetch` is set, so a model cannot be steered at services behind the
-tool's host. Without a vision encoder the tool answers with a text hint rather
+tool's host. The check runs on the address actually dialed, so a name whose
+DNS answer changes between lookups (rebinding) gains nothing; a custom
+`HTTPClient` must therefore use an `*http.Transport`, or set
+`AllowPrivateFetch`. Without a vision encoder the tool answers with a text hint rather
 than failing, matching upstream `view_image`.
 

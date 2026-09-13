@@ -44,9 +44,10 @@ type Config struct {
 	// VisionAvailable reports whether the engine can encode images. When nil
 	// or false, fetch_image returns a text observation asking for --vision.
 	VisionAvailable func() bool
-	// AllowPrivateFetch lets fetch_image reach loopback, private, and
-	// link-local addresses, on the first hop or via redirect. Off by default
-	// so a model cannot be steered at services behind the tool's host.
+	// AllowPrivateFetch lets fetch_image and visit_page reach loopback,
+	// private, and link-local addresses, on the first hop or via redirect.
+	// Off by default so a model cannot be steered at services behind the
+	// tool's host. Non-http(s) schemes such as file:// are refused either way.
 	AllowPrivateFetch bool
 	// MaxImageBytes caps one fetched image. Zero means upstream's 64 MiB.
 	MaxImageBytes int
@@ -57,6 +58,7 @@ type Config struct {
 // WebHelper implements browser-backed web tools using Chrome DevTools Protocol.
 type WebHelper struct {
 	cfg            Config
+	lookupIP       func(host string) ([]net.IP, error) // nil means net.LookupIP; tests override
 	port           int
 	profileDir     string
 	chromeCmd      *exec.Cmd
@@ -109,7 +111,7 @@ func (w *WebHelper) Search(ctx context.Context, query string, provider string) (
 		provider = w.cfg.SearchProvider
 	}
 	searchURL, js := w.getSearchConfig(provider, query)
-	return w.runPageJS(ctx, searchURL, js, false)
+	return w.runPageJS(ctx, searchURL, js, false, false)
 }
 
 // GoogleSearch searches Google (or the default configured SearchProvider) and returns search result Markdown links.
@@ -157,12 +159,20 @@ func (w *WebHelper) getSearchConfig(provider string, query string) (string, stri
 	return searchURL, js
 }
 
-// VisitPage navigates to a URL, optionally scrolls, and extracts its text layout.
+// VisitPage navigates to a URL, optionally scrolls, and extracts its text
+// layout. The URL passes the same policy as fetch_image first: http(s) only,
+// and no loopback, private, or link-local destination unless
+// Config.AllowPrivateFetch, checked again on the page the browser lands on.
+// The browser would otherwise render file://, chrome://, and internal
+// services for a model steered by page content.
 func (w *WebHelper) VisitPage(ctx context.Context, targetURL string) (string, error) {
 	if targetURL == "" {
-		return "", fmt.Errorf("visit_page requires url")
+		return "", fmt.Errorf("visit_page requires url: only http(s) URLs with a host are accepted")
 	}
-	return w.runPageJS(ctx, targetURL, webExtractPageJS, true)
+	if err := w.checkFetchURL(targetURL); err != nil {
+		return "", fmt.Errorf("visit_page: %w", err)
+	}
+	return w.runPageJS(ctx, targetURL, webExtractPageJS, true, true)
 }
 
 const GoogleSearchParametersSchema = `{
@@ -229,7 +239,10 @@ func (w *WebHelper) VisitPageTool() ds4.Tool {
 	}
 }
 
-func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dynamicScroll bool) (string, error) {
+// runPageJS opens pageURL in a fresh tab and evaluates js on it. With
+// checkLanding set, the page the browser ends up on (after any redirects)
+// must pass checkFetchURL before js runs.
+func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dynamicScroll bool, checkLanding bool) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -299,6 +312,11 @@ func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dy
 
 	if err := w.waitNavigatedReady(ctx, tConn, pageURL); err != nil {
 		return "", err
+	}
+	if checkLanding {
+		if err := w.checkLandingURL(ctx, tConn); err != nil {
+			return "", err
+		}
 	}
 
 	// Bypassing search consent
@@ -541,6 +559,31 @@ func (w *WebHelper) waitReady(ctx context.Context, conn *wsConn) error {
 			return ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
+	}
+	return nil
+}
+
+// checkLandingURL applies the destination policy to the page the tab landed
+// on, so a redirect from an allowed host to file:// or an internal service
+// is refused before anything is extracted.
+func (w *WebHelper) checkLandingURL(ctx context.Context, conn *wsConn) error {
+	raw, err := conn.call(ctx, "Runtime.evaluate", map[string]any{
+		"expression":    "location.href",
+		"returnByValue": true,
+	})
+	if err != nil {
+		return err
+	}
+	var evalRes cdpEvalResult
+	if err := json.Unmarshal(raw, &evalRes); err != nil {
+		return fmt.Errorf("visit_page: reading the landing URL: %w", err)
+	}
+	href := evalRes.Result.Value
+	if href == "" || href == "about:blank" {
+		return nil
+	}
+	if err := w.checkFetchURL(href); err != nil {
+		return fmt.Errorf("visit_page: landed on %s: %w", href, err)
 	}
 	return nil
 }

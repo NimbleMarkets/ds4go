@@ -95,38 +95,81 @@ func isImageBytes(data []byte) bool {
 	return bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) || bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff})
 }
 
-// checkFetchURL applies the scheme and destination policy to one URL.
+// checkFetchURL applies the scheme and destination policy to one URL. The
+// address check here is a fast refusal with a clear message; the check that
+// counts is repeated on the address actually dialed (see vettedAddrs and
+// pinnedDial), so a name that changes its answer between the two lookups
+// (DNS rebinding) gains nothing.
 func (w *WebHelper) checkFetchURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return errors.New("only http(s) URLs with a host are accepted")
 	}
-	if w.cfg.AllowPrivateFetch {
-		return nil
-	}
-	host := u.Hostname()
-	ips := []net.IP{}
+	_, err = w.vettedAddrs(u.Hostname())
+	return err
+}
+
+// vettedAddrs resolves host and returns its addresses, or an error when any
+// of them is loopback, private, link-local, or unspecified and
+// Config.AllowPrivateFetch is off.
+func (w *WebHelper) vettedAddrs(host string) ([]net.IP, error) {
+	var ips []net.IP
 	if ip := net.ParseIP(host); ip != nil {
-		ips = append(ips, ip)
+		ips = []net.IP{ip}
 	} else if host == "localhost" {
-		ips = append(ips, net.IPv4(127, 0, 0, 1))
+		ips = []net.IP{net.IPv4(127, 0, 0, 1)}
 	} else {
-		resolved, err := net.LookupIP(host)
+		lookup := w.lookupIP
+		if lookup == nil {
+			lookup = net.LookupIP
+		}
+		resolved, err := lookup(host)
 		if err != nil {
-			return fmt.Errorf("cannot resolve %s: %w", host, err)
+			return nil, fmt.Errorf("cannot resolve %s: %w", host, err)
+		}
+		if len(resolved) == 0 {
+			return nil, fmt.Errorf("cannot resolve %s: no addresses", host)
 		}
 		ips = resolved
 	}
+	if w.cfg.AllowPrivateFetch {
+		return ips, nil
+	}
 	for _, ip := range ips {
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return fmt.Errorf("%s resolves to a private address, which fetch_image refuses (AllowPrivateFetch)", host)
+			return nil, fmt.Errorf("%s resolves to a private address, which is refused (AllowPrivateFetch)", host)
 		}
 	}
-	return nil
+	return ips, nil
 }
 
-// fetchImageBytes GETs the URL with the destination policy re-applied on
-// every redirect and the body capped at the configured limit.
+// pinnedDial resolves the host itself, applies the destination policy to
+// the answer, and dials the vetted address, so the address checked is the
+// address connected to. TLS still verifies against the hostname, which the
+// transport takes from the request.
+func (w *WebHelper) pinnedDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := w.vettedAddrs(host)
+	if err != nil {
+		return nil, err
+	}
+	d := &net.Dialer{Timeout: 30 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// fetchImageBytes GETs the URL with the destination policy applied at dial
+// time on every hop and the body capped at the configured limit.
 func (w *WebHelper) fetchImageBytes(ctx context.Context, raw string) ([]byte, error) {
 	limit := w.cfg.MaxImageBytes
 	if limit <= 0 {
@@ -137,6 +180,21 @@ func (w *WebHelper) fetchImageBytes(ctx context.Context, raw string) ([]byte, er
 		base = &http.Client{Timeout: 60 * time.Second}
 	}
 	client := *base
+	var transport *http.Transport
+	switch rt := base.Transport.(type) {
+	case nil:
+		transport = http.DefaultTransport.(*http.Transport).Clone()
+	case *http.Transport:
+		transport = rt.Clone()
+	default:
+		if !w.cfg.AllowPrivateFetch {
+			return nil, errors.New("HTTPClient.Transport must be an *http.Transport for the private-address policy to pin the dialed address; set AllowPrivateFetch to use it as is")
+		}
+	}
+	if transport != nil {
+		transport.DialContext = w.pinnedDial
+		client.Transport = transport
+	}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("too many redirects")

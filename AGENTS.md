@@ -37,7 +37,9 @@ Shared libraries are not stored in this repository. The supported locations are:
 - `DS4_LIB` for an explicit shared-library file.
 - `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`, for installed `libds4` builds.
 - The executable directory or a `lib/` directory next to the executable.
-- The platform loader path for bare `libds4.*` names.
+
+A bare `libds4.*` name is never handed to the OS loader: on macOS and Windows
+that search includes the working directory.
 
 The current working directory and repository root are intentionally not searched
 to avoid binary planting.

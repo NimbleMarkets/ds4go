@@ -100,8 +100,11 @@ func TestDefaultLibraryPathIgnoresCWD(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := DefaultLibraryPath(); got == planted || got == plantedLib {
-		t.Fatalf("DefaultLibraryPath() = %q, must not resolve to a working-directory library", got)
+	// Nothing is installed, so the answer is "not found": a bare library
+	// name would make the OS loader search the working directory on macOS
+	// and Windows, which is the same planting vector by another route.
+	if got := DefaultLibraryPath(); got != "" {
+		t.Fatalf("DefaultLibraryPath() = %q, want \"\" (a bare name or a working-directory library hands the CWD to the OS loader)", got)
 	}
 }
 

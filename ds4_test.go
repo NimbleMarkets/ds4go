@@ -26,19 +26,22 @@ func TestIsPathWithinSafeDomain(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "bare valid library name macos",
+			// A bare name is resolved by the OS loader, which searches the
+			// working directory on macOS and Windows; it is no safer than
+			// a relative path.
+			name: "bare library name macos",
 			path: "libds4.dylib",
-			want: true,
+			want: false,
 		},
 		{
-			name: "bare valid library name windows",
+			name: "bare library name windows",
 			path: "libds4.dll",
-			want: true,
+			want: false,
 		},
 		{
-			name: "bare valid library name linux",
+			name: "bare library name linux",
 			path: "libds4.so",
-			want: true,
+			want: false,
 		},
 		{
 			name: "bare invalid library name",

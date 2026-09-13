@@ -275,7 +275,7 @@ go run ./cmd/ds4go prompt --model ./ds4flash.gguf
 
 `cmd/ds4go prompt` and the examples accept the **same arguments as the upstream `ds4` C programs**, parsed with [`pflag`](https://github.com/spf13/pflag) so options take the `--option` form. `cmd/ds4go prompt`, `examples/simple`, and `examples/chat` mirror the `ds4` CLI (`ds4_cli.c`); `examples/openai-compatible` mirrors `ds4-server` (`ds4_server.c`). Run any of them with `--help` for the full list.
 
-The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime. When empty, ds4go searches `DS4_LIB`, `$DS4_DIR/lib` (or `~/.ds4/lib`), executable-local paths, and then the platform loader path.
+The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime. When empty, ds4go searches `DS4_LIB`, `$DS4_DIR/lib` (or `~/.ds4/lib`), and executable-local paths; it never hands a bare name to the OS loader, whose search includes the working directory on macOS and Windows.
 
 ```text
 $ ds4go help cheat

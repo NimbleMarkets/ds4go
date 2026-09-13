@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -189,5 +191,41 @@ func TestFetchImageThroughTheRegistry(t *testing.T) {
 	}
 	if _, err := tool.Invoke(context.Background(), args); err == nil {
 		t.Error("text-only Invoke accepted an image result")
+	}
+}
+
+// The destination policy is enforced on the address actually dialed, not
+// only on a lookup made beforehand: a name that resolves to a public address
+// when checked and to loopback when dialed (DNS rebinding) is still refused,
+// and the server behind it never sees the request.
+func TestFetchImageRefusesRebindingAtDialTime(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++; _, _ = w.Write(testPNG(t)) }))
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	strict := NewWebHelper(Config{HomeDir: t.TempDir(), VisionAvailable: func() bool { return true }})
+	answers := []net.IP{net.IPv4(203, 0, 113, 5), net.IPv4(127, 0, 0, 1)}
+	strict.lookupIP = func(host string) ([]net.IP, error) {
+		ip := answers[0]
+		if len(answers) > 1 {
+			answers = answers[1:]
+		}
+		return []net.IP{ip}, nil
+	}
+	res := fetchImage(t, strict, fmt.Sprintf("http://rebind.test:%d/pic.png", port))
+	if hasImage(res) || !strings.Contains(resultText(res), "private") {
+		t.Errorf("rebinding fetch: %+v, want a refusal naming private addresses", res)
+	}
+	if hits != 0 {
+		t.Errorf("server received %d requests through a rebound name, want 0", hits)
+	}
+
+	// The pinned dialer still serves ordinary names: the vetted address is
+	// the one dialed.
+	open := fetchHelper(t, true, 0)
+	open.lookupIP = func(host string) ([]net.IP, error) { return []net.IP{net.IPv4(127, 0, 0, 1)}, nil }
+	if res := fetchImage(t, open, fmt.Sprintf("http://img.test:%d/pic.png", port)); !hasImage(res) {
+		t.Errorf("fetch through the pinned dialer: %+v, want the image", res)
 	}
 }

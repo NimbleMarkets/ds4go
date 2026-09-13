@@ -129,9 +129,9 @@ var (
 
 // Load loads libds4 using ds4go's runtime path policy.
 //
-// Passing an empty path searches DS4_LIB, DS4_DIR/lib, executable-local
-// library locations, and finally the platform loader path. The current
-// working directory is not searched; see DefaultLibraryPath.
+// Passing an empty path searches DS4_LIB, DS4_DIR/lib, and executable-local
+// library locations. The current working directory is not searched and a
+// bare name is never handed to the OS loader; see DefaultLibraryPath.
 func Load(path string) (*ds4api.Library, error) {
 	if path == "" {
 		path = DefaultLibraryPath()
@@ -324,11 +324,6 @@ func isPathWithinSafeDomain(path string) bool {
 	if path == "" {
 		return false
 	}
-	// Check if it is a bare library filename (system loader path)
-	if filepath.Base(path) == path && (path == "libds4.dylib" || path == "libds4.dll" || path == "libds4.so") {
-		return true
-	}
-
 	absPath, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return false

@@ -30,9 +30,14 @@ func TestVerifyLibraryAcceptsSafeFile(t *testing.T) {
 	}
 }
 
-func TestVerifyLibraryBareNameSkipped(t *testing.T) {
-	if err := verifyLibrary("libds4.so"); err != nil {
-		t.Fatalf("verifyLibrary(bare name) = %v, want nil", err)
+// A bare name would let the OS loader search the working directory (macOS,
+// Windows), so it never reaches dlopen: verify refuses it instead of
+// skipping the checks.
+func TestVerifyLibraryRefusesBareName(t *testing.T) {
+	for _, name := range []string{"libds4.so", "libds4.dylib", "libds4.dll"} {
+		if err := verifyLibrary(name); err == nil {
+			t.Errorf("verifyLibrary(%q) = nil, want an error", name)
+		}
 	}
 }
 
