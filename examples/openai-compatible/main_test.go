@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/NimbleMarkets/ds4go"
 	"github.com/NimbleMarkets/ds4go/ds4api"
+	"github.com/NimbleMarkets/ds4go/dsml"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -232,5 +233,63 @@ func TestThinkModeForRequestMapsReasoningEffort(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":"bogus"}`), &req)
 	if _, err := thinkModeForRequest(req); err == nil {
 		t.Error("unknown reasoning_effort accepted")
+	}
+}
+
+// The completion is parsed under the thinking mode the request resolved to
+// and the engine's tool syntax, not a fixed "thinking on, V4 syntax": with
+// reasoning_effort "none" the reply carries no think markers, so parsing it
+// as a thinking completion would file the whole answer under reasoning and
+// lose any tool call; a V4.1 engine emits DSML41 calls, which the V4 parser
+// does not recognise.
+func TestParseAssistantMessageFollowsThinkModeAndEngineSyntax(t *testing.T) {
+	lib, ctl := ds4api.NewMockLibraryWithControls()
+	eng, err := lib.NewEngine(ds4.EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	call := dsml.ToolCall{Name: "add", Arguments: `{"a":1,"b":2}`}
+	v4Call, err := dsml.RenderToolCallsSyntax(dsml.SyntaxDSML, []dsml.ToolCall{call})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := parseAssistantMessage(eng, "The answer is 4.", ds4.ThinkNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "The answer is 4." {
+		t.Errorf("ThinkNone direct answer: content = %q, want the answer", msg.Content)
+	}
+	msg, err = parseAssistantMessage(eng, "Adding them."+v4Call, ds4.ThinkNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "add" {
+		t.Errorf("ThinkNone tool call: tool_calls = %+v, want one call to add", msg.ToolCalls)
+	}
+
+	// Thinking on: the reasoning block is split off as before.
+	msg, err = parseAssistantMessage(eng, "hmm</think>Four."+v4Call, ds4.ThinkHigh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "Four." || len(msg.ToolCalls) != 1 {
+		t.Errorf("ThinkHigh: content = %q, tool_calls = %+v, want Four. and one call", msg.Content, msg.ToolCalls)
+	}
+
+	// A V4.1 engine: its DSML41 calls parse, and level 0 counts as no thinking.
+	ctl.SetDeepSeek41(true)
+	v41Call, err := dsml.RenderToolCallsSyntax(dsml.SyntaxDSML41, []dsml.ToolCall{call})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err = parseAssistantMessage(eng, "Adding."+v41Call, ds4.ThinkLevel(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "Adding." || len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "add" {
+		t.Errorf("V4.1 level 0: content = %q, tool_calls = %+v, want Adding. and one call to add", msg.Content, msg.ToolCalls)
 	}
 }

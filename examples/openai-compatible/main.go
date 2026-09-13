@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/NimbleMarkets/ds4go"
+	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/dsml"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/NimbleMarkets/ds4go/internal/models"
@@ -233,27 +234,10 @@ func run(cfg *cliopts.ServerConfig) error {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		msg := chatMessage{Role: "assistant", Content: text}
-		if parsed, err := dsml.ParseCompletion(text, true); err == nil {
-			msg.Content = parsed.Content
-			if len(parsed.ToolCalls) > 0 {
-				msg.ToolCalls = make([]chatToolCall, len(parsed.ToolCalls))
-				for i, call := range parsed.ToolCalls {
-					id, err := newToolCallID()
-					if err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
-						return
-					}
-					msg.ToolCalls[i] = chatToolCall{
-						ID:   id,
-						Type: "function",
-						Function: chatToolFunction{
-							Name:      call.Name,
-							Arguments: call.Arguments,
-						},
-					}
-				}
-			}
+		msg, err := parseAssistantMessage(engine, text, think)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(chatResponse{
@@ -269,6 +253,38 @@ func run(cfg *cliopts.ServerConfig) error {
 	addr := cfg.Addr()
 	fmt.Println("listening on http://" + addr)
 	return newHTTPServer(addr, mux).ListenAndServe()
+}
+
+// parseAssistantMessage splits a completion into content and tool calls
+// under the think mode the prompt was rendered with (a non-thinking reply
+// has no think markers, so parsing it as thinking would file the answer
+// under reasoning) and the engine's tool syntax (V4.1 emits DSML41). An
+// unparseable completion is returned as plain content.
+func parseAssistantMessage(engine *ds4api.Engine, text string, think ds4.ThinkMode) (chatMessage, error) {
+	msg := chatMessage{Role: "assistant", Content: text}
+	parsed, err := dsml.ParseCompletionSyntax(ds4.ToolSyntax(engine), text, engine.ThinkModeEnabled(think))
+	if err != nil {
+		return msg, nil
+	}
+	msg.Content = parsed.Content
+	if len(parsed.ToolCalls) > 0 {
+		msg.ToolCalls = make([]chatToolCall, len(parsed.ToolCalls))
+		for i, call := range parsed.ToolCalls {
+			id, err := newToolCallID()
+			if err != nil {
+				return chatMessage{}, err
+			}
+			msg.ToolCalls[i] = chatToolCall{
+				ID:   id,
+				Type: "function",
+				Function: chatToolFunction{
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				},
+			}
+		}
+	}
+	return msg, nil
 }
 
 // serverThinkMode is the think mode prompts are rendered with unless the
