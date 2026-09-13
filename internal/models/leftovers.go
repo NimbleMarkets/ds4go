@@ -155,9 +155,37 @@ func (m *Manager) DeletePartial(alias string) error {
 		return err
 	}
 	defer stateLock.Close()
-	if err := os.Remove(out + ".part"); err != nil {
-		return err
+	return m.removePartialFiles(model)
+}
+
+// partialFiles lists every on-disk piece of a partial download for model:
+// the joined name's resume file and, for a split model, each published part,
+// its resume file, and an interrupted join. Only existing files are returned.
+func (m *Manager) partialFiles(model Model) []string {
+	out := filepath.Join(m.ModelsDir, model.FileName)
+	candidates := []string{out + ".part"}
+	for _, part := range model.Parts {
+		p := filepath.Join(m.ModelsDir, part.FileName)
+		candidates = append(candidates, p, p+".part")
 	}
-	fmt.Fprintf(m.Out, "Removed partial download %s\n", out+".part")
+	candidates = append(candidates, out+".assembling")
+	var found []string
+	for _, p := range candidates {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			found = append(found, p)
+		}
+	}
+	return found
+}
+
+// removePartialFiles deletes the pieces partialFiles lists. Callers hold the
+// model's download lock and the state lock.
+func (m *Manager) removePartialFiles(model Model) error {
+	for _, p := range m.partialFiles(model) {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		fmt.Fprintf(m.Out, "Removed partial download %s\n", p)
+	}
 	return nil
 }

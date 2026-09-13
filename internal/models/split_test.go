@@ -192,3 +192,80 @@ func TestDryRunListsSplitParts(t *testing.T) {
 		}
 	}
 }
+
+// splitPieces lays down every kind of on-disk piece a split download can
+// leave: a complete published part, a resume file for the next part, and an
+// interrupted join.
+func splitPieces(t *testing.T, m *Manager, model Model) []string {
+	t.Helper()
+	out := filepath.Join(m.ModelsDir, model.FileName)
+	pieces := []string{out + ".part1", out + ".part2.part", out + ".assembling"}
+	for _, p := range pieces {
+		writeSized(t, p, 5)
+	}
+	return pieces
+}
+
+// DeletePartial removes all of a split download's pieces, not only the
+// joined name's ".part", and leaves the installed file alone.
+func TestDeletePartialRemovesSplitPieces(t *testing.T) {
+	m, model, _, _ := splitFixture(t)
+	out := filepath.Join(m.ModelsDir, model.FileName)
+	writeSized(t, out, 10)
+	pieces := splitPieces(t, m, model)
+	if err := m.DeletePartial("v41-q4"); err != nil {
+		t.Fatalf("DeletePartial: %v", err)
+	}
+	for _, p := range pieces {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still present", filepath.Base(p))
+		}
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Error("installed file was removed")
+	}
+	if p, _ := m.partial(model); p {
+		t.Error("still reported as partial after DeletePartial")
+	}
+	if err := m.DeletePartial("v41-q4"); err == nil || !strings.Contains(err.Error(), "no partial download") {
+		t.Errorf("second call: err = %v", err)
+	}
+}
+
+// Delete removes the installed split model and every piece of a download in
+// flight for it, and clears the default when the model was the default.
+func TestDeleteRemovesSplitPiecesAndClearsDefault(t *testing.T) {
+	m, model, _, _ := splitFixture(t)
+	out := filepath.Join(m.ModelsDir, model.FileName)
+	writeSized(t, out, 10)
+	if err := m.Set("v41-q4"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	pieces := splitPieces(t, m, model)
+	if err := m.Delete("v41-q4"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	for _, p := range append(pieces, out) {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still present", filepath.Base(p))
+		}
+	}
+	cfg, err := m.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultModel != "" {
+		t.Errorf("DefaultModel = %q, want cleared", cfg.DefaultModel)
+	}
+	if _, err := os.Lstat(filepath.Join(m.ModelsDir, DefaultModelSymlink)); !os.IsNotExist(err) {
+		t.Error("default link still present")
+	}
+	// Pieces alone (nothing installed) are enough for Delete to act on.
+	splitPieces(t, m, model)
+	if err := m.Delete("v41-q4"); err != nil {
+		t.Fatalf("Delete of pieces only: %v", err)
+	}
+	if p, _ := m.partial(model); p {
+		t.Error("pieces remain after Delete")
+	}
+}

@@ -481,10 +481,9 @@ func (m *Manager) Delete(alias string) error {
 		fmt.Fprintf(m.Out, "Removed %s\n", out)
 	}
 	if p, _ := m.partial(model); p {
-		if err := os.Remove(out + ".part"); err != nil {
+		if err := m.removePartialFiles(model); err != nil {
 			return err
 		}
-		fmt.Fprintf(m.Out, "Removed partial download %s\n", out+".part")
 	}
 
 	// If the deleted model was the default, drop the link and clear config.
