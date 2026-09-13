@@ -2,7 +2,7 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
-## Unreleased
+## v0.7.0 (2026-09-13)
 
 Requires libds4 **v0.5.20260910** or newer; DeepSeek V4.1 Flash and think
 levels need **v0.6.20260912**, and a DGX Spark (GB10) needs the
