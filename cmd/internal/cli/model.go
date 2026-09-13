@@ -49,6 +49,7 @@ func newModelCommand() *cobra.Command {
 			},
 		},
 		newModelDownloadCommand(),
+		newModelStatusCommand(),
 		newModelDeleteCommand(),
 	)
 	return cmd
