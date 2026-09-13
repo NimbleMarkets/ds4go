@@ -212,13 +212,28 @@ func BackendName(backend Backend) string {
 	return lib.raw.ds4BackendName(backend)
 }
 
-// ThinkModeEnabled reports whether mode emits thinking markers.
+// ThinkModeEnabled reports whether mode emits thinking markers, asking the
+// default library. Callers holding a Library or Engine should ask it
+// directly; this answers false when no default library can be loaded.
 func ThinkModeEnabled(mode ThinkMode) bool {
 	lib, err := DefaultLibrary()
 	if err != nil {
 		return false
 	}
-	return lib.raw.ds4ThinkModeEnabled(mode)
+	return lib.ThinkModeEnabled(mode)
+}
+
+// ThinkModeEnabled binds ds4_think_mode_enabled: whether mode emits thinking
+// markers. Named modes other than ThinkNone do; a V4.1 level does unless it
+// is 0.
+func (l *Library) ThinkModeEnabled(mode ThinkMode) bool {
+	return l.raw.ds4ThinkModeEnabled(mode)
+}
+
+// ThinkModeEnabled reports whether mode emits thinking markers, as decided by
+// the library this engine was opened from.
+func (e *Engine) ThinkModeEnabled(mode ThinkMode) bool {
+	return e.lib.ThinkModeEnabled(mode)
 }
 
 // ThinkModeName returns ds4's printable name for mode.

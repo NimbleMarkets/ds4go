@@ -395,7 +395,7 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 		}
 	}
 	rendered, err := renderPromptMessages(history, render, promptRenderOptions{
-		thinking:    ds4api.ThinkModeEnabled(think),
+		thinking:    engine.ThinkModeEnabled(think),
 		toolContext: len(tools) > 0 || historyUsesToolContext(history),
 		syntax:      syntax,
 	})

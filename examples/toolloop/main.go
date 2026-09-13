@@ -99,7 +99,7 @@ func run(cfg *cliopts.CLIConfig, mock, fetchImage, allowPrivate bool) error {
 		Session:   session,
 		Tools:     reg,
 		ThinkMode: cfg.ThinkMode(),
-		Thinking:  ds4api.ThinkModeEnabled(cfg.ThinkMode()),
+		Thinking:  engine.ThinkModeEnabled(cfg.ThinkMode()),
 	}
 	if engine.HasVision() {
 		loop.Images = ds4.NewImageEncoder(engine)
