@@ -41,6 +41,11 @@ Shared libraries are not stored in this repository. The supported locations are:
 A bare `libds4.*` name is never handed to the OS loader: on macOS and Windows
 that search includes the working directory.
 
+Windows is not a current target. The tree does not build with `GOOS=windows`
+(`purego.Dlsym` is unavailable there), CI does not cross-compile it, and the
+`*_windows.go` files exist only to keep the build tags honest for a future
+port. Do not spend effort on Windows parity unless asked.
+
 The current working directory and repository root are intentionally not searched
 to avoid binary planting.
 

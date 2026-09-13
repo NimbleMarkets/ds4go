@@ -185,7 +185,13 @@ Platform defaults are:
 | --- | --- |
 | macOS | `libds4.dylib` |
 | Linux | `libds4.so` |
-| Windows | `libds4.dll` |
+| Windows | `libds4.dll` (not a current target) |
+
+Windows is not a supported target at present: the loader's optional symbol
+lookups use `purego.Dlsym`, which purego does not provide on Windows, so the
+tree does not build there, and stderr redirection has no Windows path either.
+The `libds4.dll` name and the Windows-specific files are placeholders for a
+future port, not a working configuration.
 
 ### Side-by-side CUDA and ROCm libraries
 
