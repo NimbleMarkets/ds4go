@@ -79,6 +79,46 @@ func TestApplyMTPDefaultsSuppressesExternalMTPForGLM(t *testing.T) {
 	}
 }
 
+// DeepSeek V4.1 has no external MTP or DSpark support, so the root policy
+// suppresses an external MTP path for it as the CLI does, whether the model
+// is named by its catalog file or through the active-model hard link.
+func TestApplyMTPDefaultsSuppressesExternalMTPForDeepSeek41(t *testing.T) {
+	v41, ok := models.Lookup("v41-q2")
+	if !ok {
+		t.Fatal("missing v41-q2 catalog entry")
+	}
+	opts := EngineOptions{ModelPath: v41.FileName, MTPPath: "/models/deepseek-mtp.gguf"}
+	ApplyMTPDefaults(&opts)
+	if opts.MTPPath != "" {
+		t.Errorf("MTPPath = %q, want empty for V4.1", opts.MTPPath)
+	}
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, v41.FileName)
+	if err := os.WriteFile(file, []byte("gguf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, models.DefaultModelSymlink)
+	if err := os.Link(file, link); err != nil {
+		t.Fatal(err)
+	}
+	opts = EngineOptions{ModelPath: link, MTPPath: "/models/deepseek-mtp.gguf"}
+	ApplyMTPDefaults(&opts)
+	if opts.MTPPath != "" {
+		t.Errorf("MTPPath via hard link = %q, want empty for V4.1", opts.MTPPath)
+	}
+	// NewEngine applies the same family policy before opening.
+	for _, path := range []string{v41.FileName, link} {
+		if !externalMTPUnsupported(path) {
+			t.Errorf("externalMTPUnsupported(%q) = false, want true", path)
+		}
+	}
+	q2, _ := models.Lookup("q2-imatrix")
+	if externalMTPUnsupported(q2.FileName) {
+		t.Errorf("externalMTPUnsupported(%q) = true for a DeepSeek V4 model", q2.FileName)
+	}
+}
+
 func TestDefaultLibraryPathIgnoresCWD(t *testing.T) {
 	// A libds4 planted in the working directory must never be selected:
 	// loading a shared library from the CWD is a binary-planting vector.
