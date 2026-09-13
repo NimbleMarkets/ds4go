@@ -381,3 +381,55 @@ func TestDownloadResumesAfterConnectionDrop(t *testing.T) {
 		t.Errorf("drops=%d, output lacks a retry note:\n%s", drops, out.String())
 	}
 }
+
+// A flaky link that keeps making progress must not run out of retries: the
+// budget counts consecutive failures without progress, so a 340 GiB pull
+// that is reset every few GiB still completes.
+func TestDownloadRetryBudgetResetsOnProgress(t *testing.T) {
+	m := testManager(t.TempDir())
+	payload := strings.Repeat("z", 64*1024)
+	setCuratedHash(t, "q2-imatrix", sha256Hex(payload))
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Linked-Size", strconv.Itoa(len(payload)))
+		w.Header().Set("X-Linked-Etag", sha256Hex(payload))
+		if r.Method == http.MethodHead {
+			return
+		}
+		requests++
+		start := 0
+		if rng := r.Header.Get("Range"); strings.HasPrefix(rng, "bytes=") {
+			fmt.Sscanf(rng, "bytes=%d-", &start)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(payload)-1, len(payload)))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		body := payload[start:]
+		// Serve 2 KiB then reset, every time, until the last chunk: that is
+		// more than downloadMaxRetries drops, each with progress.
+		if len(body) > 2048 {
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			_, _ = w.Write([]byte(body[:2048]))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+				conn.Close()
+			}
+			return
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	withRepo(t, srv.URL)
+	withAvailableBytes(t, func(string) (uint64, error) { return 1 << 60, nil })
+	old := downloadRetryBase
+	downloadRetryBase = time.Millisecond
+	t.Cleanup(func() { downloadRetryBase = old })
+	m.Out = io.Discard
+	if _, err := m.Download(context.Background(), "q2-imatrix", "", false); err != nil {
+		t.Fatalf("Download over a link that drops every 2 KiB: %v (after %d requests)", err, requests)
+	}
+	if requests <= downloadMaxRetries+1 {
+		t.Fatalf("only %d requests; the test did not exceed the retry budget", requests)
+	}
+}

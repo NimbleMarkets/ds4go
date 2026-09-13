@@ -631,10 +631,10 @@ func (m *Manager) downloadFile(ctx context.Context, url, out, token string, expe
 	return m.downloadFileAttempt(ctx, url, out, token, expectedSHA, true)
 }
 
-// downloadMaxRetries bounds the resumes attempted for one file after
+// downloadMaxRetries bounds consecutive resumes that make no progress after
 // transient network failures (a dropped connection, a reset, a timeout);
-// each resume continues from the bytes already on disk. Per-attempt backoff
-// doubles from downloadRetryBase.
+// each resume continues from the bytes already on disk, and any progress
+// resets the count. Per-attempt backoff doubles from downloadRetryBase.
 const downloadMaxRetries = 8
 
 var downloadRetryBase = 2 * time.Second
@@ -821,6 +821,11 @@ func (m *Manager) downloadFileAttempt(ctx context.Context, url, out, token strin
 		resp.Body.Close()
 		start += n // whatever arrived is on disk; a retry resumes after it
 		if copyErr != nil {
+			if n > 0 {
+				// Progress resets the budget: it bounds consecutive failures
+				// that move nothing, not the number of drops over a long pull.
+				retries = 0
+			}
 			if retryable(ctx, copyErr) && retries < downloadMaxRetries {
 				retries++
 				fmt.Fprintf(m.Out, "Transient error after %s (%v); retry %d/%d in %s\n", formatBytes(start), copyErr, retries, downloadMaxRetries, downloadRetryDelay(retries))
