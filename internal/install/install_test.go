@@ -1589,3 +1589,71 @@ func TestRunPinOverUnmanagedNonTTYRequiresForce(t *testing.T) {
 		t.Errorf("file modified despite refusal: %q", got)
 	}
 }
+
+// The DGX Spark (GB10, sm_121) needs the gb10 CUDA asset: the generic arm64
+// CUDA build has no sm_121a kernels and libds4 falls back to a MoE prefill
+// path that is wrong above ~128 tokens there. On a GB10 the installer picks
+// the gb10 asset first and keeps the generic name as a fallback for releases
+// that predate the split.
+func TestCandidateAssetNamesGB10Variant(t *testing.T) {
+	gb10 := candidateAssetNames("v0.6.0", Options{GOOS: "linux", GOARCH: "arm64", Backend: "cuda", Variant: "gb10"})
+	if gb10[0] != "libds4-v0.6.0-linux-arm64-gb10-cuda.tar.gz" {
+		t.Fatalf("gb10 candidates[0] = %q", gb10[0])
+	}
+	if !contains(gb10, "libds4-v0.6.0-linux-arm64-cuda.tar.gz") {
+		t.Errorf("gb10 candidates lack the generic fallback: %#v", gb10)
+	}
+	for _, variant := range []string{"", "sbsa"} {
+		names := candidateAssetNames("v0.6.0", Options{GOOS: "linux", GOARCH: "arm64", Backend: "cuda", Variant: variant})
+		if names[0] != "libds4-v0.6.0-linux-arm64-cuda.tar.gz" || contains(names, "libds4-v0.6.0-linux-arm64-gb10-cuda.tar.gz") {
+			t.Errorf("variant %q candidates = %#v, want generic only", variant, names)
+		}
+	}
+}
+
+func TestNormalizeDetectsGB10OnlyForLinuxArm64CUDA(t *testing.T) {
+	old := isGB10Func
+	isGB10Func = func() bool { return true }
+	t.Cleanup(func() { isGB10Func = old })
+	cases := []struct {
+		goos, goarch, backend, want string
+	}{
+		{"linux", "arm64", "cuda", "gb10"},
+		{"linux", "arm64", "cpu", ""},
+		{"linux", "amd64", "cuda", ""},
+		{"darwin", "arm64", "metal", ""},
+	}
+	for _, c := range cases {
+		got := normalize(Options{GOOS: c.goos, GOARCH: c.goarch, Backend: c.backend, Out: io.Discard})
+		if got.Variant != c.want {
+			t.Errorf("%s/%s/%s: Variant = %q, want %q", c.goos, c.goarch, c.backend, got.Variant, c.want)
+		}
+	}
+	// An explicit variant is never overridden by detection.
+	if got := normalize(Options{GOOS: "linux", GOARCH: "arm64", Backend: "cuda", Variant: "sbsa", Out: io.Discard}); got.Variant != "sbsa" {
+		t.Errorf("explicit sbsa became %q", got.Variant)
+	}
+	isGB10Func = func() bool { return false }
+	if got := normalize(Options{GOOS: "linux", GOARCH: "arm64", Backend: "cuda", Out: io.Discard}); got.Variant != "" {
+		t.Errorf("non-GB10 arm64 got Variant %q", got.Variant)
+	}
+}
+
+func TestCatalogParsesAndSelectsTheGB10Asset(t *testing.T) {
+	got := catalogAssetFromReleaseAsset(asset{Name: "libds4-v0.6.0-linux-arm64-gb10-cuda.tar.gz", BrowserDownloadURL: "https://example.com/x"})
+	if !got.Parsed || got.GOOS != "linux" || got.GOARCH != "arm64" || got.Backend != "cuda" || got.Variant != "gb10" {
+		t.Fatalf("parsed = %+v, want linux/arm64/cuda variant gb10", got)
+	}
+	generic := catalogAssetFromReleaseAsset(asset{Name: "libds4-v0.6.0-linux-arm64-cuda.tar.gz"})
+	if !generic.Parsed || generic.Variant != "" {
+		t.Fatalf("generic parsed = %+v, want no variant", generic)
+	}
+	opts := Options{GOOS: "linux", GOARCH: "arm64", Backend: "cuda", Variant: "gb10", Version: "v0.6.0"}
+	if !catalogAssetSelected(got, opts) || catalogAssetSelected(generic, opts) {
+		t.Errorf("gb10 selection: gb10=%v generic=%v, want the gb10 asset only", catalogAssetSelected(got, opts), catalogAssetSelected(generic, opts))
+	}
+	opts.Variant = ""
+	if catalogAssetSelected(got, opts) || !catalogAssetSelected(generic, opts) {
+		t.Errorf("generic selection: gb10=%v generic=%v, want the generic asset only", catalogAssetSelected(got, opts), catalogAssetSelected(generic, opts))
+	}
+}

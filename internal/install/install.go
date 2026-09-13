@@ -55,9 +55,14 @@ const (
 
 // Options configures a libds4 installation.
 type Options struct {
-	Repo         string
-	Version      string
-	Backend      string
+	Repo    string
+	Version string
+	Backend string
+	// Variant selects a hardware-specific build of a backend where the
+	// release publishes one: "gb10" for the DGX Spark's linux-arm64-gb10-cuda
+	// asset (sm_121a kernels), "sbsa" for the generic arm64 CUDA build, or ""
+	// to detect. Only linux/arm64/cuda has variants today.
+	Variant      string
 	GOOS         string
 	GOARCH       string
 	DestDir      string
@@ -80,6 +85,7 @@ type Result struct {
 	Repo       string
 	Version    string
 	Backend    string
+	Variant    string
 	GOOS       string
 	GOARCH     string
 	AssetName  string
@@ -104,6 +110,7 @@ type CatalogAsset struct {
 	GOOS     string `json:"goos,omitempty"`
 	GOARCH   string `json:"goarch,omitempty"`
 	Backend  string `json:"backend,omitempty"`
+	Variant  string `json:"variant,omitempty"`
 	Archive  string `json:"archive,omitempty"`
 	Parsed   bool   `json:"parsed"`
 	Selected bool   `json:"selected"`
@@ -125,6 +132,7 @@ type InstallMetadata struct {
 	AssetURL    string    `json:"asset_url,omitempty"`
 	Source      string    `json:"source,omitempty"`
 	Backend     string    `json:"backend"`
+	Variant     string    `json:"variant,omitempty"`
 	GOOS        string    `json:"goos"`
 	GOARCH      string    `json:"goarch"`
 	Digest      string    `json:"digest,omitempty"`
@@ -181,6 +189,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		Repo:      opts.Repo,
 		Version:   version,
 		Backend:   opts.Backend,
+		Variant:   opts.Variant,
 		GOOS:      opts.GOOS,
 		GOARCH:    opts.GOARCH,
 		AssetName: assetName,
@@ -274,6 +283,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			AssetName:   assetName,
 			AssetURL:    assetURL,
 			Backend:     opts.Backend,
+			Variant:     opts.Variant,
 			GOOS:        opts.GOOS,
 			GOARCH:      opts.GOARCH,
 			Digest:      a.Digest,
@@ -567,6 +577,10 @@ func normalize(opts Options) Options {
 			opts.Backend = defaultBackend(opts.GOOS, opts.GOARCH)
 		}
 	}
+	opts.Variant = strings.ToLower(strings.TrimSpace(opts.Variant))
+	if opts.Variant == "" && hasVariants(opts.GOOS, opts.GOARCH, opts.Backend) && isGB10Func() {
+		opts.Variant = "gb10"
+	}
 	if opts.DestDir == "" {
 		opts.DestDir = filepath.Join(defaultDir(), "lib")
 	}
@@ -582,6 +596,31 @@ func normalize(opts Options) Options {
 	return opts
 }
 
+// hasVariants reports whether the release publishes hardware variants for
+// this target: today only linux/arm64 CUDA (generic sbsa vs GB10).
+func hasVariants(goos, goarch, backend string) bool {
+	return goos == "linux" && goarch == "arm64" && backend == "cuda"
+}
+
+// isGB10Func reports whether the local GPU is an NVIDIA GB10 (DGX Spark),
+// which needs the sm_121a build. nvidia-smi's product name is the reliable
+// source; the driver's /proc information file is the fallback.
+var isGB10Func = func() bool {
+	if path, err := exec.LookPath("nvidia-smi"); err == nil {
+		out, err := exec.Command(path, "--query-gpu=name", "--format=csv,noheader").Output()
+		if err == nil && strings.Contains(strings.ToUpper(string(out)), "GB10") {
+			return true
+		}
+	}
+	matches, _ := filepath.Glob("/proc/driver/nvidia/gpus/*/information")
+	for _, m := range matches {
+		if data, err := os.ReadFile(m); err == nil && strings.Contains(strings.ToUpper(string(data)), "GB10") {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeCatalog(opts Options) Options {
 	if opts.Repo == "" {
 		opts.Repo = DefaultRepo
@@ -592,6 +631,10 @@ func normalizeCatalog(opts Options) Options {
 	opts.Backend = strings.ToLower(strings.TrimSpace(opts.Backend))
 	opts.GOOS = strings.ToLower(strings.TrimSpace(opts.GOOS))
 	opts.GOARCH = strings.ToLower(strings.TrimSpace(opts.GOARCH))
+	opts.Variant = strings.ToLower(strings.TrimSpace(opts.Variant))
+	if opts.Variant == "" && hasVariants(opts.GOOS, opts.GOARCH, opts.Backend) && isGB10Func() {
+		opts.Variant = "gb10"
+	}
 	if opts.Out == nil {
 		opts.Out = io.Discard
 	}
@@ -629,6 +672,15 @@ func catalogAssetFromReleaseAsset(a asset) CatalogAsset {
 		return ca
 	}
 	backend := strings.ToLower(parts[len(parts)-1])
+	variant := ""
+	if knownCatalogVariant(parts[len(parts)-2]) {
+		// libds4-<version>-<os>-<arch>-<variant>-<backend>
+		variant = strings.ToLower(parts[len(parts)-2])
+		parts = append(parts[:len(parts)-2], parts[len(parts)-1])
+		if len(parts) < 4 {
+			return ca
+		}
+	}
 	goarch := normalizeCatalogArch(parts[len(parts)-2])
 	goos := normalizeCatalogOS(parts[len(parts)-3])
 	if !knownCatalogBackend(backend) || goos == "" || goarch == "" {
@@ -637,6 +689,7 @@ func catalogAssetFromReleaseAsset(a asset) CatalogAsset {
 	ca.GOOS = goos
 	ca.GOARCH = goarch
 	ca.Backend = backend
+	ca.Variant = variant
 	ca.Archive = archive
 	ca.Parsed = true
 	return ca
@@ -678,6 +731,12 @@ func normalizeCatalogArch(s string) string {
 	}
 }
 
+// knownCatalogVariant lists the hardware variant segments a release may put
+// between the arch and the backend.
+func knownCatalogVariant(s string) bool {
+	return strings.ToLower(s) == "gb10"
+}
+
 func knownCatalogBackend(s string) bool {
 	switch s {
 	case "metal", "cuda", "rocm", "cpu":
@@ -708,6 +767,15 @@ func catalogAssetSelected(a CatalogAsset, opts Options) bool {
 	selectedOpts.GOOS = a.GOOS
 	selectedOpts.GOARCH = a.GOARCH
 	selectedOpts.Backend = a.Backend
+	// A gb10 request marks the gb10 asset and not its generic fallback, and
+	// a generic request never marks the gb10 build.
+	requested := opts.Variant
+	if requested == "sbsa" {
+		requested = ""
+	}
+	if a.Variant != requested {
+		return false
+	}
 	for _, name := range candidateAssetNames(opts.Version, selectedOpts) {
 		if a.Name == name {
 			return true
@@ -795,6 +863,12 @@ func candidateAssetNames(version string, opts Options) []string {
 	var names []string
 	for _, osName := range osAssetNames(opts.GOOS) {
 		for _, archName := range archAssetNames(opts.GOARCH) {
+			if opts.Variant != "" && opts.Variant != "sbsa" {
+				// Hardware variant first; the generic build stays as the
+				// fallback for releases that predate the split.
+				stem := "libds4-" + strings.Join([]string{version, osName, archName, opts.Variant, opts.Backend}, "-")
+				names = append(names, stem+archiveExt, strings.TrimPrefix(stem, "lib")+archiveExt)
+			}
 			stem := "libds4-" + strings.Join([]string{version, osName, archName, opts.Backend}, "-")
 			names = append(names,
 				stem+archiveExt,
@@ -1262,6 +1336,9 @@ func Validate(ctx context.Context, opts Options) error {
 			fmt.Fprintf(opts.Out, "  Kind:        release (%s %s)\n", meta.Repo, meta.Version)
 		}
 		fmt.Fprintf(opts.Out, "  Backend:     %s\n", meta.Backend)
+		if meta.Variant != "" {
+			fmt.Fprintf(opts.Out, "  Variant:     %s\n", meta.Variant)
+		}
 		fmt.Fprintf(opts.Out, "  Installed:   %s\n", meta.InstalledAt.Format("2006-01-02 15:04:05"))
 		if meta.Kind != KindPinned {
 			fmt.Fprintf(opts.Out, "  Version:     %s\n", meta.Version)
