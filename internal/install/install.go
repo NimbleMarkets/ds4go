@@ -1128,6 +1128,12 @@ func archivePathIsSafe(name string) bool {
 	return true
 }
 
+// DefaultLibraryPath is where `ds4go install` puts libds4 for this host:
+// $DS4_DIR/lib or ~/.ds4/lib, with the platform's library file name.
+func DefaultLibraryPath() string {
+	return filepath.Join(defaultDir(), "lib", libraryFileName(runtime.GOOS))
+}
+
 func libraryFileName(goos string) string {
 	switch goos {
 	case "darwin":

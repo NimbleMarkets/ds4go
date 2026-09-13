@@ -98,9 +98,12 @@ ds4go model download glm53-q2   # also fetches glm53-vision, its encoder
 ds4go prompt -m glm53-q2 --image photo.png -p "What is this?"
 ```
 
-`model status` shows every partial download with its state (downloading,
-stalled, interrupted), the downloader's PID, progress, a sampled rate, and an
-ETA; `--watch 10s` refreshes and `--json` reports seconds-based fields.
+`model status` shows which processes have an engine loaded and the models,
+MTP/DSpark companions, and vision encoders they hold open, by catalog alias
+and role, then every partial download with its state (downloading, stalled,
+interrupted), the downloader's PID, progress, a sampled rate, and an ETA;
+`--watch 10s` refreshes and `--json` reports both sections with
+seconds-based fields.
 `model download` adds a vision model's encoder when it is not installed
 (`--no-encoder` skips that), accepts several aliases, and fetches them one
 after another, checking the combined size against free space before the
@@ -288,7 +291,7 @@ ds4go — command cheat sheet
   │   └── catalog  List available libds4 release assets
   │
   ├── model         Browse, download, and manage curated ds4 models
-  │   ├── status    Show in-progress, stalled, and interrupted downloads
+  │   ├── status    Show loaded engines and in-progress, stalled, or interrupted downloads
   │   ├── delete    Delete a downloaded model from disk
   │   ├── download  Download a curated model from Hugging Face
   │   ├── info      Show details for a curated model
