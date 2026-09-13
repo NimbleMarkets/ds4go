@@ -5,9 +5,10 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 ## Unreleased
 
 Requires libds4 **v0.5.20260910** or newer; DeepSeek V4.1 Flash and think
-levels need **v0.6.20260912** (NimbleMarkets/ds4 `nm-shared` at 9ecf8af),
-which `ds4go install` picks up. Older libraries keep working with the named
-think modes.
+levels need **v0.6.20260912**, and a DGX Spark (GB10) needs the
+**v0.6.20260913** `linux-arm64-gb10-cuda` asset, which `ds4go install` now
+selects automatically. Older libraries keep working with the named think
+modes.
 
  * **DeepSeek V4.1 Flash**: catalog entries, think levels, split downloads, and its DSML41 tool-call dialect; `webtool` gains `fetch_image`.
  * **Vision**: images in conversations for DeepSeek Flash Vision-Exp and GLM 5.3 Flash, from the CLI (`--image`, `/read`), from Go (`ChatMessage.Parts`, `BuildChatPromptMultimodal`, `ImageInputPNG`/`JPEG`), in the tool loop (`ToolLoop.Images`, `workspacetool` `view_image`), and over HTTP (inline data URIs in `examples/openai-compatible`).
@@ -26,6 +27,7 @@ think modes.
  * **HTTP images**: `examples/openai-compatible` accepts inline PNG/JPEG data URIs in user and tool messages, caps requests at 16 images and a 64 MiB body, and rejects remote URLs and file paths, matching `ds4-server`. Images against a text-only engine answer 400 with the `--vision` hint.
  * **`--model` aliases**: `ds4go prompt --model glm53-q2` resolves an installed catalog alias to its GGUF (also in the example server); an alias that is not installed now hints `ds4go model download <alias>`.
  * **`model download`**: several aliases in one command, fetched in order with the combined size checked against free space first; a vision model's encoder is added automatically when missing (`--no-encoder` opts out); a failure stops the run and reports what was installed.
+ * **`ds4go install --variant`**: libds4 v0.6.20260913 publishes two arm64 CUDA builds; the installer detects a GB10 (DGX Spark) and installs `linux-arm64-gb10-cuda` (sm_121a plus MXFP4 kernels), falling back to the generic asset on older releases. `--variant gb10|sbsa` overrides detection; the catalog, install metadata, and `validate` show the variant. The generic arm64 build lacks the fused MoE prefill path on GB10 and libds4 then falls back to one that is wrong above ~128 prompt tokens.
  * **`model delete --partial`**: removes stalled `.part` downloads, quarantined `.bad-*` files, and stale lock files without touching installed models, per alias or as a sweep with a confirmation listing; in-progress downloads are kept.
  * **Upstream flag parity**: `--dspark`, `--dspark-confidence`, `--dspark-strict`, `--mtp-exact-sampling`; `--power`, `--mtp-timing`, `--cuda-tensor-parallel`, `--ssd-streaming-full-layers` (both flag sets; the last two gain `EngineOptions` fields); `--raw` / `--raw-prompt`, `--prefix-file` (parser ported from `ds4_prompt_prefix.c`, seeds chat too), `--dump-logits`, `--decode-consistency`, `--perplexity-file`, `--imatrix-min-expert-samples`; server `--chdir` and `--batched-session`. Still absent: `--gpu-devices` / `--gpu-vram` (needs the GPU-config engine entry point and a VRAM probe libds4 does not export) and `--mixed-prefill-quantum` (a scheduler knob with nothing to drive in the example server).
  * **Fixes**: a failed multi-image `ChatAppendMultimodalMessage` left Go handles pointing at buffers libds4 had already replaced and freed (double free on cleanup); `/read` kept the image path instead of its bytes, so re-rendered history broke if the file moved; `ImageEncoder.SetLimits(0, ...)` still cached one entry; `Session.TokenLogprob` read `ds4_session_token_logprob`'s success return (1) as an error, so it failed on every real call; the example server rendered prompts in thinking mode but stop-detected as if thinking were off, so every completion came back empty.

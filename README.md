@@ -53,6 +53,8 @@ The installer downloads from `github.com/NimbleMarkets/ds4` by default. Use
 `--repo`, `--version`, `--backend`, or `--url` to select a fork, release, build,
 or direct archive. It installs into `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`.
 `--backend auto` selects `metal` on macOS arm64, `cuda` or `rocm` on Linux when detected, and `cpu` elsewhere.
+On a DGX Spark (GB10) the installer picks the `linux-arm64-gb10-cuda` asset, whose sm_121a kernels
+the generic arm64 build lacks; `--variant gb10|sbsa` overrides that detection.
 Use `ds4go install catalog` to list release assets before choosing a build;
 add `--json` for machine-readable output.
 If the library is already installed and up-to-date, the installer exits successfully
