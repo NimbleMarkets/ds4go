@@ -87,6 +87,44 @@ ds4go model set glm-iq2xxs
 The default model path for commands and examples is
 `$DS4_DIR/models/ds4flash.gguf`.
 
+### Model selectors in Go
+
+`ListModels()` exposes the curated catalog with local installation/default state,
+paths, descriptions, size/RAM guidance, model-family and vision metadata, and
+companion aliases. It reads local metadata without loading libds4 or downloading
+anything. Use `Installed && IsChatModel()` for a selector of available standalone
+chat models; retain `Path` as each option's value and `Default` for its initial
+selection. Encoder and speculative-draft files, and distributed pieces, are
+excluded by `IsChatModel()`. Group options by `Family` to collect quantization
+variants of the same checkpoint (for example, `q2-imatrix` and `q2-q4-imatrix`
+share `deepseek-v4-flash`). Companion entries have an empty `Family`.
+
+```go
+catalog, err := ds4.ListModels()
+if err != nil {
+    return err
+}
+for _, model := range catalog {
+    if model.Installed && model.IsChatModel() {
+        fmt.Printf("%s — %s (%s)\n", model.Alias, model.Notes, model.Path)
+    }
+}
+```
+
+`Vision` describes the checkpoint's capability. Look up its `Encoder` alias in
+that same catalog and check `Installed` to tell whether its companion is present;
+use `ApplyVisionDefaults(&opts)` after assigning the selected `Path` to
+`opts.ModelPath`. Hardware/runtime compatibility still depends on the engine.
+Keep unavailable entries to offer download choices, using `Partial` and
+`PartialBytes` to display unfinished downloads. Custom GGUFs are not catalog
+entries, so offer a file picker separately if your app supports them.
+
+For a flag or text field, `ResolveModelPath("vision-q2")` resolves an installed
+alias to its GGUF path. Paths, unknown aliases, and uninstalled aliases pass
+through unchanged for the app to validate. `ResolveModelInfo(path)` provides the
+same metadata for an installed file, including the default hard link. Selecting
+an entry in your application does not change ds4go's global default.
+
 ### Vision
 
 DeepSeek Flash Vision-Exp and GLM 5.3 Flash accept images in conversations.

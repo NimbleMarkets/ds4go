@@ -19,6 +19,9 @@ type ModelPart struct {
 
 // Model describes a curated ds4 GGUF model.
 type Model struct {
+	// Family groups quantization variants of the same checkpoint for selectors.
+	// Empty for companion files such as vision encoders and speculative drafters.
+	Family         string  `json:"family,omitempty"`
 	Alias          string  `json:"alias"`
 	GGUFPath       string  `json:"ggufPath"`
 	FileName       string  `json:"fileName"`
@@ -124,6 +127,7 @@ func repoDownloadBase(repo string) string {
 var curated = []Model{
 	{
 		Alias:          "q2-imatrix",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
 		SizeGB:         80.8,
 		RecommendedRAM: "96-128 GB",
@@ -133,6 +137,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "q2-q4-imatrix",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-fixed.gguf",
 		SizeGB:         90.9,
 		RecommendedRAM: "128-192 GB",
@@ -142,6 +147,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "q4-imatrix",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-Q4KExperts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out-chat-v2-imatrix.gguf",
 		SizeGB:         153.3,
 		RecommendedRAM: ">=256 GB",
@@ -151,6 +157,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "pro-q2-imatrix",
+		Family:         "deepseek-v4-pro",
 		FileName:       "DeepSeek-V4-Pro-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-Instruct-imatrix.gguf",
 		SizeGB:         432.7,
 		RecommendedRAM: ">=512 GB",
@@ -160,6 +167,7 @@ var curated = []Model{
 	},
 	{
 		Alias:           "pro-q4-layers00-30",
+		Family:          "deepseek-v4-pro",
 		FileName:        "DeepSeek-V4-Pro-Q4K-Layers00-30.gguf",
 		SizeGB:          426.1,
 		RecommendedRAM:  "distributed, 2 hosts",
@@ -171,6 +179,7 @@ var curated = []Model{
 	},
 	{
 		Alias:           "pro-q4-layers31-output",
+		Family:          "deepseek-v4-pro",
 		FileName:        "DeepSeek-V4-Pro-Q4K-Layers-31-output.gguf",
 		SizeGB:          411.6,
 		RecommendedRAM:  "distributed, 2 hosts",
@@ -182,6 +191,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm-iq2xxs",
+		Family:         "glm-5.2-flash",
 		FileName:       "GLM-5.2-UD-IQ2_XXS_RoutedIQ2XXS_blk78Q2K.gguf",
 		Repo:           glmRepo,
 		GLM:            true,
@@ -192,6 +202,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm-q2",
+		Family:         "glm-5.2-flash",
 		FileName:       "GLM-5.2-UD-Q2_K_RoutedQ2K.gguf",
 		Repo:           glmRepo,
 		GLM:            true,
@@ -202,6 +213,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm-q4",
+		Family:         "glm-5.2-flash",
 		FileName:       "GLM-5.2-UD-Q4_K_RoutedQ4K.gguf",
 		Repo:           glmRepo,
 		GLM:            true,
@@ -212,6 +224,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm53-q2",
+		Family:         "glm-5.3-flash",
 		FileName:       "GLM-5.3-Flash-Q2.gguf",
 		Repo:           glm53FlashRepo,
 		GLM:            true,
@@ -224,6 +237,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm53-q4",
+		Family:         "glm-5.3-flash",
 		FileName:       "GLM-5.3-Flash-Q4_K.gguf",
 		Repo:           glm53FlashRepo,
 		GLM:            true,
@@ -236,6 +250,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm53-full-q2",
+		Family:         "glm-5.3",
 		FileName:       "GLM-5.3-UD-IQ2_XXS_RoutedIQ2XXS_blk78Q2K.gguf",
 		Repo:           glm53FullRepo,
 		GLM:            true,
@@ -246,6 +261,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "vision-q2",
+		Family:         "deepseek-flash-vision",
 		FileName:       "DeepSeek-V4-Flash-Vision-Exp-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8.gguf",
 		SizeGB:         80.8,
 		RecommendedRAM: "96-128 GB",
@@ -257,6 +273,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "vision-q2-q4",
+		Family:         "deepseek-flash-vision",
 		FileName:       "DeepSeek-V4-Flash-Vision-Exp-Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown-AProjQ8-SExpQ8-OutQ8.gguf",
 		SizeGB:         90.9,
 		RecommendedRAM: "128-192 GB",
@@ -268,6 +285,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "vision-mxfp4",
+		Family:         "deepseek-flash-vision",
 		FileName:       "DeepSeek-V4-Flash-Vision-Exp-MXFP4Experts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out.gguf",
 		SizeGB:         145.3,
 		RecommendedRAM: ">=192 GB",
@@ -297,6 +315,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "v41-q2",
+		Family:         "deepseek-v4.1-flash",
 		FileName:       "DeepSeek-V4.1-Flash-Q2.gguf",
 		Repo:           ds41Repo,
 		SizeGB:         340.6,
@@ -310,6 +329,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "v41-q4",
+		Family:         "deepseek-v4.1-flash",
 		FileName:       "DeepSeek-V4.1-Flash-Q4.gguf",
 		Repo:           ds41Repo,
 		SizeGB:         483.0,
@@ -338,6 +358,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "glm53-fp8",
+		Family:         "glm-5.3-flash",
 		FileName:       "GLM-5.3-Flash-FP8.gguf",
 		Repo:           glm53FlashRepo,
 		SizeGB:         304.7,
@@ -360,6 +381,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "q2-imatrix-0731",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf",
 		SizeGB:         80.8,
 		RecommendedRAM: "96-128 GB",
@@ -369,6 +391,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "q2-q4-imatrix-0731",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-fixed-0731.gguf",
 		SizeGB:         90.9,
 		RecommendedRAM: "128-192 GB",
@@ -378,6 +401,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "q4-imatrix-0731",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-Q4KExperts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out-chat-v2-imatrix-0731.gguf",
 		SizeGB:         153.3,
 		RecommendedRAM: ">=256 GB",
@@ -387,6 +411,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "mxfp4-0731",
+		Family:         "deepseek-v4-flash",
 		FileName:       "DeepSeek-V4-Flash-MXFP4Experts-F16HC-F16Compressor-F16Indexer-Q8Attn-Q8Shared-Q8Out-chat-v2-mxfp4-0731.gguf",
 		SizeGB:         145.3,
 		RecommendedRAM: ">=192 GB",
@@ -395,6 +420,7 @@ var curated = []Model{
 	},
 	{
 		Alias:          "pro-q2-imatrix-0813",
+		Family:         "deepseek-v4-pro",
 		FileName:       "DeepSeek-V4-Pro-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-Instruct-imatrix-0813.gguf",
 		SizeGB:         432.7,
 		RecommendedRAM: ">=512 GB",

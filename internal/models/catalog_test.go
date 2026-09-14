@@ -411,3 +411,54 @@ func TestCuratedDeepSeek41AndFP8Models(t *testing.T) {
 		}
 	}
 }
+
+func TestCuratedFamilies(t *testing.T) {
+	want := map[string]string{
+		"q2-imatrix":             "deepseek-v4-flash",
+		"q2-q4-imatrix":          "deepseek-v4-flash",
+		"q4-imatrix":             "deepseek-v4-flash",
+		"q2-imatrix-0731":        "deepseek-v4-flash",
+		"q2-q4-imatrix-0731":     "deepseek-v4-flash",
+		"q4-imatrix-0731":        "deepseek-v4-flash",
+		"mxfp4-0731":             "deepseek-v4-flash",
+		"pro-q2-imatrix":         "deepseek-v4-pro",
+		"pro-q4-layers00-30":     "deepseek-v4-pro",
+		"pro-q4-layers31-output": "deepseek-v4-pro",
+		"pro-q2-imatrix-0813":    "deepseek-v4-pro",
+		"glm-iq2xxs":             "glm-5.2-flash",
+		"glm-q2":                 "glm-5.2-flash",
+		"glm-q4":                 "glm-5.2-flash",
+		"glm53-q2":               "glm-5.3-flash",
+		"glm53-q4":               "glm-5.3-flash",
+		"glm53-fp8":              "glm-5.3-flash",
+		"glm53-full-q2":          "glm-5.3",
+		"vision-q2":              "deepseek-flash-vision",
+		"vision-q2-q4":           "deepseek-flash-vision",
+		"vision-mxfp4":           "deepseek-flash-vision",
+		"v41-q2":                 "deepseek-v4.1-flash",
+		"v41-q4":                 "deepseek-v4.1-flash",
+	}
+	seen := map[string]bool{}
+	for _, m := range Curated() {
+		if m.Optional {
+			if m.Family != "" {
+				t.Errorf("%s: companion has Family %q, want empty", m.Alias, m.Family)
+			}
+			continue
+		}
+		fam, ok := want[m.Alias]
+		if !ok {
+			t.Errorf("%s: not in the expected family table; add it", m.Alias)
+			continue
+		}
+		if m.Family != fam {
+			t.Errorf("%s: Family = %q, want %q", m.Alias, m.Family, fam)
+		}
+		seen[m.Alias] = true
+	}
+	for alias := range want {
+		if !seen[alias] {
+			t.Errorf("%s: expected alias missing from the catalog", alias)
+		}
+	}
+}

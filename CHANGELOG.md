@@ -2,6 +2,16 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+* **Public model selection API**: `ListModels()` returns curated entries with paths,
+  installed/default/partial state, display metadata, model capabilities, and
+  companion aliases. `ModelInfo.Family` groups quantization variants of the same
+  checkpoint. `ModelInfo.IsChatModel()` filters companion files and
+  distributed pieces out of standalone chat selectors. `ResolveModelInfo` returns
+  the same enriched metadata, and `ResolveModelPath` resolves installed aliases
+  without downloading or loading the inference library.
+
 ## v0.7.0 (2026-09-13)
 
 Requires libds4 **v0.5.20260910** or newer; DeepSeek V4.1 Flash and think
