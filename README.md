@@ -12,9 +12,10 @@
 [`ds4`](https://github.com/antirez/ds4) itself is an inference engine focused on
 large mixture-of-experts models, including
 [*DeepSeek V4 Flash*](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash),
-[*GLM 5.3 Flash*](https://huggingface.co/antirez/glm-5.3-flash-gguf), and
-[*GLM 5.2*](https://huggingface.co/antirez/glm-5.2-gguf). These models target
-machines with substantial GPU-accessible memory.
+[*GLM 5.3 Flash*](https://huggingface.co/antirez/glm-5.3-flash-gguf),
+[*GLM 5.2*](https://huggingface.co/antirez/glm-5.2-gguf), and
+[*Qwen3.8 Flash Next*](https://huggingface.co/antirez/qwen3.8-flash-next-gguf).
+These models target machines with substantial GPU-accessible memory.
 
 We try to maintain parity with the upstream `ds4` library, wrapping its C API.  We build slightly-opinionated tools to facilitate using `ds4`.
 
@@ -127,7 +128,8 @@ an entry in your application does not change ds4go's global default.
 
 ### Vision
 
-DeepSeek Flash Vision-Exp and GLM 5.3 Flash accept images in conversations.
+DeepSeek Flash Vision-Exp, GLM 5.3 Flash, DeepSeek V4.1 Flash, and Qwen3.8
+Flash Next accept images in conversations.
 Download a vision model together with its encoder, then attach an image to a
 prompt:
 
@@ -148,14 +150,26 @@ after another, checking the combined size against free space before the
 first byte moves.
 
 DeepSeek V4.1 Flash (`v41-q2`, `v41-q4`, encoder `v41-vision`) is a separate
-model family: Metal-only upstream, no DSpark or external MTP, and thinking as
-a numeric reasoning effort. `--think-level 25` (or `/think 25` in chat) sets
+model family: Metal upstream, with text inference on CUDA; no DSpark or
+external MTP; and thinking as a numeric reasoning effort. `--think-level 25` (or `/think 25` in chat) sets
 1 to 100, 0 disables thinking, `--think` is 75 and `--think-max` 100. Q2 runs
 on one 128 GB Mac with `--ssd-streaming`; Q4 is published in two parts that
 `model download` fetches, joins, and verifies (allow 37 GiB extra while
 joining). GLM 5.3 Flash FP8 is `glm53-fp8`. V4.1 speaks a spaced DSML
 dialect for tool calls; `ToolSyntax` picks it automatically, so tool loops
 need no changes.
+
+Qwen3.8 Flash Next (`qwen38-q2`, `qwen38-q4k`, encoder `qwen38-vision`) runs
+on Metal and CUDA. Each GGUF holds the main weights, the built-in MTP, and a
+95 GiB BF16 n-gram table that stays on disk, so keep it on a fast local SSD;
+`qwen38-q2` fits a 64 GB Mac started with `--ctx 8192 --prefill-chunk 1024`.
+Its reasoning effort is an instruction at the head of the system turn rather
+than a think prefix, and `ThinkLow` / `ThinkMedium` (the OpenAI `low`,
+`minimal`, and `medium` efforts) map onto it; `BuildChatPrompt` handles that
+through `Engine.IsQwen4` and `Engine.Qwen4ReasoningEffortText`. Speculation
+is built in: pass `--mtp` with no path, as for GLM. Qwen's XML `<tool_call>`
+dialect is not yet rendered or parsed by the `dsml` package, so tool loops
+against a Qwen engine are not supported until that lands.
 
 Vision here means image understanding: the encoder turns a PNG or JPEG into
 embedding rows that are spliced into the prompt, and the model answers in
