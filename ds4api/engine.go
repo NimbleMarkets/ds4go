@@ -788,6 +788,32 @@ func (e *Engine) DeepSeek41ReasoningEffortText(mode ThinkMode) string {
 	return e.lib.raw.ds4Deepseek41ReasoningEffortText(mode)
 }
 
+// IsQwen4 reports whether the loaded model is Qwen3.8 Flash Next
+// (ds4_engine_is_qwen4); false on libraries that predate it.
+func (e *Engine) IsQwen4() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineIsQwen4 == nil {
+		return false
+	}
+	return e.lib.raw.ds4EngineIsQwen4(e.ptr)
+}
+
+// Qwen4ReasoningEffortText returns Qwen3.8's reasoning-effort instruction for
+// mode (ds4_qwen4_reasoning_effort_text): the xhigh text for ThinkHigh and
+// ThinkMax, the low text for ThinkLow, and "" for ThinkMedium (the template
+// sets nothing), ThinkNone, and libraries without Qwen. Unlike the other
+// families it is not a think prefix: ds4-agent and ds4-server place it at
+// the head of the system turn, and BuildChatPrompt does the same.
+func (e *Engine) Qwen4ReasoningEffortText(mode ThinkMode) string {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.lib.raw.ds4Qwen4ReasoningEffortText == nil {
+		return ""
+	}
+	return e.lib.raw.ds4Qwen4ReasoningEffortText(mode)
+}
+
 // ChatAppendThinkPrefix appends the model family's reasoning-effort prefix
 // for mode (ds4_chat_append_think_prefix): GLM and V4.1 render a system
 // line, V4 renders its max-effort prefix at ThinkMax, and nothing otherwise.

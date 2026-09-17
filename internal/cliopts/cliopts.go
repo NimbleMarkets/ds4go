@@ -233,10 +233,10 @@ func (c *CLIConfig) EngineOptions() ds4.EngineOptions {
 	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
 	switch {
-	case ok && (model.GLM || model.DeepSeek41):
-		// libds4 rejects an external --mtp support model for GLM. GLM 5.2's
-		// optional next-token predictor is embedded in the base GGUF instead.
-		// DSpark and external MTP are not implemented for V4.1 either.
+	case ok && (model.GLM || model.DeepSeek41 || model.Qwen):
+		// libds4 rejects an external --mtp support model for GLM and Qwen3.8:
+		// their next-token predictors are embedded in the base GGUF. DSpark
+		// and external MTP are not implemented for V4.1 either.
 		mtpPath = ""
 	case ok && model.DSpark != "":
 		// This checkpoint pins its own DSpark drafter; libds4 rejects every
@@ -560,9 +560,10 @@ func (c *ServerConfig) EngineOptions() ds4.EngineOptions {
 	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
 	switch {
-	case ok && (model.GLM || model.DeepSeek41):
-		// libds4 rejects an external --mtp support model for GLM; its
-		// predictor is embedded in the base GGUF. V4.1 has no MTP or DSpark.
+	case ok && (model.GLM || model.DeepSeek41 || model.Qwen):
+		// libds4 rejects an external --mtp support model for GLM and Qwen3.8;
+		// their predictors are embedded in the base GGUF. V4.1 has no MTP or
+		// DSpark.
 		mtpPath = ""
 	case ok && model.DSpark != "":
 		// This checkpoint pins its own DSpark drafter and libds4 rejects

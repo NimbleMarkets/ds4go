@@ -191,6 +191,8 @@ type rawSymbols struct {
 	ds4EngineIsDeepseek41               func(e uintptr) bool
 	ds4Deepseek41ReasoningEffortText    func(mode ThinkMode) string
 	ds4ChatAppendThinkPrefix            func(e uintptr, tokens *cTokens, mode ThinkMode)
+	ds4EngineIsQwen4                    func(e uintptr) bool
+	ds4Qwen4ReasoningEffortText         func(mode ThinkMode) string
 	ds4ThinkModeLevel                   func(mode ThinkMode) int32
 	ds4ThinkModeParseLevel              func(text string, out *ThinkMode) bool
 	ds4EnginePrefillChunk               func(e uintptr) uint32

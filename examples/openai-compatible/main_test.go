@@ -206,13 +206,14 @@ func TestGenerateOptionsMatchThePromptThinkMode(t *testing.T) {
 }
 
 // reasoning_effort follows upstream ds4-server's mapping: "max" is ThinkMax,
-// the OpenAI effort names collapse to ThinkHigh, "none" disables thinking,
-// and absent or null keeps the server default.
+// "xhigh" and "high" are ThinkHigh, "medium" is ThinkMedium, "low" and
+// "minimal" are ThinkLow, "none" disables thinking, and absent or null keeps
+// the server default.
 func TestThinkModeForRequestMapsReasoningEffort(t *testing.T) {
 	cases := map[string]ds4.ThinkMode{
 		"": serverThinkMode, "null": serverThinkMode,
-		`"max"`: ds4.ThinkMax, `"xhigh"`: ds4.ThinkHigh, `"high"`: ds4.ThinkHigh, `"medium"`: ds4.ThinkHigh,
-		`"low"`: ds4.ThinkHigh, `"minimal"`: ds4.ThinkHigh, `"none"`: ds4.ThinkNone,
+		`"max"`: ds4.ThinkMax, `"xhigh"`: ds4.ThinkHigh, `"high"`: ds4.ThinkHigh, `"medium"`: ds4.ThinkMedium,
+		`"low"`: ds4.ThinkLow, `"minimal"`: ds4.ThinkLow, `"none"`: ds4.ThinkNone,
 	}
 	for raw, want := range cases {
 		body := `{"messages":[]`
@@ -291,5 +292,46 @@ func TestParseAssistantMessageFollowsThinkModeAndEngineSyntax(t *testing.T) {
 	}
 	if msg.Content != "Adding." || len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "add" {
 		t.Errorf("V4.1 level 0: content = %q, tool_calls = %+v, want Adding. and one call to add", msg.Content, msg.ToolCalls)
+	}
+}
+
+// chat_template_kwargs carries enable_thinking and reasoning_effort as the
+// Qwen3.8 model card documents them (ds4-server's parse_chat_template_kwargs);
+// other keys are ignored, enable_thinking false wins over any effort, and an
+// effort inside the kwargs takes precedence over the top-level field.
+func TestThinkModeForRequestReadsChatTemplateKwargs(t *testing.T) {
+	cases := map[string]ds4.ThinkMode{
+		`{"enable_thinking": false}`:                                ds4.ThinkNone,
+		`{"enable_thinking": false, "reasoning_effort": "max"}`:     ds4.ThinkNone,
+		`{"enable_thinking": true}`:                                 serverThinkMode,
+		`{"reasoning_effort": "low"}`:                               ds4.ThinkLow,
+		`{"reasoning_effort": "medium", "preserve_thinking": true}`: ds4.ThinkMedium,
+		`{"enable_thinking": true, "reasoning_effort": "max"}`:      ds4.ThinkMax,
+		`null`: serverThinkMode,
+		`{}`:   serverThinkMode,
+	}
+	for raw, want := range cases {
+		var req chatRequest
+		if err := json.Unmarshal([]byte(`{"messages":[],"chat_template_kwargs":`+raw+`}`), &req); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		got, err := thinkModeForRequest(req)
+		if err != nil || got != want {
+			t.Errorf("chat_template_kwargs %s = (%d, %v), want %d", raw, got, err, want)
+		}
+	}
+	var req chatRequest
+	_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":"high","chat_template_kwargs":{"reasoning_effort":"low"}}`), &req)
+	if got, err := thinkModeForRequest(req); err != nil || got != ds4.ThinkLow {
+		t.Errorf("kwargs effort over top-level = (%d, %v), want ThinkLow", got, err)
+	}
+	for _, bad := range []string{`{"enable_thinking": "yes"}`, `{"reasoning_effort": 3}`, `{"reasoning_effort": "bogus"}`, `[]`} {
+		var req chatRequest
+		if err := json.Unmarshal([]byte(`{"messages":[],"chat_template_kwargs":`+bad+`}`), &req); err != nil {
+			continue // rejected at decode time is fine too
+		}
+		if _, err := thinkModeForRequest(req); err == nil {
+			t.Errorf("chat_template_kwargs %s accepted", bad)
+		}
 	}
 }

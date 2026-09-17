@@ -117,6 +117,20 @@ func TestApplyMTPDefaultsSuppressesExternalMTPForDeepSeek41(t *testing.T) {
 	if externalMTPUnsupported(q2.FileName) {
 		t.Errorf("externalMTPUnsupported(%q) = true for a DeepSeek V4 model", q2.FileName)
 	}
+	// Qwen3.8's MTP is built in and enabled with --mtp, like GLM's; there is
+	// no external support model to pass.
+	qwen, ok := models.Lookup("qwen38-q2")
+	if !ok {
+		t.Fatal("missing qwen38-q2 catalog entry")
+	}
+	if !externalMTPUnsupported(qwen.FileName) {
+		t.Errorf("externalMTPUnsupported(%q) = false, want true for Qwen3.8", qwen.FileName)
+	}
+	opts = EngineOptions{ModelPath: qwen.FileName, MTPPath: "/models/deepseek-mtp.gguf"}
+	ApplyMTPDefaults(&opts)
+	if opts.MTPPath != "" {
+		t.Errorf("MTPPath = %q, want empty for Qwen3.8", opts.MTPPath)
+	}
 }
 
 func TestDefaultLibraryPathIgnoresCWD(t *testing.T) {

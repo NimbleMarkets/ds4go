@@ -377,7 +377,14 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 		tokens.Free()
 		return nil, err
 	}
-	if err := appendThinkPrefix(engine, tokens, think); err != nil {
+	// Qwen3.8 carries its reasoning effort as an instruction at the head of
+	// the system turn (ds4-agent's agent_worker_build_system_tokens and
+	// ds4-server's render_qwen_chat_prompt_text); the other families take a
+	// think prefix before the system message.
+	qwenEffort := ""
+	if engine.IsQwen4() {
+		qwenEffort = engine.Qwen4ReasoningEffortText(think)
+	} else if err := appendThinkPrefix(engine, tokens, think); err != nil {
 		tokens.Free()
 		return nil, err
 	}
@@ -387,8 +394,15 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 		tokens.Free()
 		return nil, err
 	}
-	if system != "" || toolsSection != "" {
+	if system != "" || toolsSection != "" || qwenEffort != "" {
 		content := toolAwareSystemContent(system, toolsSection)
+		if qwenEffort != "" {
+			if content != "" {
+				content = qwenEffort + "\n\n" + content
+			} else {
+				content = qwenEffort
+			}
+		}
 		if err := engine.ChatAppendMessage(tokens, "system", content); err != nil {
 			tokens.Free()
 			return nil, err

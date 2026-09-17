@@ -179,17 +179,19 @@ func TestThinkLevelAndMTPModelFlags(t *testing.T) {
 // DSpark and external MTP are not implemented for V4.1, so a V4.1 catalog
 // model drops --mtp the way GLM does.
 func TestEngineOptionsSuppressExternalMTPForDeepSeek41(t *testing.T) {
-	v41, ok := models.Lookup("v41-q2")
-	if !ok {
-		t.Fatal("missing v41-q2 catalog entry")
-	}
 	const mtp = "/models/deepseek-mtp.gguf"
-	cli := CLIConfig{Model: v41.FileName, MTP: mtp}
-	server := ServerConfig{Model: v41.FileName, MTP: mtp}
-	if got := cli.EngineOptions().MTPPath; got != "" {
-		t.Errorf("CLI MTPPath = %q, want suppressed", got)
-	}
-	if got := server.EngineOptions().MTPPath; got != "" {
-		t.Errorf("server MTPPath = %q, want suppressed", got)
+	for _, alias := range []string{"v41-q2", "qwen38-q2", "qwen38-q4k"} {
+		model, ok := models.Lookup(alias)
+		if !ok {
+			t.Fatalf("missing %s catalog entry", alias)
+		}
+		cli := CLIConfig{Model: model.FileName, MTP: mtp}
+		server := ServerConfig{Model: model.FileName, MTP: mtp}
+		if got := cli.EngineOptions().MTPPath; got != "" {
+			t.Errorf("%s: CLI MTPPath = %q, want suppressed", alias, got)
+		}
+		if got := server.EngineOptions().MTPPath; got != "" {
+			t.Errorf("%s: server MTPPath = %q, want suppressed", alias, got)
+		}
 	}
 }

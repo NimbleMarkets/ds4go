@@ -81,6 +81,11 @@ const (
 	// ThinkMax requests maximum-effort thinking. ds4 may downgrade it to
 	// ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax = ds4api.ThinkMax
+	// ThinkLow is the OpenAI "low" / "minimal" effort (Qwen3.8's brief
+	// thinking; High elsewhere).
+	ThinkLow = ds4api.ThinkLow
+	// ThinkMedium is the OpenAI "medium" effort (no instruction on Qwen3.8).
+	ThinkMedium = ds4api.ThinkMedium
 	// ThinkLevelBase offsets explicit V4.1 reasoning effort (ThinkLevel).
 	ThinkLevelBase = ds4api.ThinkLevelBase
 
@@ -201,12 +206,13 @@ func DiscardLogs() error {
 
 // externalMTPUnsupported reports whether the catalog model at modelPath
 // (by file name, or through the active-model link) is a family that takes
-// no external MTP support model: libds4 rejects one for GLM, whose
-// predictor is embedded in the base GGUF, and DeepSeek V4.1 has no MTP or
-// DSpark support. This is the CLI's --mtp policy applied at the root API.
+// no external MTP support model: libds4 rejects one for GLM and Qwen3.8,
+// whose predictors are embedded in the base GGUF, and DeepSeek V4.1 has no
+// MTP or DSpark support. This is the CLI's --mtp policy applied at the root
+// API.
 func externalMTPUnsupported(modelPath string) bool {
 	model, ok := models.ModelForPath(modelPath)
-	return ok && (model.GLM || model.DeepSeek41)
+	return ok && (model.GLM || model.DeepSeek41 || model.Qwen)
 }
 
 // NewEngine loads the default libds4 shared library and opens a ds4 engine.
@@ -247,7 +253,8 @@ func defaultCallbackLibrary(load bool) (*ds4api.Library, error) {
 // ApplyMTPDefaults populates MTPPath, MTPDraftTokens, and MTPMargin with
 // sensible defaults when an MTP model is installed. GLM models suppress the
 // external MTP path because their optional predictor is embedded in the base
-// GGUF, and DeepSeek V4.1 models because they have no MTP support. A model that pins its own DSpark drafter (see DSparkSupportPath) gets
+// GGUF, Qwen3.8 for the same reason, and DeepSeek V4.1 models because they
+// have no MTP support. A model that pins its own DSpark drafter (see DSparkSupportPath) gets
 // that drafter or none at all, never the standard MTP model. For other model
 // families, only empty or zero fields are filled, so explicit caller settings
 // are respected.

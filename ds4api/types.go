@@ -43,6 +43,13 @@ const (
 	// ThinkMax requests maximum-effort thinking. ds4_think_mode_for_context
 	// may downgrade it to ThinkHigh when the context is below ThinkMaxMinContext.
 	ThinkMax
+	// ThinkLow is upstream's DS4_THINK_LOW: the OpenAI "low" (and "minimal")
+	// reasoning effort. Qwen3.8 renders it as its brief-thinking instruction;
+	// GLM treats it as High and DeepSeek V4.1 as thinking with no effort line.
+	ThinkLow
+	// ThinkMedium is upstream's DS4_THINK_MEDIUM: the OpenAI "medium" effort.
+	// Qwen3.8 adds no instruction for it; other families treat it as ThinkLow.
+	ThinkMedium
 )
 
 // ThinkLevelBase is upstream's DS4_THINK_LEVEL_BASE: explicit numeric effort

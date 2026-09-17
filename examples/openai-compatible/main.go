@@ -43,30 +43,70 @@ type chatRequest struct {
 	Tools               []chatTool         `json:"tools,omitempty"`
 	MaxTokens           int                `json:"max_tokens"`
 	MaxCompletionTokens int                `json:"max_completion_tokens"`
-	// ReasoningEffort follows ds4-server: "max", the OpenAI effort names
-	// ("xhigh" .. "minimal", all ThinkHigh here), "none", or null.
+	// ReasoningEffort follows ds4-server: "max", "xhigh"/"high" (ThinkHigh),
+	// "medium" (ThinkMedium), "low"/"minimal" (ThinkLow), "none", or null.
 	ReasoningEffort json.RawMessage `json:"reasoning_effort,omitempty"`
+	// ChatTemplateKwargs carries enable_thinking and reasoning_effort as the
+	// Qwen3.8 model card documents them; other keys are ignored. An effort
+	// here overrides ReasoningEffort, and enable_thinking false wins.
+	ChatTemplateKwargs json.RawMessage `json:"chat_template_kwargs,omitempty"`
 }
 
-// thinkModeForRequest maps reasoning_effort to a think mode the way upstream
-// ds4-server's parse_reasoning_effort_name does; absent or null keeps the
-// server default.
+// thinkModeForRequest resolves the think mode from reasoning_effort and
+// chat_template_kwargs the way upstream ds4-server does: the effort names
+// map through parseReasoningEffort, enable_thinking false forces ThinkNone,
+// and absent or null keeps the server default.
 func thinkModeForRequest(req chatRequest) (ds4.ThinkMode, error) {
-	raw := strings.TrimSpace(string(req.ReasoningEffort))
-	if raw == "" || raw == "null" {
-		return serverThinkMode, nil
+	effort := serverThinkMode
+	if raw := strings.TrimSpace(string(req.ReasoningEffort)); raw != "" && raw != "null" {
+		mode, err := parseReasoningEffort(req.ReasoningEffort)
+		if err != nil {
+			return 0, err
+		}
+		effort = mode
 	}
+	enabled := true
+	if raw := strings.TrimSpace(string(req.ChatTemplateKwargs)); raw != "" && raw != "null" {
+		var kwargs map[string]json.RawMessage
+		if err := json.Unmarshal(req.ChatTemplateKwargs, &kwargs); err != nil {
+			return 0, fmt.Errorf("chat_template_kwargs must be an object: %w", err)
+		}
+		if v, ok := kwargs["enable_thinking"]; ok {
+			if err := json.Unmarshal(v, &enabled); err != nil {
+				return 0, fmt.Errorf("chat_template_kwargs.enable_thinking must be a boolean: %w", err)
+			}
+		}
+		if v, ok := kwargs["reasoning_effort"]; ok {
+			mode, err := parseReasoningEffort(v)
+			if err != nil {
+				return 0, err
+			}
+			effort = mode
+		}
+	}
+	if !enabled {
+		return ds4.ThinkNone, nil
+	}
+	return effort, nil
+}
+
+// parseReasoningEffort maps one reasoning_effort value as ds4-server's
+// parse_reasoning_effort_name does.
+func parseReasoningEffort(raw json.RawMessage) (ds4.ThinkMode, error) {
 	var name string
-	if err := json.Unmarshal(req.ReasoningEffort, &name); err != nil {
+	if err := json.Unmarshal(raw, &name); err != nil {
 		return 0, fmt.Errorf("reasoning_effort must be a string: %w", err)
 	}
 	switch name {
 	case "max":
 		return ds4.ThinkMax, nil
-	case "xhigh", "high", "medium", "low", "minimal":
-		// ds4 only exposes HIGH and MAX above zero, so every named effort
-		// collapses to HIGH; "none" is the way to disable thinking.
+	case "xhigh", "high":
 		return ds4.ThinkHigh, nil
+	case "medium":
+		return ds4.ThinkMedium, nil
+	case "low", "minimal":
+		// "minimal" is the smallest non-zero effort; "none" disables thinking.
+		return ds4.ThinkLow, nil
 	case "none":
 		return ds4.ThinkNone, nil
 	}

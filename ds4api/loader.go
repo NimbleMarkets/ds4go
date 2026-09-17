@@ -143,6 +143,12 @@ func (l *Library) SupportsGLM() bool {
 	return l != nil && l.raw.ds4EngineIsGLMDSA != nil
 }
 
+// SupportsQwen4 reports whether the library binds the Qwen3.8 Flash Next
+// entry points (ds4_engine_is_qwen4, ds4_qwen4_reasoning_effort_text).
+func (l *Library) SupportsQwen4() bool {
+	return l != nil && l.raw.ds4EngineIsQwen4 != nil
+}
+
 // GLMReasoningEffortText returns the GLM reasoning-effort system line for mode
 // (ds4_glm_reasoning_effort_text), or "" for ThinkNone and for libraries
 // without GLM support. GLM encodes thinking effort as a system message rather
@@ -231,6 +237,12 @@ func (l *Library) register() (err error) {
 		mustRegister(&r.ds4ChatAppendThinkPrefix, "ds4_chat_append_think_prefix")
 		mustRegister(&r.ds4ThinkModeLevel, "ds4_think_mode_level")
 		mustRegister(&r.ds4ThinkModeParseLevel, "ds4_think_mode_parse_level")
+	}
+	// Qwen3.8 Flash Next (upstream ds4 ccea768): optional as a group. Its
+	// reasoning effort is a system-turn instruction, not a think prefix.
+	if _, err := purego.Dlsym(l.handle, "ds4_engine_is_qwen4"); err == nil {
+		mustRegister(&r.ds4EngineIsQwen4, "ds4_engine_is_qwen4")
+		mustRegister(&r.ds4Qwen4ReasoningEffortText, "ds4_qwen4_reasoning_effort_text")
 	}
 	if _, err := purego.Dlsym(l.handle, "ds4_token_is_stop"); err == nil {
 		mustRegister(&r.ds4TokenIsStop, "ds4_token_is_stop")
