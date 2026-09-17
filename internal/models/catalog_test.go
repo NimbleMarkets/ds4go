@@ -101,14 +101,20 @@ func TestCuratedModelURLsWellFormed(t *testing.T) {
 // The downloader deliberately does not follow redirects (it reads those headers
 // off the resolve response), so a non-canonical repo silently loses the remote
 // size and hash. Keep every curated repo canonical.
+// Repo names must be the exact spelling Hugging Face publishes: the resolve
+// URL for any other casing is a redirect whose response carries none of the
+// x-linked-* headers the metadata probe reads. antirez's repos are lower
+// case; ggml-org's Qwen3.8 repo is not.
 func TestCuratedRepoNamesAreCanonical(t *testing.T) {
 	for _, m := range Curated() {
 		if m.Repo == "" {
 			continue
 		}
-		if m.Repo != strings.ToLower(m.Repo) {
-			t.Errorf("%s Repo = %q, want the canonical lower-case name %q",
-				m.Alias, m.Repo, strings.ToLower(m.Repo))
+		if strings.Count(m.Repo, "/") != 1 || strings.ContainsAny(m.Repo, " \t") {
+			t.Errorf("%s Repo = %q, want owner/name", m.Alias, m.Repo)
+		}
+		if strings.HasPrefix(m.Repo, "antirez/") && m.Repo != strings.ToLower(m.Repo) {
+			t.Errorf("%s Repo = %q, want the lower-case name antirez publishes", m.Alias, m.Repo)
 		}
 	}
 	if hfRepo != strings.ToLower(hfRepo) {
@@ -437,6 +443,8 @@ func TestCuratedFamilies(t *testing.T) {
 		"vision-mxfp4":           "deepseek-flash-vision",
 		"v41-q2":                 "deepseek-v4.1-flash",
 		"v41-q4":                 "deepseek-v4.1-flash",
+		"qwen38-q2":              "qwen3.8-flash-next",
+		"qwen38-q4k":             "qwen3.8-flash-next",
 	}
 	seen := map[string]bool{}
 	for _, m := range Curated() {
@@ -460,5 +468,53 @@ func TestCuratedFamilies(t *testing.T) {
 		if !seen[alias] {
 			t.Errorf("%s: expected alias missing from the catalog", alias)
 		}
+	}
+}
+
+// Qwen3.8 Flash Next mirrors upstream download_model.sh's qwen38-q2,
+// qwen38-q4k, and qwen38-vision targets: single files (no split parts) from
+// antirez's repo, with the encoder from ggml-org's. Sizes are GiB from
+// x-linked-size and hashes from x-linked-etag on the resolve URL. MTP is
+// built in (--mtp), so no DSpark or external MTP model is pinned.
+func TestCuratedQwen38Models(t *testing.T) {
+	want := map[string]struct {
+		file, repo, encoder string
+		sizeGB              float64
+		sha                 string
+		qwen, vision        bool
+		optional            bool
+	}{
+		"qwen38-q2":     {"Qwen3.8-Flash-Next-Q2.gguf", qwen38Repo, "qwen38-vision", 137.1, "b1b93fa69aca5f187b0fb813aca8f3ec1beb5cf8cf0bd38cf041b93e0b6ccac9", true, true, false},
+		"qwen38-q4k":    {"Qwen3.8-Flash-Next-Q4.gguf", qwen38Repo, "qwen38-vision", 165.1, "680944460a8cbe93ba8b6d7b6107213ffb7e22320bd913000e563ca0a0f25a8a", true, true, false},
+		"qwen38-vision": {"mmproj-Qwen3.8-Flash-Next-Q8_0.gguf", qwen38MMProjRepo, "", 0.6, "b2e9b5e4a44c107f8867e67dbf09b607fd99ae33c1a97a60a6720aeb252a9dad", true, false, true},
+	}
+	found := map[string]bool{}
+	for _, m := range Curated() {
+		w, ok := want[m.Alias]
+		if !ok {
+			if m.Qwen {
+				t.Errorf("%s is marked Qwen but is not a Qwen3.8 entry", m.Alias)
+			}
+			continue
+		}
+		found[m.Alias] = true
+		if m.FileName != w.file || m.Repo != w.repo || m.SizeGB != w.sizeGB || m.SHA256 != w.sha || m.Encoder != w.encoder ||
+			m.Qwen != w.qwen || m.Vision != w.vision || m.Optional != w.optional {
+			t.Errorf("%s = %+v, want %+v", m.Alias, m, w)
+		}
+		if m.GLM || m.DeepSeek41 || m.DSpark != "" || len(m.Parts) != 0 {
+			t.Errorf("%s carries another family's flags: glm=%v v41=%v dspark=%q parts=%d", m.Alias, m.GLM, m.DeepSeek41, m.DSpark, len(m.Parts))
+		}
+		if !m.Optional && !strings.Contains(m.RecommendedRAM, "Metal") {
+			t.Errorf("%s RecommendedRAM = %q, want the Metal and CUDA note", m.Alias, m.RecommendedRAM)
+		}
+	}
+	for alias := range want {
+		if !found[alias] {
+			t.Errorf("curated catalog is missing %q", alias)
+		}
+	}
+	if u := modelDownloadURL(Model{Repo: qwen38MMProjRepo, FileName: "mmproj-Qwen3.8-Flash-Next-Q8_0.gguf"}); !strings.HasSuffix(u, "ggml-org/Qwen3.8-Flash-Next-GGUF/resolve/main/mmproj-Qwen3.8-Flash-Next-Q8_0.gguf") {
+		t.Errorf("encoder URL = %q", u)
 	}
 }

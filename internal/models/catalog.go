@@ -43,9 +43,15 @@ type Model struct {
 	// DSpark is the catalog alias of the DSpark support model this checkpoint
 	// requires, when it is not the default one (Vision-Exp has its own).
 	DSpark string `json:"dspark,omitempty"`
-	// DeepSeek41 marks a DeepSeek V4.1 Flash checkpoint: Metal-only upstream,
-	// no DSpark or external MTP, thinking as an effort level (--think-level).
+	// DeepSeek41 marks a DeepSeek V4.1 Flash checkpoint: Metal, or CUDA for
+	// text, upstream; no DSpark or external MTP; thinking as an effort level
+	// (--think-level).
 	DeepSeek41 bool `json:"deepseek41,omitempty"`
+	// Qwen marks a Qwen3.8 Flash Next file (checkpoint or its encoder): a
+	// ChatML template with the reasoning effort in the system turn, an XML
+	// <tool_call> dialect, built-in MTP enabled with --mtp (no external
+	// support model), and an on-disk n-gram table that stays on the SSD.
+	Qwen bool `json:"qwen,omitempty"`
 	// Parts lists the pieces a GGUF is published as when Hugging Face's single
 	// file limit splits it. The downloader fetches each part, joins them into
 	// FileName, and verifies the joined file against SHA256.
@@ -85,6 +91,14 @@ const (
 	// ds41Repo hosts DeepSeek V4.1 Flash (ds4's ds41f-* targets): a different
 	// model family from V4 Flash with its own GGUFs, tokenizer, and encoder.
 	ds41Repo = "antirez/deepseek-v4.1-flash-gguf"
+
+	// qwen38Repo hosts Qwen3.8 Flash Next (ds4's qwen38-* targets): one GGUF
+	// per quant holding the main model, its MTP, and the on-disk BF16
+	// n-gram table. qwen38MMProjRepo hosts its vision encoder; the spelling
+	// is the published one, since the resolve URL for any other casing is a
+	// redirect that carries none of the x-linked-* metadata headers.
+	qwen38Repo       = "antirez/qwen3.8-flash-next-gguf"
+	qwen38MMProjRepo = "ggml-org/Qwen3.8-Flash-Next-GGUF"
 
 	// DefaultModelSymlink is the name of the active-model symlink in ModelsDir.
 	DefaultModelSymlink = "ds4flash.gguf"
@@ -319,7 +333,7 @@ var curated = []Model{
 		FileName:       "DeepSeek-V4.1-Flash-Q2.gguf",
 		Repo:           ds41Repo,
 		SizeGB:         340.6,
-		RecommendedRAM: "128 GB + SSD streaming; Metal only",
+		RecommendedRAM: "128 GB + SSD streaming; Metal, or CUDA for text",
 		SHA256:         "1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42",
 		DeepSeek41:     true,
 		Vision:         true,
@@ -333,7 +347,7 @@ var curated = []Model{
 		FileName:       "DeepSeek-V4.1-Flash-Q4.gguf",
 		Repo:           ds41Repo,
 		SizeGB:         483.0,
-		RecommendedRAM: ">=512 GB, or SSD streaming; Metal only",
+		RecommendedRAM: ">=512 GB, or SSD streaming; Metal, or CUDA for text",
 		SHA256:         "a5e2e2c3ada4b2e98d9f9e4b50f6d9c2a12c2c96f5da165c07e13aff9264984e",
 		DeepSeek41:     true,
 		Vision:         true,
@@ -378,6 +392,45 @@ var curated = []Model{
 		SHA256:         "ae23e14c6979e889051b2e4a39351abcdafb161e18e606fae4d8c40095a4bf3a",
 		Optional:       true,
 		Notes:          "vision encoder for GLM 5.3 Flash; loaded with --vision",
+	},
+	{
+		Alias:          "qwen38-q2",
+		Family:         "qwen3.8-flash-next",
+		FileName:       "Qwen3.8-Flash-Next-Q2.gguf",
+		Repo:           qwen38Repo,
+		SizeGB:         137.1,
+		RecommendedRAM: "64 GB (start with --ctx 8192 --prefill-chunk 1024); Metal and CUDA",
+		SHA256:         "b1b93fa69aca5f187b0fb813aca8f3ec1beb5cf8cf0bd38cf041b93e0b6ccac9",
+		Qwen:           true,
+		Vision:         true,
+		Encoder:        "qwen38-vision",
+		Imatrix:        true,
+		Notes:          "Qwen3.8 Flash Next q2 (41.7 GiB main+MTP weights; the 95 GiB BF16 n-gram table stays on disk); IQ2_XXS gate/up and Q2_K down experts; keep it on a fast local SSD; --mtp enables the built-in speculation",
+	},
+	{
+		Alias:          "qwen38-q4k",
+		Family:         "qwen3.8-flash-next",
+		FileName:       "Qwen3.8-Flash-Next-Q4.gguf",
+		Repo:           qwen38Repo,
+		SizeGB:         165.1,
+		RecommendedRAM: "128 GB; Metal and CUDA",
+		SHA256:         "680944460a8cbe93ba8b6d7b6107213ffb7e22320bd913000e563ca0a0f25a8a",
+		Qwen:           true,
+		Vision:         true,
+		Encoder:        "qwen38-vision",
+		Imatrix:        true,
+		Notes:          "Qwen3.8 Flash Next q4 (69.7 GiB main+MTP weights; n-grams on disk); Q4_K gate/up and MXFP4 down experts; --mtp enables the built-in speculation",
+	},
+	{
+		Alias:          "qwen38-vision",
+		FileName:       "mmproj-Qwen3.8-Flash-Next-Q8_0.gguf",
+		Repo:           qwen38MMProjRepo,
+		SizeGB:         0.6,
+		RecommendedRAM: "optional",
+		SHA256:         "b2e9b5e4a44c107f8867e67dbf09b607fd99ae33c1a97a60a6720aeb252a9dad",
+		Qwen:           true,
+		Optional:       true,
+		Notes:          "vision encoder for Qwen3.8 Flash Next (ggml-org mmproj); loaded with --vision",
 	},
 	{
 		Alias:          "q2-imatrix-0731",
