@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
@@ -143,6 +144,39 @@ func (l *Library) SupportsGLM() bool {
 	return l != nil && l.raw.ds4EngineIsGLMDSA != nil
 }
 
+// SampleLogits samples a token from a caller-supplied logit vector with
+// ds4's sampler (ds4_sample_logits): temperature 0 is greedy, top_k 0 is
+// unlimited, top_p 1 and min_p 0 disable those filters, and rng advances the
+// caller's state. It returns -1 on a library without the entry point and,
+// like upstream, 0 for an empty vector.
+func (l *Library) SampleLogits(logits []float32, temperature float32, topK int, topP, minP float32, rng *uint64) int {
+	if l == nil || l.raw.ds4SampleLogits == nil {
+		return -1
+	}
+	if len(logits) == 0 {
+		return 0
+	}
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	token := l.raw.ds4SampleLogits(unsafe.Pointer(&logits[0]), int32(len(logits)), temperature, int32(topK), topP, minP, rng)
+	runtime.KeepAlive(logits)
+	return int(token)
+}
+
+// DumpChatTokenization writes the rendered chat prompt's tokenization for
+// system and prompt under mode to fp (ds4_dump_chat_tokenization), loading
+// the model at modelPath on its own; see [OpenFile]. It fails on a library
+// without the entry point.
+func (l *Library) DumpChatTokenization(modelPath, system, prompt string, mode ThinkMode, ctxSize int, fp File) error {
+	if l == nil || l.raw.ds4DumpChatTokenization == nil {
+		return errors.New("ds4_dump_chat_tokenization: not available in this libds4")
+	}
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	code := l.raw.ds4DumpChatTokenization(modelPath, system, prompt, mode, int32(ctxSize), uintptr(fp))
+	return ds4Error("ds4_dump_chat_tokenization", code)
+}
+
 // SupportsQwen4 reports whether the library binds the Qwen3.8 Flash Next
 // entry points (ds4_engine_is_qwen4, ds4_qwen4_reasoning_effort_text).
 func (l *Library) SupportsQwen4() bool {
@@ -243,6 +277,24 @@ func (l *Library) register() (err error) {
 	if _, err := purego.Dlsym(l.handle, "ds4_engine_is_qwen4"); err == nil {
 		mustRegister(&r.ds4EngineIsQwen4, "ds4_engine_is_qwen4")
 		mustRegister(&r.ds4Qwen4ReasoningEffortText, "ds4_qwen4_reasoning_effort_text")
+	}
+	// Small entry points added across later upstream syncs; each optional.
+	for _, opt := range []struct {
+		name string
+		fn   any
+	}{
+		{"ds4_engine_is_glm53", &r.ds4EngineIsGLM53},
+		{"ds4_dump_chat_tokenization", &r.ds4DumpChatTokenization},
+		{"ds4_session_argmax_ignoring_eos", &r.ds4SessionArgmaxIgnoringEOS},
+		{"ds4_session_eval_speculative_argmax_ignoring_eos", &r.ds4SessionEvalSpeculativeArgmaxIgnoringEOS},
+		{"ds4_session_set_logits", &r.ds4SessionSetLogits},
+		{"ds4_sample_logits", &r.ds4SampleLogits},
+		{"ds4_session_gpu_warmup", &r.ds4SessionGPUWarmup},
+		{"ds4_session_report_progress", &r.ds4SessionReportProgress},
+	} {
+		if _, err := purego.Dlsym(l.handle, opt.name); err == nil {
+			mustRegister(opt.fn, opt.name)
+		}
 	}
 	if _, err := purego.Dlsym(l.handle, "ds4_token_is_stop"); err == nil {
 		mustRegister(&r.ds4TokenIsStop, "ds4_token_is_stop")

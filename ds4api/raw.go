@@ -139,123 +139,131 @@ type cVisionSpan struct {
 }
 
 type rawSymbols struct {
-	ds4EngineOpen                       func(out *uintptr, opt *cEngineOptions) int32
-	ds4EngineClose                      func(e uintptr)
-	ds4EngineSummary                    func(e uintptr)
-	ds4EnginePower                      func(e uintptr) int32
-	ds4EngineSetPower                   func(e uintptr, powerPercent int32) int32
-	ds4EngineVocabSize                  func(e uintptr) int32
-	ds4EngineModelName                  func(e uintptr) string
-	ds4EngineModelID                    func(e uintptr) int32
-	ds4BackendName                      func(backend Backend) string
-	ds4ThinkModeEnabled                 func(mode ThinkMode) bool
-	ds4ThinkModeName                    func(mode ThinkMode) string
-	ds4ThinkMaxPrefix                   func() string
-	ds4ThinkMaxMinContext               func() uint32
-	ds4ThinkModeForContext              func(mode ThinkMode, ctxSize int32) ThinkMode
-	ds4ContextMemoryEstimate            func(backend Backend, ctxSize int32) cContextMemory
-	ds4ContextMemoryEstimateWithPrefill func(backend Backend, ctxSize int32, prefillChunk uint32) cContextMemory
-	ds4LogIsTTY                         func(fp uintptr) bool
-	ds4LogString                        func(fp uintptr, typ LogType, format string, msg string)
-	ds4SetStderrFd                      func(fd int32)
-	ds4AbortSet                         func(fn uintptr, ud uintptr)
-	ds4EngineGenerateArgmax             func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32
-	ds4EngineCollectIMatrix             func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32, minExpertSamples int32) int32
-	ds4EngineDumpTokens                 func(e uintptr, tokens *cTokens)
-	ds4DumpTextTokenization             func(modelPath string, text string, fp uintptr) int32
-	ds4EngineHeadTest                   func(e uintptr, prompt *cTokens) int32
-	ds4EngineFirstTokenTest             func(e uintptr, prompt *cTokens) int32
-	ds4EngineMetalGraphTest             func(e uintptr, prompt *cTokens) int32
-	ds4EngineMetalGraphFullTest         func(e uintptr, prompt *cTokens) int32
-	ds4EngineMetalGraphPromptTest       func(e uintptr, prompt *cTokens, ctxSize int32) int32
-	ds4TokensPush                       func(tv *cTokens, token int32)
-	ds4TokensFree                       func(tv *cTokens)
-	ds4TokensCopy                       func(dst *cTokens, src *cTokens)
-	ds4TokensStartsWith                 func(tokens *cTokens, prefix *cTokens) bool
-	ds4TokenizeText                     func(e uintptr, text string, out *cTokens)
-	ds4TokenizeRenderedChat             func(e uintptr, text string, out *cTokens)
-	ds4ChatBegin                        func(e uintptr, tokens *cTokens)
-	ds4EncodeChatPrompt                 func(e uintptr, system string, prompt string, thinkMode ThinkMode, out *cTokens)
-	ds4ChatAppendMaxEffortPrefix        func(e uintptr, tokens *cTokens)
-	ds4ChatAppendMessage                func(e uintptr, tokens *cTokens, role string, content string)
-	ds4ChatAppendAssistantPrefix        func(e uintptr, tokens *cTokens, thinkMode ThinkMode)
-	ds4TokenText                        func(e uintptr, token int32, length *uintptr) unsafe.Pointer
-	ds4TokenEOS                         func(e uintptr) int32
-	ds4TokenIsStop                      func(e uintptr, token int32) bool
-	ds4TokenIsThinkingControl           func(e uintptr, token int32) bool
-	ds4TokenIsStopForThinkMode          func(e uintptr, token int32, mode ThinkMode) bool
-	ds4TokenUser                        func(e uintptr) int32
-	ds4TokenAssistant                   func(e uintptr) int32
-	ds4EngineIsGLMDSA                   func(e uintptr) bool
-	ds4GLMReasoningEffortText           func(mode ThinkMode) string
-	ds4EngineIsDeepseek41               func(e uintptr) bool
-	ds4Deepseek41ReasoningEffortText    func(mode ThinkMode) string
-	ds4ChatAppendThinkPrefix            func(e uintptr, tokens *cTokens, mode ThinkMode)
-	ds4EngineIsQwen4                    func(e uintptr) bool
-	ds4Qwen4ReasoningEffortText         func(mode ThinkMode) string
-	ds4ThinkModeLevel                   func(mode ThinkMode) int32
-	ds4ThinkModeParseLevel              func(text string, out *ThinkMode) bool
-	ds4EnginePrefillChunk               func(e uintptr) uint32
-	ds4SessionPrefillCap                func(s uintptr) int32
-	ds4SessionCreate                    func(out *uintptr, e uintptr, ctxSize int32) int32
-	ds4SessionFree                      func(s uintptr)
-	ds4SessionPower                     func(s uintptr) int32
-	ds4SessionSetPower                  func(s uintptr, powerPercent int32) int32
-	ds4SessionDirectionalSteeringFFN    func(s uintptr) float32
-	ds4EngineMTPExactSampling           func(e uintptr) bool
-	ds4SessionSetDirectionalSteeringFFN func(s uintptr, scale float32) int32
-	ds4SessionSetProgress               func(s uintptr, fn uintptr, ud uintptr)
-	ds4SessionSetDisplayProgress        func(s uintptr, fn uintptr, ud uintptr)
-	ds4SessionSetCancel                 func(s uintptr, fn uintptr, ud uintptr)
-	ds4SessionSync                      func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionRewriteRequiresRebuild    func(liveLen int32, canonicalLen int32, common int32) bool
-	ds4SessionRewriteFromCommon         func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult
-	ds4SessionCommonPrefix              func(s uintptr, prompt *cTokens) int32
-	ds4SessionArgmax                    func(s uintptr) int32
-	ds4SessionArgmaxExcluding           func(s uintptr, excludedID int32) int32
-	ds4SessionSample                    func(s uintptr, temperature float32, topK int32, topP float32, minP float32, rng *uint64) int32
-	ds4SessionTopLogprobs               func(s uintptr, out *cTokenScore, k int32) int32
-	ds4SessionTokenLogprob              func(s uintptr, token int32, out *cTokenScore) int32
-	ds4SessionCopyLogits                func(s uintptr, out unsafe.Pointer, cap int32) int32
-	ds4SessionEval                      func(s uintptr, token int32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionEvalSpeculativeArgmax     func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionEvalSpeculative           func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, temperature float32, topK int32, topP float32, minP float32, rng *uint64, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionInvalidate                func(s uintptr)
-	ds4SessionRewind                    func(s uintptr, pos int32)
-	ds4SessionPos                       func(s uintptr) int32
-	ds4SessionCtx                       func(s uintptr) int32
-	ds4EngineRoutedQuantBits            func(e uintptr) int32
-	ds4EngineHasOutputHead              func(e uintptr) bool
-	ds4EngineHasMTP                     func(e uintptr) bool
-	ds4EngineMTPDraftTokens             func(e uintptr) int32
-	ds4SessionTokens                    func(s uintptr) *cTokens
-	ds4SessionPayloadBytes              func(s uintptr) uint64
-	ds4SessionSavePayload               func(s uintptr, fp uintptr, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionLoadPayload               func(s uintptr, fp uintptr, payloadBytes uint64, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionSaveSnapshot              func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionLoadSnapshot              func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionSnapshotFree              func(snap *cSessionSnapshot)
-	ds4SessionSetDirectionalSteering    func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionIsDistributed             func(s uintptr) bool
-	ds4SessionDistributedRouteReady     func(s uintptr, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionLayerSliceReset           func(s uintptr, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionEvalLayerSlice            func(s uintptr, tokens *int32, nTokens uint32, pos0 uint32, layerStart uint32, layerEnd uint32, inputHC *float32, outputHC *float32, outputLogits bool, logits *float32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionEvalOutputHeadFromHC      func(s uintptr, hiddenHC *float32, nTokens uint32, logits *float32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionLayerPayloadBytes         func(s uintptr, layerStart uint32, layerEnd uint32) uint64
-	ds4SessionSaveLayerPayload          func(s uintptr, fp uintptr, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionLoadLayerPayload          func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
-	ds4EngineLayerCount                 func(e uintptr) int32
-	ds4EngineLayerCompressRatio         func(e uintptr, layer uint32) uint32
-	ds4EngineHasVision                  func(e uintptr) bool
-	ds4EngineEmbdDim                    func(e uintptr) int32
-	ds4EngineVisionEncodeFile           func(e uintptr, path string, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
-	ds4EngineVisionEncodeMemory         func(e uintptr, encoded unsafe.Pointer, encodedLen uintptr, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
-	ds4VisionEmbeddingFree              func(emb *cVisionEmbedding)
-	ds4PromptAppendVision               func(e uintptr, tokens *cTokens, span *cVisionSpan, emb *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
-	ds4ChatAppendMultimodalMessage      func(e uintptr, tokens *cTokens, role string, textParts unsafe.Pointer, embeddings unsafe.Pointer, imageCount uintptr, spans unsafe.Pointer, err unsafe.Pointer, errCap uintptr) int32
-	ds4SessionSyncMultimodal            func(s uintptr, prompt *cTokens, images unsafe.Pointer, imageCount uintptr, err unsafe.Pointer, errLen uintptr) int32
-	ds4SessionVisionPrefixMatches       func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
-	ds4SessionVisionStateMatches        func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
-	ds4SessionRebaseVisionState         func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
-	ds4SessionHasVisionState            func(s uintptr) bool
+	ds4EngineOpen                              func(out *uintptr, opt *cEngineOptions) int32
+	ds4EngineClose                             func(e uintptr)
+	ds4EngineSummary                           func(e uintptr)
+	ds4EnginePower                             func(e uintptr) int32
+	ds4EngineSetPower                          func(e uintptr, powerPercent int32) int32
+	ds4EngineVocabSize                         func(e uintptr) int32
+	ds4EngineModelName                         func(e uintptr) string
+	ds4EngineModelID                           func(e uintptr) int32
+	ds4BackendName                             func(backend Backend) string
+	ds4ThinkModeEnabled                        func(mode ThinkMode) bool
+	ds4ThinkModeName                           func(mode ThinkMode) string
+	ds4ThinkMaxPrefix                          func() string
+	ds4ThinkMaxMinContext                      func() uint32
+	ds4ThinkModeForContext                     func(mode ThinkMode, ctxSize int32) ThinkMode
+	ds4ContextMemoryEstimate                   func(backend Backend, ctxSize int32) cContextMemory
+	ds4ContextMemoryEstimateWithPrefill        func(backend Backend, ctxSize int32, prefillChunk uint32) cContextMemory
+	ds4LogIsTTY                                func(fp uintptr) bool
+	ds4LogString                               func(fp uintptr, typ LogType, format string, msg string)
+	ds4SetStderrFd                             func(fd int32)
+	ds4AbortSet                                func(fn uintptr, ud uintptr)
+	ds4EngineGenerateArgmax                    func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32
+	ds4EngineCollectIMatrix                    func(e uintptr, datasetPath string, outputPath string, ctxSize int32, maxPrompts int32, maxTokens int32, minExpertSamples int32) int32
+	ds4EngineDumpTokens                        func(e uintptr, tokens *cTokens)
+	ds4DumpTextTokenization                    func(modelPath string, text string, fp uintptr) int32
+	ds4EngineHeadTest                          func(e uintptr, prompt *cTokens) int32
+	ds4EngineFirstTokenTest                    func(e uintptr, prompt *cTokens) int32
+	ds4EngineMetalGraphTest                    func(e uintptr, prompt *cTokens) int32
+	ds4EngineMetalGraphFullTest                func(e uintptr, prompt *cTokens) int32
+	ds4EngineMetalGraphPromptTest              func(e uintptr, prompt *cTokens, ctxSize int32) int32
+	ds4TokensPush                              func(tv *cTokens, token int32)
+	ds4TokensFree                              func(tv *cTokens)
+	ds4TokensCopy                              func(dst *cTokens, src *cTokens)
+	ds4TokensStartsWith                        func(tokens *cTokens, prefix *cTokens) bool
+	ds4TokenizeText                            func(e uintptr, text string, out *cTokens)
+	ds4TokenizeRenderedChat                    func(e uintptr, text string, out *cTokens)
+	ds4ChatBegin                               func(e uintptr, tokens *cTokens)
+	ds4EncodeChatPrompt                        func(e uintptr, system string, prompt string, thinkMode ThinkMode, out *cTokens)
+	ds4ChatAppendMaxEffortPrefix               func(e uintptr, tokens *cTokens)
+	ds4ChatAppendMessage                       func(e uintptr, tokens *cTokens, role string, content string)
+	ds4ChatAppendAssistantPrefix               func(e uintptr, tokens *cTokens, thinkMode ThinkMode)
+	ds4TokenText                               func(e uintptr, token int32, length *uintptr) unsafe.Pointer
+	ds4TokenEOS                                func(e uintptr) int32
+	ds4TokenIsStop                             func(e uintptr, token int32) bool
+	ds4TokenIsThinkingControl                  func(e uintptr, token int32) bool
+	ds4TokenIsStopForThinkMode                 func(e uintptr, token int32, mode ThinkMode) bool
+	ds4TokenUser                               func(e uintptr) int32
+	ds4TokenAssistant                          func(e uintptr) int32
+	ds4EngineIsGLMDSA                          func(e uintptr) bool
+	ds4GLMReasoningEffortText                  func(mode ThinkMode) string
+	ds4EngineIsDeepseek41                      func(e uintptr) bool
+	ds4Deepseek41ReasoningEffortText           func(mode ThinkMode) string
+	ds4ChatAppendThinkPrefix                   func(e uintptr, tokens *cTokens, mode ThinkMode)
+	ds4EngineIsQwen4                           func(e uintptr) bool
+	ds4EngineIsGLM53                           func(e uintptr) bool
+	ds4DumpChatTokenization                    func(modelPath string, system string, prompt string, mode ThinkMode, ctxSize int32, fp uintptr) int32
+	ds4SessionArgmaxIgnoringEOS                func(s uintptr, mode ThinkMode) int32
+	ds4SessionEvalSpeculativeArgmaxIgnoringEOS func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, mode ThinkMode, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionSetLogits                        func(s uintptr, logits unsafe.Pointer, n int32) int32
+	ds4SampleLogits                            func(logits unsafe.Pointer, nVocab int32, temperature float32, topK int32, topP float32, minP float32, rng *uint64) int32
+	ds4SessionGPUWarmup                        func(s uintptr)
+	ds4SessionReportProgress                   func(s uintptr, event string, current int32, total int32)
+	ds4Qwen4ReasoningEffortText                func(mode ThinkMode) string
+	ds4ThinkModeLevel                          func(mode ThinkMode) int32
+	ds4ThinkModeParseLevel                     func(text string, out *ThinkMode) bool
+	ds4EnginePrefillChunk                      func(e uintptr) uint32
+	ds4SessionPrefillCap                       func(s uintptr) int32
+	ds4SessionCreate                           func(out *uintptr, e uintptr, ctxSize int32) int32
+	ds4SessionFree                             func(s uintptr)
+	ds4SessionPower                            func(s uintptr) int32
+	ds4SessionSetPower                         func(s uintptr, powerPercent int32) int32
+	ds4SessionDirectionalSteeringFFN           func(s uintptr) float32
+	ds4EngineMTPExactSampling                  func(e uintptr) bool
+	ds4SessionSetDirectionalSteeringFFN        func(s uintptr, scale float32) int32
+	ds4SessionSetProgress                      func(s uintptr, fn uintptr, ud uintptr)
+	ds4SessionSetDisplayProgress               func(s uintptr, fn uintptr, ud uintptr)
+	ds4SessionSetCancel                        func(s uintptr, fn uintptr, ud uintptr)
+	ds4SessionSync                             func(s uintptr, prompt *cTokens, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionRewriteRequiresRebuild           func(liveLen int32, canonicalLen int32, common int32) bool
+	ds4SessionRewriteFromCommon                func(s uintptr, prompt *cTokens, common int32, err unsafe.Pointer, errLen uintptr) SessionRewriteResult
+	ds4SessionCommonPrefix                     func(s uintptr, prompt *cTokens) int32
+	ds4SessionArgmax                           func(s uintptr) int32
+	ds4SessionArgmaxExcluding                  func(s uintptr, excludedID int32) int32
+	ds4SessionSample                           func(s uintptr, temperature float32, topK int32, topP float32, minP float32, rng *uint64) int32
+	ds4SessionTopLogprobs                      func(s uintptr, out *cTokenScore, k int32) int32
+	ds4SessionTokenLogprob                     func(s uintptr, token int32, out *cTokenScore) int32
+	ds4SessionCopyLogits                       func(s uintptr, out unsafe.Pointer, cap int32) int32
+	ds4SessionEval                             func(s uintptr, token int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalSpeculativeArgmax            func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalSpeculative                  func(s uintptr, firstToken int32, maxTokens int32, eosToken int32, temperature float32, topK int32, topP float32, minP float32, rng *uint64, accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionInvalidate                       func(s uintptr)
+	ds4SessionRewind                           func(s uintptr, pos int32)
+	ds4SessionPos                              func(s uintptr) int32
+	ds4SessionCtx                              func(s uintptr) int32
+	ds4EngineRoutedQuantBits                   func(e uintptr) int32
+	ds4EngineHasOutputHead                     func(e uintptr) bool
+	ds4EngineHasMTP                            func(e uintptr) bool
+	ds4EngineMTPDraftTokens                    func(e uintptr) int32
+	ds4SessionTokens                           func(s uintptr) *cTokens
+	ds4SessionPayloadBytes                     func(s uintptr) uint64
+	ds4SessionSavePayload                      func(s uintptr, fp uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLoadPayload                      func(s uintptr, fp uintptr, payloadBytes uint64, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionSaveSnapshot                     func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLoadSnapshot                     func(s uintptr, snap *cSessionSnapshot, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionSnapshotFree                     func(snap *cSessionSnapshot)
+	ds4SessionSetDirectionalSteering           func(s uintptr, file unsafe.Pointer, mode int32, ffn float32, attn float32, threshold float32, scope int32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionIsDistributed                    func(s uintptr) bool
+	ds4SessionDistributedRouteReady            func(s uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLayerSliceReset                  func(s uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalLayerSlice                   func(s uintptr, tokens *int32, nTokens uint32, pos0 uint32, layerStart uint32, layerEnd uint32, inputHC *float32, outputHC *float32, outputLogits bool, logits *float32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionEvalOutputHeadFromHC             func(s uintptr, hiddenHC *float32, nTokens uint32, logits *float32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLayerPayloadBytes                func(s uintptr, layerStart uint32, layerEnd uint32) uint64
+	ds4SessionSaveLayerPayload                 func(s uintptr, fp uintptr, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionLoadLayerPayload                 func(s uintptr, fp uintptr, payloadBytes uint64, tokens *int32, nTokens uint32, layerStart uint32, layerEnd uint32, err unsafe.Pointer, errLen uintptr) int32
+	ds4EngineLayerCount                        func(e uintptr) int32
+	ds4EngineLayerCompressRatio                func(e uintptr, layer uint32) uint32
+	ds4EngineHasVision                         func(e uintptr) bool
+	ds4EngineEmbdDim                           func(e uintptr) int32
+	ds4EngineVisionEncodeFile                  func(e uintptr, path string, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4EngineVisionEncodeMemory                func(e uintptr, encoded unsafe.Pointer, encodedLen uintptr, out *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4VisionEmbeddingFree                     func(emb *cVisionEmbedding)
+	ds4PromptAppendVision                      func(e uintptr, tokens *cTokens, span *cVisionSpan, emb *cVisionEmbedding, err unsafe.Pointer, errCap uintptr) int32
+	ds4ChatAppendMultimodalMessage             func(e uintptr, tokens *cTokens, role string, textParts unsafe.Pointer, embeddings unsafe.Pointer, imageCount uintptr, spans unsafe.Pointer, err unsafe.Pointer, errCap uintptr) int32
+	ds4SessionSyncMultimodal                   func(s uintptr, prompt *cTokens, images unsafe.Pointer, imageCount uintptr, err unsafe.Pointer, errLen uintptr) int32
+	ds4SessionVisionPrefixMatches              func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionVisionStateMatches               func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionRebaseVisionState                func(s uintptr, images unsafe.Pointer, imageCount uintptr) bool
+	ds4SessionHasVisionState                   func(s uintptr) bool
 }

@@ -788,6 +788,18 @@ func (e *Engine) DeepSeek41ReasoningEffortText(mode ThinkMode) string {
 	return e.lib.raw.ds4Deepseek41ReasoningEffortText(mode)
 }
 
+// IsGLM53 reports whether the loaded model is a GLM 5.3 checkpoint
+// (ds4_engine_is_glm53), a GLM DSA variant with an embedded MTP block;
+// false on libraries that predate it.
+func (e *Engine) IsGLM53() bool {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if e == nil || e.ptr == 0 || e.lib.raw.ds4EngineIsGLM53 == nil {
+		return false
+	}
+	return e.lib.raw.ds4EngineIsGLM53(e.ptr)
+}
+
 // IsQwen4 reports whether the loaded model is Qwen3.8 Flash Next
 // (ds4_engine_is_qwen4); false on libraries that predate it.
 func (e *Engine) IsQwen4() bool {

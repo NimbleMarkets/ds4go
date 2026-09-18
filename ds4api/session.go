@@ -327,6 +327,65 @@ func (s *Session) ArgmaxExcluding(excludedID int) int {
 	return int(s.lib.raw.ds4SessionArgmaxExcluding(s.ptr, int32(excludedID)))
 }
 
+// ArgmaxIgnoringEOS returns the argmax token id skipping every token that
+// is a generation stop under mode (ds4_session_argmax_ignoring_eos): EOS,
+// the family's role markers, and thinking-control tokens when thinking is
+// off. It returns -1 without a valid checkpoint or on a library without the
+// entry point.
+func (s *Session) ArgmaxIgnoringEOS(mode ThinkMode) int {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionArgmaxIgnoringEOS == nil {
+		return -1
+	}
+	return int(s.lib.raw.ds4SessionArgmaxIgnoringEOS(s.ptr, mode))
+}
+
+// SetLogits replaces the session's current logits (ds4_session_set_logits).
+// The vector must hold exactly the engine's vocabulary size; the next
+// Argmax, Sample, or logprob call reads it.
+func (s *Session) SetLogits(logits []float32) error {
+	unlock, err := s.require()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionSetLogits == nil {
+		return errors.New("ds4_session_set_logits: not available in this libds4")
+	}
+	vocab := int(s.lib.raw.ds4EngineVocabSize(s.engine.ptr))
+	if len(logits) != vocab || vocab <= 0 {
+		return fmt.Errorf("ds4_session_set_logits: got %d logits, want the vocabulary size %d", len(logits), vocab)
+	}
+	code := s.lib.raw.ds4SessionSetLogits(s.ptr, unsafe.Pointer(&logits[0]), int32(len(logits)))
+	runtime.KeepAlive(logits)
+	return ds4Error("ds4_session_set_logits", code)
+}
+
+// GPUWarmup pays the one-time first-submission GPU cost outside any measured
+// window (ds4_session_gpu_warmup); a no-op on CPU, on non-DeepSeek families,
+// and on libraries without the entry point.
+func (s *Session) GPUWarmup() {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionGPUWarmup == nil {
+		return
+	}
+	s.lib.raw.ds4SessionGPUWarmup(s.ptr)
+}
+
+// ReportProgress delivers one event to the session's progress callback
+// (ds4_session_report_progress), the hook libds4 itself uses; nothing
+// happens without a callback or on libraries without the entry point.
+func (s *Session) ReportProgress(event string, current, total int) {
+	libCallMu.Lock()
+	defer libCallMu.Unlock()
+	if s == nil || s.ptr == 0 || s.lib.raw.ds4SessionReportProgress == nil {
+		return
+	}
+	s.lib.raw.ds4SessionReportProgress(s.ptr, event, int32(current), int32(total))
+}
+
 // Sample samples the next token from current logits.
 func (s *Session) Sample(temperature float32, topK int, topP, minP float32, rng *uint64) int {
 	libCallMu.Lock()
@@ -430,6 +489,39 @@ func (s *Session) EvalSpeculativeArgmax(firstToken, maxTokens, eosToken int) ([]
 	code := s.lib.raw.ds4SessionEvalSpeculativeArgmax(s.ptr, int32(firstToken), int32(maxTokens), int32(eosToken), unsafe.Pointer(&accepted[0]), int32(len(accepted)), ptr, n)
 	if code < 0 {
 		return nil, errorFromBuffer("ds4_session_eval_speculative_argmax", code, buf)
+	}
+	count := int(code)
+	if count > len(accepted) {
+		count = len(accepted)
+	}
+	out := make([]int, count)
+	for i := range out {
+		out[i] = int(accepted[i])
+	}
+	return out, nil
+}
+
+// EvalSpeculativeArgmaxIgnoringEOS is [Session.EvalSpeculativeArgmax] with
+// draft verification that ignores the stop tokens of mode
+// (ds4_session_eval_speculative_argmax_ignoring_eos). It fails on a library
+// without the entry point.
+func (s *Session) EvalSpeculativeArgmaxIgnoringEOS(firstToken, maxTokens, eosToken int, mode ThinkMode) ([]int, error) {
+	unlock, err := s.require()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if s.lib.raw.ds4SessionEvalSpeculativeArgmaxIgnoringEOS == nil {
+		return nil, errors.New("ds4_session_eval_speculative_argmax_ignoring_eos: not available in this libds4")
+	}
+	if maxTokens <= 0 {
+		return nil, nil
+	}
+	accepted := make([]int32, maxTokens)
+	buf, ptr, n := errorBuffer()
+	code := s.lib.raw.ds4SessionEvalSpeculativeArgmaxIgnoringEOS(s.ptr, int32(firstToken), int32(maxTokens), int32(eosToken), mode, unsafe.Pointer(&accepted[0]), int32(len(accepted)), ptr, n)
+	if code < 0 {
+		return nil, errorFromBuffer("ds4_session_eval_speculative_argmax_ignoring_eos", code, buf)
 	}
 	count := int(code)
 	if count > len(accepted) {

@@ -102,6 +102,7 @@ const (
 type MockControls struct {
 	mu              sync.RWMutex
 	glm             bool
+	glm53           bool
 	deepseek41      bool
 	qwen4           bool
 	vision          bool
@@ -191,6 +192,21 @@ func (c *MockControls) isDeepSeek41() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.deepseek41
+}
+
+// SetGLM53 makes the mock engine report a GLM 5.3 checkpoint
+// (ds4_engine_is_glm53). It does not imply SetGLM; set both for a GLM 5.3
+// engine.
+func (c *MockControls) SetGLM53(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.glm53 = enabled
+}
+
+func (c *MockControls) isGLM53() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.glm53
 }
 
 // SetQwen4 makes the mock engine report Qwen3.8 Flash Next
@@ -408,6 +424,7 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r.ds4EngineIsGLMDSA = func(e uintptr) bool { return ctl.isGLM() }
 	r.ds4EngineIsDeepseek41 = func(e uintptr) bool { return ctl.isDeepSeek41() }
 	r.ds4EngineIsQwen4 = func(e uintptr) bool { return ctl.isQwen4() }
+	r.ds4EngineIsGLM53 = func(e uintptr) bool { return ctl.isGLM53() }
 	// Upstream DS4_QWEN4_REASONING_XHIGH / _LOW; medium sets no instruction.
 	r.ds4Qwen4ReasoningEffortText = func(mode ThinkMode) string {
 		switch mode {
@@ -514,7 +531,76 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		sess.engine.steeringFFN = scale
 		return 0
 	}
-	r.ds4SessionSetProgress = func(s uintptr, fn uintptr, ud uintptr) {}
+	r.ds4SessionSetProgress = func(s uintptr, fn uintptr, ud uintptr) {
+		if sess := mockSessionPtr(s); sess != nil {
+			sess.progressUD = ud
+		}
+	}
+	// Mirrors upstream: deliver to the registered progress callback.
+	r.ds4SessionReportProgress = func(s uintptr, event string, current int32, total int32) {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.progressUD == 0 {
+			return
+		}
+		callbackMu.Lock()
+		fn := progressCallbacks[sess.progressUD]
+		callbackMu.Unlock()
+		if fn != nil {
+			fn(event, int(current), int(total))
+		}
+	}
+	r.ds4SessionGPUWarmup = func(s uintptr) {}
+	r.ds4SessionSetLogits = func(s uintptr, logits unsafe.Pointer, n int32) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil || logits == nil || n != mockVocabSize {
+			return 1
+		}
+		sess.logits = append([]float32(nil), unsafe.Slice((*float32)(logits), int(n))...)
+		return 0
+	}
+	// Argmax over installed logits skipping stop tokens for the mode; with
+	// no logits installed it follows the mock's counter like Argmax.
+	r.ds4SessionArgmaxIgnoringEOS = func(s uintptr, mode ThinkMode) int32 {
+		sess := mockSessionPtr(s)
+		if sess == nil || sess.checkpointInvalid {
+			return -1
+		}
+		if sess.logits == nil {
+			return mockSessionArgmax(s)
+		}
+		best := int32(-1)
+		var bestLogit float32
+		for i, v := range sess.logits {
+			t := int32(i)
+			if t == sess.engine.eosToken || ctl.isStop(t) || (!mockThinkModeEnabled(mode) && ctl.isThinking(t)) {
+				continue
+			}
+			if best < 0 || v > bestLogit {
+				best, bestLogit = int32(i), v
+			}
+		}
+		return best
+	}
+	// The mock samples greedily whatever the temperature.
+	r.ds4SampleLogits = func(logits unsafe.Pointer, nVocab int32, temperature float32, topK int32, topP float32, minP float32, rng *uint64) int32 {
+		if logits == nil || nVocab <= 0 {
+			return 0
+		}
+		v := unsafe.Slice((*float32)(logits), int(nVocab))
+		best := 0
+		for i := range v {
+			if v[i] > v[best] {
+				best = i
+			}
+		}
+		return int32(best)
+	}
+	r.ds4SessionEvalSpeculativeArgmaxIgnoringEOS = func(s uintptr, firstToken, maxTokens, eosToken int32, mode ThinkMode,
+		accepted unsafe.Pointer, acceptedCap int32, err unsafe.Pointer, errLen uintptr) int32 {
+		ctl.countSpeculative(false)
+		return mockSessionEvalSpeculativeArgmax(s, firstToken, maxTokens, eosToken, accepted, acceptedCap, err, errLen)
+	}
+	r.ds4DumpChatTokenization = func(modelPath, system, prompt string, mode ThinkMode, ctxSize int32, fp uintptr) int32 { return 0 }
 	r.ds4SessionSetDisplayProgress = func(s uintptr, fn uintptr, ud uintptr) {}
 	r.ds4SessionSetCancel = func(s uintptr, fn uintptr, ud uintptr) {
 		if sess := mockSessionPtr(s); sess != nil {
@@ -570,10 +656,14 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		if capacity < mockVocabSize {
 			return -1
 		}
-		// Fill with zeros; mock doesn't carry real logits.
+		// Zeros unless ds4_session_set_logits installed a vector.
 		buf := unsafe.Slice((*float32)(out), int(capacity))
+		sess := mockSessionPtr(s)
 		for i := range buf[:mockVocabSize] {
 			buf[i] = 0
+			if sess != nil && sess.logits != nil {
+				buf[i] = sess.logits[i]
+			}
 		}
 		return mockVocabSize
 	}
@@ -1072,10 +1162,14 @@ type mockSession struct {
 	// checkpointInvalid mirrors !s->checkpoint_valid after a DeepSeek rewind:
 	// sampling returns -1 and eval fails until the prefix is synced again.
 	checkpointInvalid bool
-	ctxSize           int32
-	tokenSnapshot     cTokens
-	cancelID          uintptr
-	images            []mockImageIdentity
+	// logits is the vector installed by ds4_session_set_logits; nil until
+	// then, so CopyLogits reads zeros and Argmax follows the mock's counter.
+	logits        []float32
+	progressUD    uintptr
+	ctxSize       int32
+	tokenSnapshot cTokens
+	cancelID      uintptr
+	images        []mockImageIdentity
 }
 
 // mockImageIdentity records one image's offset, row count, and content
