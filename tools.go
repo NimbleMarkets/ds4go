@@ -343,6 +343,7 @@ type turnRenderInfo struct {
 	thinking        bool
 	replayReasoning bool
 	syntax          dsml.Syntax
+	qwen            bool // ChatML history rendering, independent of tool syntax.
 }
 
 // promptRenderOptions configures renderPromptMessages for one prompt build.
@@ -350,6 +351,7 @@ type promptRenderOptions struct {
 	thinking    bool
 	toolContext bool
 	syntax      dsml.Syntax
+	qwen        bool
 }
 
 type chatMessageRenderer func(ChatMessage, turnRenderInfo) (renderedChatMessage, error)
@@ -382,7 +384,8 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 	// ds4-server's render_qwen_chat_prompt_text); the other families take a
 	// think prefix before the system message.
 	qwenEffort := ""
-	if engine.IsQwen4() {
+	qwen := engine.IsQwen4()
+	if qwen {
 		qwenEffort = engine.Qwen4ReasoningEffortText(think)
 	} else if err := appendThinkPrefix(engine, tokens, think); err != nil {
 		tokens.Free()
@@ -412,6 +415,7 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 		thinking:    engine.ThinkModeEnabled(think),
 		toolContext: len(tools) > 0 || historyUsesToolContext(history),
 		syntax:      syntax,
+		qwen:        qwen,
 	})
 	if err != nil {
 		tokens.Free()
@@ -794,6 +798,23 @@ func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessag
 // replayed tool calls — to their special vocab tokens, matching what the
 // model actually sampled so the session's KV prefix stays reusable.
 func assistantRendered(msg ChatMessage, renderedCalls string, turn turnRenderInfo) renderedChatMessage {
+	if turn.qwen {
+		// Match ds4-server's append_qwen_assistant_message: Qwen preserves
+		// recorded reasoning on earlier turns as well, and an answer without
+		// reasoning gets the same empty think block as its generation prefix.
+		var b strings.Builder
+		b.WriteString("<|im_start|>assistant\n")
+		if !strings.HasPrefix(msg.Content, "<think>") && !strings.HasPrefix(msg.Content, "</think>") {
+			b.WriteString("<think>\n")
+			b.WriteString(strings.TrimSpace(msg.ReasoningContent))
+			b.WriteString("\n</think>\n\n")
+		}
+		// Keep a plain answer's trailing whitespace for token-prefix reuse.
+		b.WriteString(strings.TrimLeft(msg.Content, " \t\n\r\v\f"))
+		b.WriteString(renderedCalls)
+		b.WriteString("<|im_end|>\n")
+		return renderedChatMessage{role: "assistant", content: b.String(), prerendered: true}
+	}
 	if turn.syntax == dsml.SyntaxGLM {
 		// libds4 owns the GLM assistant envelope, including the <think></think>
 		// pair it inserts for a non-thinking turn (ds4_chat_append_message), so
@@ -913,6 +934,7 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 			thinking:        opts.thinking,
 			replayReasoning: opts.toolContext || i > lastUser,
 			syntax:          opts.syntax,
+			qwen:            opts.qwen,
 		})
 		if err != nil {
 			return nil, err

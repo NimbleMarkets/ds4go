@@ -96,3 +96,57 @@ func indexOfSubsequence(got, want []int) int {
 	}
 	return -1
 }
+
+func TestQwenAssistantHistoryChatML(t *testing.T) {
+	eng, _ := qwenMockEngine(t)
+	defer eng.Close()
+	for _, tc := range []struct {
+		name, content, reasoning, body string
+	}{
+		{"plain", "hello", "", "<think>\n\n</think>\n\nhello"},
+		{"reasoning", "hello", " plan ", "<think>\nplan\n</think>\n\nhello"},
+		{"whitespace", "  hello \n", "", "<think>\n\n</think>\n\nhello \n"},
+		{"inline reasoning", "<think>plan</think>hello", "", "<think>plan</think>hello"},
+		{"closed thinking", "</think>hello", "", "</think>hello"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			history := []ChatMessage{
+				{Role: "user", Content: "hi"},
+				{Role: "assistant", Content: tc.content, ReasoningContent: tc.reasoning},
+				{Role: "user", Content: "continue"},
+			}
+			want := "<|im_start|>assistant\n" + tc.body + "<|im_end|>\n"
+			// Check bytes too: the mock tokenizer ignores whitespace, but the
+			// real tokenizer needs the exact separators and trailing whitespace.
+			rendered, err := renderPromptMessages(history, nil, promptRenderOptions{qwen: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rendered[1]; got.content != want || !got.prerendered {
+				t.Fatalf("assistant history = %+v, want rendered %q", got, want)
+			}
+			// Exercise engine-family dispatch for plain, registry, and
+			// multimodal prompt builders, with thinking both on and off.
+			for _, think := range []ThinkMode{ThinkNone, ThinkLow, ThinkMedium, ThinkHigh, ThinkMax} {
+				check := func(tokens *Tokens, err error) {
+					t.Helper()
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer tokens.Free()
+					if !containsSubsequence(tokens.Slice(), wordTokens(t, eng, want)) {
+						t.Fatalf("think %d: prompt lacks Qwen assistant turn %q", think, want)
+					}
+				}
+				check(BuildChatPrompt(eng, "", nil, history, think))
+				registry := &ToolRegistry{}
+				check(registry.BuildPrompt(eng, "", history, think))
+				prompt, err := BuildChatPromptMultimodal(eng, nil, "", nil, history, think)
+				if err != nil {
+					t.Fatal(err)
+				}
+				check(prompt.Tokens, nil)
+			}
+		})
+	}
+}
