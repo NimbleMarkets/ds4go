@@ -167,7 +167,9 @@ Its reasoning effort is an instruction at the head of the system turn rather
 than a think prefix, and `ThinkLow` / `ThinkMedium` (the OpenAI `low`,
 `minimal`, and `medium` efforts) map onto it; `BuildChatPrompt` handles that
 through `Engine.IsQwen4` and `Engine.Qwen4ReasoningEffortText`. Speculation
-is built in: pass `--mtp` with no path, as for GLM. Qwen's XML `<tool_call>`
+is built in: `--mtp-timing` enables it and prints acceptance/timing counters,
+as for GLM. In Go, set `EngineOptions.GLMMTP` to enable it without counters.
+Qwen's XML `<tool_call>`
 dialect is not yet rendered or parsed by the `dsml` package, so tool loops
 against a Qwen engine are not supported until that lands.
 

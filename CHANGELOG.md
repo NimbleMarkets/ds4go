@@ -4,6 +4,11 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* **Qwen chat fixes**: assistant history uses ChatML and preserves recorded
+  reasoning across turns; null `chat_template_kwargs.reasoning_effort` keeps
+  the existing effort. README and catalog instructions use `--mtp-timing` to
+  enable embedded speculation with counters (`EngineOptions.GLMMTP` in Go).
+
 * **Public model selection API**: `ListModels()` returns curated entries with paths,
   installed/default/partial state, display metadata, model capabilities, and
   companion aliases. `ModelInfo.Family` groups quantization variants of the same
