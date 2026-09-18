@@ -107,6 +107,9 @@ func ParseCompletionSyntax(syntax Syntax, text string, thinking bool) (ParsedMes
 	if syntax == SyntaxGLM {
 		return parseGLMCompletion(text, thinking)
 	}
+	if syntax == SyntaxQwen {
+		return parseQwenCompletion(text, thinking)
+	}
 	// Normalizing up front means all offsets (including the Exact replay
 	// block) refer to the canonical text. Replaying canonical markers in
 	// place of a sampled typo costs at most a prompt-cache miss on that

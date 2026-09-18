@@ -24,9 +24,9 @@ func RepairCompletion(text string) (string, bool) {
 }
 
 // RepairCompletionSyntax is [RepairCompletion] for an explicit DSML dialect.
-// GLM has no wrapper block to repair and is returned unchanged.
+// GLM and Qwen have no wrapper block to repair and are returned unchanged.
 func RepairCompletionSyntax(syntax Syntax, text string) (string, bool) {
-	if syntax == SyntaxGLM {
+	if isXMLToolSyntax(syntax) {
 		return text, false
 	}
 	normalized := normalizeMarkers(text)

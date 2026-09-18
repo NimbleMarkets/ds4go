@@ -110,6 +110,15 @@ const (
 	stateGLMArgKey
 	stateGLMArgValue
 	stateGLMAfterCall
+
+	// Qwen states. Like GLM there is no wrapper block: <tool_call>, then
+	// <function=NAME>, then <parameter=KEY> values until </function>, then
+	// </tool_call>, and adjacent calls repeat.
+	stateQwenFn
+	stateQwenParam
+	stateQwenParamValue
+	stateQwenAfterFn
+	stateQwenAfterCall
 )
 
 // NewStreamDecoder returns a decoder that consumes assistant output
@@ -188,8 +197,9 @@ func (d *StreamDecoder) Close() ([]StreamEvent, ParsedMessage, error) {
 		} else {
 			d.emitContent(&events, string(d.buf))
 		}
-	case stateGLMAfterCall:
-		// A completed GLM call followed by end-of-stream: nothing pending.
+	case stateGLMAfterCall, stateQwenAfterCall:
+		// A completed GLM or Qwen call followed by end-of-stream: nothing
+		// pending.
 		d.completeToolBlock(&events)
 		d.emitContent(&events, string(d.buf))
 	case stateDone:
@@ -237,6 +247,16 @@ func (d *StreamDecoder) process() []StreamEvent {
 			d.processGLMArgValue(&events)
 		case stateGLMAfterCall:
 			d.processGLMAfterCall(&events)
+		case stateQwenFn:
+			d.processQwenFn(&events)
+		case stateQwenParam:
+			d.processQwenParam(&events)
+		case stateQwenParamValue:
+			d.processQwenParamValue(&events)
+		case stateQwenAfterFn:
+			d.processQwenAfterFn(&events)
+		case stateQwenAfterCall:
+			d.processQwenAfterCall(&events)
 		case stateDone:
 			d.buf = nil
 		}
@@ -293,7 +313,7 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 		d.thinkScanFrom = len(d.fullText)
 	}
 	region := string(d.fullText[d.thinkScanFrom:])
-	if d.syntaxMode == SyntaxGLM {
+	if isXMLToolSyntax(d.syntaxMode) {
 		if strings.Contains(region, glmToolCallStart) {
 			d.thinkStanza = true
 			return
@@ -313,7 +333,11 @@ func (d *StreamDecoder) scanThinkingForToolStanza() {
 
 func (d *StreamDecoder) processContent(events *[]StreamEvent) {
 	if d.syntaxMode == SyntaxGLM {
-		d.processGLMContent(events)
+		d.processXMLContent(events, stateGLMName)
+		return
+	}
+	if d.syntaxMode == SyntaxQwen {
+		d.processXMLContent(events, stateQwenFn)
 		return
 	}
 	eosIdx := bytes.Index(d.buf, []byte(eosToken))
@@ -670,7 +694,9 @@ func (d *StreamDecoder) emitContent(events *[]StreamEvent, text string) {
 // and the "block" is the run of adjacent calls.
 // ----------------------------------------------------------------------
 
-func (d *StreamDecoder) processGLMContent(events *[]StreamEvent) {
+// processXMLContent is the content state for the dialects that open a call
+// with a bare <tool_call>; next is the state that reads the call's head.
+func (d *StreamDecoder) processXMLContent(events *[]StreamEvent, next decoderState) {
 	eosIdx := bytes.Index(d.buf, []byte(eosToken))
 	callIdx := bytes.Index(d.buf, []byte(glmToolCallStart))
 
@@ -679,7 +705,7 @@ func (d *StreamDecoder) processGLMContent(events *[]StreamEvent) {
 		d.buf = d.buf[callIdx:]
 		d.rawBlockStart = len(d.fullText) - len(d.buf)
 		d.buf = d.buf[len(glmToolCallStart):]
-		d.state = stateGLMName
+		d.state = next
 		return
 	}
 	if eosIdx >= 0 {
@@ -936,6 +962,10 @@ func (d *StreamDecoder) WantsGreedySampling() bool {
 		return true
 	case stateGLMName, stateGLMArgKey, stateGLMAfterCall:
 		return true
+	case stateQwenFn, stateQwenParam, stateQwenAfterFn, stateQwenAfterCall:
+		return true
+	case stateQwenParamValue:
+		return matchPartial(lastAngleTail(d.buf), qwenParamEnd) && len(lastAngleTail(d.buf)) >= 2
 	case stateContent:
 		return d.contentTailFormsOpener()
 	case stateInParameterValue:
@@ -956,7 +986,7 @@ func (d *StreamDecoder) contentTailFormsOpener() bool {
 	if len(tail) < 2 {
 		return false
 	}
-	if d.syntaxMode == SyntaxGLM {
+	if isXMLToolSyntax(d.syntaxMode) {
 		return matchPartial(tail, glmToolCallStart)
 	}
 	for _, syn := range syntaxTable(d.syntaxMode) {
@@ -993,4 +1023,146 @@ func skipLeadingWhitespaceBytes(buf []byte) []byte {
 		}
 	}
 	return buf
+}
+
+// ----------------------------------------------------------------------
+// Qwen state handlers
+//
+// Ported from upstream ds4's agent_qwen_tool_parse and its streaming
+// renderer. Whitespace between elements is skipped; a value is held whole
+// until its </parameter> so the closing tag is never split and any tool or
+// think marker inside it stays data.
+// ----------------------------------------------------------------------
+
+// processQwenFn reads "<function=NAME>" after the opening <tool_call>.
+func (d *StreamDecoder) processQwenFn(events *[]StreamEvent) {
+	buf := skipLeadingWhitespaceBytes(d.buf)
+	if !bytes.HasPrefix(buf, []byte(qwenFnStart)) {
+		if len(buf) == 0 || matchPartial(buf, qwenFnStart) {
+			return
+		}
+		d.enterRawMode(events)
+		return
+	}
+	body := buf[len(qwenFnStart):]
+	gt := bytes.IndexAny(body, "<>")
+	if gt < 0 {
+		return // name still arriving
+	}
+	if body[gt] != '>' {
+		d.enterRawMode(events)
+		return
+	}
+	name := strings.TrimSpace(string(body[:gt]))
+	if name == "" {
+		d.enterRawMode(events)
+		return
+	}
+	d.pendingEvents = append(d.pendingEvents, StreamEvent{
+		Type:  EventToolCallStart,
+		Index: len(d.calls),
+		Name:  name,
+	})
+	d.calls = append(d.calls, ToolCall{Name: name})
+	d.pendingArgs = newOrderedArgs()
+	d.buf = body[gt+1:]
+	d.state = stateQwenParam
+}
+
+// processQwenParam consumes either </function> or one "<parameter=KEY>".
+func (d *StreamDecoder) processQwenParam(events *[]StreamEvent) {
+	buf := skipLeadingWhitespaceBytes(d.buf)
+	if bytes.HasPrefix(buf, []byte(qwenFnEnd)) {
+		d.buf = buf[len(qwenFnEnd):]
+		d.state = stateQwenAfterFn
+		return
+	}
+	if !bytes.HasPrefix(buf, []byte(qwenParamStart)) {
+		if len(buf) == 0 || matchPartial(buf, qwenParamStart) || matchPartial(buf, qwenFnEnd) {
+			return
+		}
+		d.enterRawMode(events)
+		return
+	}
+	body := buf[len(qwenParamStart):]
+	gt := bytes.IndexAny(body, "<>")
+	if gt < 0 {
+		return // key still arriving
+	}
+	if body[gt] != '>' {
+		d.enterRawMode(events)
+		return
+	}
+	key := strings.TrimSpace(string(body[:gt]))
+	if key == "" {
+		d.enterRawMode(events)
+		return
+	}
+	d.paramName = key
+	d.buf = body[gt+1:]
+	d.state = stateQwenParamValue
+}
+
+// processQwenParamValue accumulates one value up to </parameter>.
+func (d *StreamDecoder) processQwenParamValue(events *[]StreamEvent) {
+	end := bytes.Index(d.buf, []byte(qwenParamEnd))
+	if end < 0 {
+		return // value still arriving
+	}
+	value := qwenStripValueNewlines(string(d.buf[:end]))
+	if qwenValueIsJSON(value) {
+		value = qwenTrimValue(value)
+		d.pendingArgs.set(d.paramName, value, false)
+	} else {
+		value = unescapeToolText(value, qwenParamEnd)
+		d.pendingArgs.set(d.paramName, value, true)
+	}
+	d.pendingEvents = append(d.pendingEvents, StreamEvent{
+		Type:  EventToolCallArgumentsDelta,
+		Index: len(d.calls) - 1,
+		Delta: value,
+	})
+	d.paramName = ""
+	d.buf = d.buf[end+len(qwenParamEnd):]
+	d.state = stateQwenParam
+}
+
+// processQwenAfterFn expects </tool_call> after </function>.
+func (d *StreamDecoder) processQwenAfterFn(events *[]StreamEvent) {
+	buf := skipLeadingWhitespaceBytes(d.buf)
+	if bytes.HasPrefix(buf, []byte(qwenToolCallEnd)) {
+		d.buf = buf[len(qwenToolCallEnd):]
+		d.finishGLMCall()
+		d.state = stateQwenAfterCall
+		return
+	}
+	if len(buf) == 0 || matchPartial(buf, qwenToolCallEnd) {
+		return
+	}
+	d.enterRawMode(events)
+}
+
+// processQwenAfterCall accepts whitespace and an adjacent call; anything
+// else ends the run, and prose after it degrades the stanza to content as
+// the strict parser does.
+func (d *StreamDecoder) processQwenAfterCall(events *[]StreamEvent) {
+	trimmed := skipLeadingWhitespaceBytes(d.buf)
+	if bytes.HasPrefix(trimmed, []byte(qwenToolCallStart)) {
+		d.buf = trimmed[len(qwenToolCallStart):]
+		d.state = stateQwenFn
+		return
+	}
+	if bytes.HasPrefix(trimmed, []byte(eosToken)) {
+		d.buf = trimmed[len(eosToken):]
+		d.completeToolBlock(events)
+		d.state = stateDone
+		return
+	}
+	if len(trimmed) == 0 {
+		return
+	}
+	if !d.finalPass && (matchPartial(trimmed, qwenToolCallStart) || matchPartial(trimmed, eosToken)) {
+		return
+	}
+	d.enterRawMode(events)
 }

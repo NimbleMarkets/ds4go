@@ -16,8 +16,10 @@ compiler.
   behavior.
 - `dsml/` is pure text processing for ds4's tool-calling markup. It must stay
   independent of FFI and engine state. It covers both grammars ds4 emits,
-  selected by `dsml.Syntax`: DeepSeek's DSML (`SyntaxDSML`, the zero value) and
-  GLM DSA's `<tool_call>` markup (`SyntaxGLM`). This mirrors upstream ds4, which
+  selected by `dsml.Syntax`: DeepSeek's DSML (`SyntaxDSML`, the zero value),
+  V4.1's spaced DSML (`SyntaxDSML41`), GLM DSA's `<tool_call>` markup
+  (`SyntaxGLM`), and Qwen3.8's `<tool_call><function=...>` XML (`SyntaxQwen`).
+  This mirrors upstream ds4, which
   drives both through one parser and one streaming renderer via
   `agent_dsml_parser.syntax`; prefer that parity over splitting the package.
   Callers resolve the syntax from the engine with `ds4.ToolSyntax`, mirroring

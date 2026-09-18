@@ -89,11 +89,13 @@ var structuralWrappers = func() [][2]string {
 		}
 	}
 	w = append(w, [2]string{glmArgKeyStart, glmArgKeyEnd}, [2]string{glmArgValueStart, glmArgValueEnd})
+	w = append(w, [2]string{qwenParamStart, qwenParamEnd})
 	return w
 }()
 
 // lastStructuralIndex returns the offset of the last occurrence of needle in
-// text that lies outside any parameter, <arg_key>, or <arg_value> body, or
+// text that lies outside any parameter, <arg_key>, <arg_value>, or Qwen
+// <parameter=> body, or
 // -1. An unterminated wrapper ends the scan, returning what was found before
 // it, mirroring upstream find_tool_structural_text(s, needle, true).
 func lastStructuralIndex(text, needle string) int {

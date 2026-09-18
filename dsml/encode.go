@@ -78,6 +78,9 @@ func RenderToolsSectionSyntax(syntax Syntax, tools []Tool) (string, error) {
 	if syntax == SyntaxGLM {
 		return renderGLMToolsSection(tools)
 	}
+	if syntax == SyntaxQwen {
+		return renderQwenToolsSection(tools)
+	}
 	if len(tools) == 0 {
 		return "", nil
 	}
@@ -151,6 +154,9 @@ func RenderToolCalls(calls []ToolCall) (string, error) {
 func RenderToolCallsSyntax(syntax Syntax, calls []ToolCall) (string, error) {
 	if syntax == SyntaxGLM {
 		return renderGLMToolCalls(calls)
+	}
+	if syntax == SyntaxQwen {
+		return renderQwenToolCalls(calls)
 	}
 	if len(calls) == 0 {
 		return "", nil
@@ -379,6 +385,17 @@ func ToolSyntaxErrorMessageSyntax(syntax Syntax, detail string) string {
 		b.WriteString("\nThe previous assistant output was not executed because the tool-call syntax was " +
 			"malformed. Emit a new valid tool call, or answer normally if no tool is needed.\n")
 		b.WriteString(glmSyntaxReminder)
+		return b.String()
+	}
+	if syntax == SyntaxQwen {
+		b.WriteString("Tool error: invalid Qwen tool call")
+		if detail != "" {
+			b.WriteString(": ")
+			b.WriteString(detail)
+		}
+		b.WriteString("\nThe previous assistant output was not executed because the tool-call syntax was " +
+			"malformed. Emit a new valid tool call, or answer normally if no tool is needed.\n")
+		b.WriteString(qwenSyntaxReminder)
 		return b.String()
 	}
 	if syntax == SyntaxDSML41 {

@@ -476,16 +476,29 @@ func buildChatPrompt(engine *Engine, images *ImageEncoder, system string, tools 
 }
 
 // ToolSyntax reports the tool-call markup grammar an engine's model uses,
-// mirroring upstream ds4's agent_tool_syntax_for_engine: GLM DSA shapes emit
-// <tool_call> markup, everything else emits DeepSeek DSML.
+// mirroring upstream ds4's agent_tool_syntax_for_engine: GLM DSA emits its
+// <tool_call> markup, Qwen3.8 its <tool_call><function=...> XML, V4.1 the
+// spaced DSML dialect, and everything else DeepSeek DSML.
 func ToolSyntax(engine *Engine) dsml.Syntax {
 	if engine != nil && engine.IsGLMDSA() {
 		return dsml.SyntaxGLM
+	}
+	if engine != nil && engine.IsQwen4() {
+		return dsml.SyntaxQwen
 	}
 	if engine != nil && engine.IsDeepSeek41() {
 		return dsml.SyntaxDSML41
 	}
 	return dsml.SyntaxDSML
+}
+
+// xmlToolSyntax reports the dialects whose tool results go back under the
+// "tool" role for libds4 to wrap (GLM's <|observation|><tool_response>,
+// Qwen's user turn carrying <tool_response>), whose calls have no wrapper
+// block to repair or replay exactly, and whose argument types come from the
+// tool schema (upstream agent_syntax_is_xml_tool_call).
+func xmlToolSyntax(s dsml.Syntax) bool {
+	return s == dsml.SyntaxGLM || s == dsml.SyntaxQwen
 }
 
 // ParseAssistant parses one assistant completion and assigns stable tool-call IDs.
@@ -500,7 +513,7 @@ func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thi
 	if err != nil {
 		return ChatMessage{}, err
 	}
-	if len(parsed.ToolCalls) == 0 && syntax != dsml.SyntaxGLM {
+	if len(parsed.ToolCalls) == 0 && !xmlToolSyntax(syntax) {
 		// A completion truncated by the token limit mid-stanza degrades to
 		// plain content under the strict parse. Repair the missing closers
 		// and adopt the result only when it actually recovers a call.
@@ -521,8 +534,11 @@ func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thi
 	for i, call := range parsed.ToolCalls {
 		id := r.nextToolCallID()
 		arguments := call.Arguments
-		if syntax == dsml.SyntaxGLM {
+		if xmlToolSyntax(syntax) {
 			arguments = r.coerceGLMArguments(call.Name, arguments)
+		}
+		if syntax == dsml.SyntaxQwen {
+			arguments = r.coerceQwenStringArguments(call.Name, arguments)
 		}
 		msg.ToolCalls[i] = ToolCall{
 			ID:        id,
@@ -542,6 +558,54 @@ func (r *ToolRegistry) ParseAssistantSyntax(syntax dsml.Syntax, text string, thi
 // schema. Native GLM markup has no type bit, so dsml correctly parses every
 // <arg_value> as a string; ToolRegistry is the first layer that also knows the
 // function schema and can distinguish, for example, integer 3 from string "3".
+// coerceQwenStringArguments keeps a schema-declared string parameter a
+// string when its Qwen value happened to read as JSON (a bare number or
+// "true"), as ds4-server's qwen_param_declared_string does before its
+// value-shape guess.
+func (r *ToolRegistry) coerceQwenStringArguments(name, arguments string) string {
+	handler, err := r.lookup(name)
+	if err != nil {
+		return arguments
+	}
+	var params struct {
+		Properties map[string]struct {
+			Type json.RawMessage `json:"type"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(handler.Schema().Parameters, &params); err != nil {
+		return arguments
+	}
+	pairs, ok := orderedRawObject(arguments)
+	if !ok {
+		return arguments
+	}
+	changed := false
+	for i := range pairs {
+		property, exists := params.Properties[pairs[i].key]
+		if !exists {
+			continue
+		}
+		var typ string
+		if json.Unmarshal(property.Type, &typ) != nil || typ != "string" {
+			continue
+		}
+		var text string
+		if json.Unmarshal(pairs[i].value, &text) == nil {
+			continue // already a string
+		}
+		quoted, err := json.Marshal(string(pairs[i].value))
+		if err != nil {
+			continue
+		}
+		pairs[i].value = json.RawMessage(quoted)
+		changed = true
+	}
+	if !changed {
+		return arguments
+	}
+	return renderRawPairs(pairs)
+}
+
 func (r *ToolRegistry) coerceGLMArguments(name, arguments string) string {
 	handler, err := r.lookup(name)
 	if err != nil {
@@ -577,6 +641,11 @@ func (r *ToolRegistry) coerceGLMArguments(name, arguments string) string {
 	if !changed {
 		return arguments
 	}
+	return renderRawPairs(pairs)
+}
+
+// renderRawPairs rebuilds an arguments object from its ordered pairs.
+func renderRawPairs(pairs []rawObjectPair) string {
 	var out strings.Builder
 	out.WriteByte('{')
 	for i, pair := range pairs {
@@ -753,7 +822,7 @@ func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessag
 			msg.Parts = nil
 			return renderChatMessage(msg, turn)
 		}
-		if msg.Role == "tool" && turn.syntax != dsml.SyntaxGLM {
+		if msg.Role == "tool" && !xmlToolSyntax(turn.syntax) {
 			// DSML: keep the tool-result wrapper around the text so the model
 			// still sees a tool observation, escaping each segment exactly as
 			// the text-only RenderToolResult path does so tool output cannot
@@ -776,10 +845,11 @@ func renderChatMessage(msg ChatMessage, turn turnRenderInfo) (renderedChatMessag
 		}
 		return assistantRendered(msg, renderedCalls, turn), nil
 	case "tool":
-		if turn.syntax == dsml.SyntaxGLM {
-			// libds4 wraps a GLM tool role in <|observation|><tool_response>,
-			// including escaping the closing sentinel, so hand it the raw
-			// content under its real role (ds4_chat_append_message).
+		if xmlToolSyntax(turn.syntax) {
+			// libds4 wraps a GLM tool role in <|observation|><tool_response>
+			// and a Qwen one in a user turn carrying <tool_response>, both
+			// escaping the closing sentinel, so hand it the raw content under
+			// its real role (ds4_chat_append_message).
 			return renderedChatMessage{role: "tool", content: msg.Content}, nil
 		}
 		result, err := dsml.RenderToolResult(msg.Content)
@@ -810,7 +880,13 @@ func assistantRendered(msg ChatMessage, renderedCalls string, turn turnRenderInf
 			b.WriteString("\n</think>\n\n")
 		}
 		// Keep a plain answer's trailing whitespace for token-prefix reuse.
-		b.WriteString(strings.TrimLeft(msg.Content, " \t\n\r\v\f"))
+		content := strings.TrimLeft(msg.Content, " \t\n\r\v\f")
+		b.WriteString(content)
+		if content != "" && renderedCalls != "" {
+			// append_qwen_tool_calls_text separates content from the first
+			// call with a blank line.
+			b.WriteString("\n\n")
+		}
 		b.WriteString(renderedCalls)
 		b.WriteString("<|im_end|>\n")
 		return renderedChatMessage{role: "assistant", content: b.String(), prerendered: true}
@@ -891,10 +967,10 @@ func renderPromptMessages(history []ChatMessage, render chatMessageRenderer, opt
 	for i := 0; i < len(history); {
 		if history[i].Role == "tool" {
 			// DSML coalesces consecutive tool results into one user turn
-			// carrying their <tool_result> blocks. GLM keeps each result a
-			// separate "tool" turn, because libds4 wraps every one in its own
-			// <|observation|><tool_response> element.
-			if opts.syntax == dsml.SyntaxGLM {
+			// carrying their <tool_result> blocks. GLM and Qwen keep each
+			// result a separate "tool" turn, because libds4 wraps every one
+			// in its own <tool_response> element.
+			if xmlToolSyntax(opts.syntax) {
 				rendered, err := render(history[i], turnRenderInfo{syntax: opts.syntax})
 				if err != nil {
 					return nil, err
@@ -956,12 +1032,12 @@ func renderToolCallsSyntax(syntax dsml.Syntax, calls []ToolCall) (string, error)
 	if len(calls) == 0 {
 		return "", nil
 	}
-	if syntax == dsml.SyntaxGLM {
+	if xmlToolSyntax(syntax) {
 		out := make([]dsml.ToolCall, len(calls))
 		for i, c := range calls {
 			out[i] = dsml.ToolCall{Name: c.Name, Arguments: c.Arguments}
 		}
-		return dsml.RenderToolCallsSyntax(dsml.SyntaxGLM, out)
+		return dsml.RenderToolCallsSyntax(syntax, out)
 	}
 	invokes := make([]string, len(calls))
 	for i, call := range calls {
@@ -981,9 +1057,9 @@ func (r *ToolRegistry) renderAssistantToolCalls(syntax dsml.Syntax, calls []Tool
 	if len(calls) == 0 {
 		return "", nil
 	}
-	if syntax == dsml.SyntaxGLM {
-		// GLM has no Exact replay block: parsing records no raw stanza, so
-		// calls always re-render canonically.
+	if xmlToolSyntax(syntax) {
+		// GLM and Qwen have no Exact replay block: parsing records no raw
+		// stanza, so calls always re-render canonically.
 		return renderToolCallsSyntax(syntax, calls)
 	}
 	replay := r.ReplayStore()

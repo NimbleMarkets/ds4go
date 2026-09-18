@@ -169,9 +169,9 @@ than a think prefix, and `ThinkLow` / `ThinkMedium` (the OpenAI `low`,
 through `Engine.IsQwen4` and `Engine.Qwen4ReasoningEffortText`. Speculation
 is built in: `--mtp-timing` enables it and prints acceptance/timing counters,
 as for GLM. In Go, set `EngineOptions.GLMMTP` to enable it without counters.
-Qwen's XML `<tool_call>`
-dialect is not yet rendered or parsed by the `dsml` package, so tool loops
-against a Qwen engine are not supported until that lands.
+Qwen's XML tool-call
+dialect (`<tool_call><function=...><parameter=...>`) is `dsml.SyntaxQwen`;
+`ToolSyntax` selects it for a Qwen engine, so tool loops need no changes.
 
 Vision here means image understanding: the encoder turns a PNG or JPEG into
 embedding rows that are spliced into the prompt, and the model answers in

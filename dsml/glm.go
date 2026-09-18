@@ -43,7 +43,17 @@ const (
 	// "<｜DSML｜ parameter>"), a shorter tools prompt, and a double-escape
 	// rule for a literal escaped close tag (upstream AGENT_TOOL_SYNTAX_DSML41).
 	SyntaxDSML41
+	// SyntaxQwen is Qwen3.8 Flash Next's <tool_call><function=...> markup
+	// (upstream AGENT_TOOL_SYNTAX_QWEN); see qwen.go.
+	SyntaxQwen
 )
+
+// isXMLToolSyntax reports the dialects that open a call with a bare
+// <tool_call> element and carry no wrapper block (upstream
+// agent_syntax_is_xml_tool_call): GLM and Qwen.
+func isXMLToolSyntax(s Syntax) bool {
+	return s == SyntaxGLM || s == SyntaxQwen
+}
 
 // String implements fmt.Stringer using ds4's own syntax labels.
 func (s Syntax) String() string {
@@ -52,6 +62,8 @@ func (s Syntax) String() string {
 		return "glm"
 	case SyntaxDSML41:
 		return "dsml41"
+	case SyntaxQwen:
+		return "qwen"
 	}
 	return "dsml"
 }
