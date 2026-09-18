@@ -76,7 +76,7 @@ func thinkModeForRequest(req chatRequest) (ds4.ThinkMode, error) {
 				return 0, fmt.Errorf("chat_template_kwargs.enable_thinking must be a boolean: %w", err)
 			}
 		}
-		if v, ok := kwargs["reasoning_effort"]; ok {
+		if v, ok := kwargs["reasoning_effort"]; ok && strings.TrimSpace(string(v)) != "null" {
 			mode, err := parseReasoningEffort(v)
 			if err != nil {
 				return 0, err

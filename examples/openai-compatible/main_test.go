@@ -307,6 +307,8 @@ func TestThinkModeForRequestReadsChatTemplateKwargs(t *testing.T) {
 		`{"reasoning_effort": "low"}`:                               ds4.ThinkLow,
 		`{"reasoning_effort": "medium", "preserve_thinking": true}`: ds4.ThinkMedium,
 		`{"enable_thinking": true, "reasoning_effort": "max"}`:      ds4.ThinkMax,
+		`{"reasoning_effort": null}`:                                serverThinkMode,
+		`{"enable_thinking": false, "reasoning_effort": null}`:      ds4.ThinkNone,
 		`null`: serverThinkMode,
 		`{}`:   serverThinkMode,
 	}
@@ -324,6 +326,10 @@ func TestThinkModeForRequestReadsChatTemplateKwargs(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":"high","chat_template_kwargs":{"reasoning_effort":"low"}}`), &req)
 	if got, err := thinkModeForRequest(req); err != nil || got != ds4.ThinkLow {
 		t.Errorf("kwargs effort over top-level = (%d, %v), want ThinkLow", got, err)
+	}
+	_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":"low","chat_template_kwargs":{"reasoning_effort": null}}`), &req)
+	if got, err := thinkModeForRequest(req); err != nil || got != ds4.ThinkLow {
+		t.Errorf("null kwargs effort over top-level = (%d, %v), want ThinkLow", got, err)
 	}
 	for _, bad := range []string{`{"enable_thinking": "yes"}`, `{"reasoning_effort": 3}`, `{"reasoning_effort": "bogus"}`, `[]`} {
 		var req chatRequest
