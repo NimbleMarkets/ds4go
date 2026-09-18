@@ -17,7 +17,8 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 Requires libds4 **v0.5.20260910** or newer; DeepSeek V4.1 Flash and think
 levels need **v0.6.20260912**, and a DGX Spark (GB10) needs the
 **v0.6.20260913** `linux-arm64-gb10-cuda` asset, which `ds4go install` now
-selects automatically. Older libraries keep working with the named think
+selects automatically. Qwen3.8 Flash Next and the low / medium think modes
+need **v0.7.20260918**. Older libraries keep working with the named think
 modes.
 
  * **DeepSeek V4.1 Flash**: catalog entries, think levels, split downloads, and its DSML41 tool-call dialect; `webtool` gains `fetch_image`.
