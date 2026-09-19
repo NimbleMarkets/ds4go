@@ -4,6 +4,12 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* **One default-library authority**: `ds4api` owns the single mutable default
+  library; the root package no longer keeps its own copy, so
+  `ds4.SetDefaultLibrary` and `ds4api.SetDefaultLibrary` can no longer
+  diverge, and root callback installers see a default set through either. New
+  `ds4api.CurrentDefaultLibrary()` peeks without lazy-loading.
+
 * **cliopts refactor**: the engine and runtime flags shared by the `ds4` CLI
   and `ds4-server` surfaces now live on one embedded `EngineFlags` struct with
   a single registration and resolver, and `EngineOptions()` returns an error
