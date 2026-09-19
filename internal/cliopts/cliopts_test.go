@@ -15,47 +15,47 @@ import (
 func TestSelectBackend_ExplicitFlags(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  CLIConfig
+		cfg  EngineFlags
 		want ds4.Backend
 	}{
 		{
 			name: "cuda flag",
-			cfg:  CLIConfig{CUDA: true},
+			cfg:  EngineFlags{CUDA: true},
 			want: ds4.BackendCUDA,
 		},
 		{
 			name: "rocm flag",
-			cfg:  CLIConfig{ROCm: true},
+			cfg:  EngineFlags{ROCm: true},
 			want: ds4.BackendCUDA,
 		},
 		{
 			name: "cpu flag",
-			cfg:  CLIConfig{CPU: true},
+			cfg:  EngineFlags{CPU: true},
 			want: ds4.BackendCPU,
 		},
 		{
 			name: "metal flag",
-			cfg:  CLIConfig{Metal: true},
+			cfg:  EngineFlags{Metal: true},
 			want: ds4.BackendMetal,
 		},
 		{
 			name: "backend cuda",
-			cfg:  CLIConfig{Backend: "cuda"},
+			cfg:  EngineFlags{Backend: "cuda"},
 			want: ds4.BackendCUDA,
 		},
 		{
 			name: "backend rocm",
-			cfg:  CLIConfig{Backend: "rocm"},
+			cfg:  EngineFlags{Backend: "rocm"},
 			want: ds4.BackendCUDA,
 		},
 		{
 			name: "backend cpu case insensitive",
-			cfg:  CLIConfig{Backend: "CpU"},
+			cfg:  EngineFlags{Backend: "CpU"},
 			want: ds4.BackendCPU,
 		},
 		{
 			name: "backend metal",
-			cfg:  CLIConfig{Backend: "metal"},
+			cfg:  EngineFlags{Backend: "metal"},
 			want: ds4.BackendMetal,
 		},
 	}
@@ -95,7 +95,7 @@ func TestSelectBackend_MetadataFile(t *testing.T) {
 		t.Fatalf("failed to write meta file: %v", err)
 	}
 
-	cfg := CLIConfig{
+	cfg := EngineFlags{
 		Lib: libPath,
 	}
 
@@ -107,7 +107,7 @@ func TestSelectBackend_MetadataFile(t *testing.T) {
 
 func TestSelectBackend_FallbackDefaults(t *testing.T) {
 	// With empty config and no metadata, it should resolve to platform defaults.
-	cfg := CLIConfig{
+	cfg := EngineFlags{
 		Lib: "nonexistent-lib-path-so-no-metadata-can-be-found",
 	}
 
@@ -157,13 +157,13 @@ func TestGenerateOptionsCarriesThinkMode(t *testing.T) {
 }
 
 func TestEngineOptionsCarryContextSizing(t *testing.T) {
-	cli := CLIConfig{Ctx: 32768}
-	if got := cli.EngineOptions(); got.ContextSize != cli.Ctx || got.PlacementCtxHint != cli.Ctx {
+	cli := CLIConfig{EngineFlags: EngineFlags{Ctx: 32768}}
+	if got := mustEngineOptions(t, &cli); got.ContextSize != cli.Ctx || got.PlacementCtxHint != cli.Ctx {
 		t.Errorf("CLI EngineOptions context = (%d, %d), want (%d, %d)",
 			got.ContextSize, got.PlacementCtxHint, cli.Ctx, cli.Ctx)
 	}
-	server := ServerConfig{Ctx: 65536}
-	if got := server.EngineOptions(); got.ContextSize != server.Ctx || got.PlacementCtxHint != server.Ctx {
+	server := ServerConfig{EngineFlags: EngineFlags{Ctx: 65536}}
+	if got := mustEngineOptions(t, &server); got.ContextSize != server.Ctx || got.PlacementCtxHint != server.Ctx {
 		t.Errorf("server EngineOptions context = (%d, %d), want (%d, %d)",
 			got.ContextSize, got.PlacementCtxHint, server.Ctx, server.Ctx)
 	}
@@ -180,19 +180,19 @@ func TestEngineOptionsSuppressExternalMTPForGLM(t *testing.T) {
 	}
 
 	const mtp = "/models/deepseek-mtp.gguf"
-	cliGLM := CLIConfig{Model: glm.FileName, MTP: mtp}
-	serverGLM := ServerConfig{Model: glm.FileName, MTP: mtp}
-	cliDeepSeek := CLIConfig{Model: deepseek.FileName, MTP: mtp}
-	serverDeepSeek := ServerConfig{Model: deepseek.FileName, MTP: mtp}
+	cliGLM := CLIConfig{EngineFlags: EngineFlags{Model: glm.FileName, MTP: mtp}}
+	serverGLM := ServerConfig{EngineFlags: EngineFlags{Model: glm.FileName, MTP: mtp}}
+	cliDeepSeek := CLIConfig{EngineFlags: EngineFlags{Model: deepseek.FileName, MTP: mtp}}
+	serverDeepSeek := ServerConfig{EngineFlags: EngineFlags{Model: deepseek.FileName, MTP: mtp}}
 	for _, test := range []struct {
 		name string
 		got  ds4.EngineOptions
 		want string
 	}{
-		{"CLI GLM", cliGLM.EngineOptions(), ""},
-		{"server GLM", serverGLM.EngineOptions(), ""},
-		{"CLI DeepSeek", cliDeepSeek.EngineOptions(), mtp},
-		{"server DeepSeek", serverDeepSeek.EngineOptions(), mtp},
+		{"CLI GLM", mustEngineOptions(t, &cliGLM), ""},
+		{"server GLM", mustEngineOptions(t, &serverGLM), ""},
+		{"CLI DeepSeek", mustEngineOptions(t, &cliDeepSeek), mtp},
+		{"server DeepSeek", mustEngineOptions(t, &serverDeepSeek), mtp},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if test.got.MTPPath != test.want {
@@ -208,7 +208,7 @@ func TestVisionFlagMapsToEngineOptions(t *testing.T) {
 	if err := fs.Parse([]string{"--vision", "/enc.gguf", "--image", "a.png", "--image", "b.jpg", "-p", "what?"}); err != nil {
 		t.Fatal(err)
 	}
-	opts := cfg.EngineOptions()
+	opts := mustEngineOptions(t, cfg)
 	if opts.VisionPath != "/enc.gguf" {
 		t.Errorf("VisionPath = %q, want /enc.gguf", opts.VisionPath)
 	}
@@ -250,7 +250,7 @@ func TestVisionFlagPairsFromCatalogWhenUnset(t *testing.T) {
 	if err := fs.Parse([]string{"-m", filepath.Join(modelsDir, vision.FileName)}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := cfg.EngineOptions().VisionPath, filepath.Join(modelsDir, encoder.FileName); got != want {
+	if got, want := mustEngineOptions(t, cfg).VisionPath, filepath.Join(modelsDir, encoder.FileName); got != want {
 		t.Errorf("VisionPath = %q, want paired %q", got, want)
 	}
 }
@@ -285,12 +285,12 @@ func TestEngineOptionsPinsVisionExpDSparkDrafter(t *testing.T) {
 	// The installed 0731 MTP model is the --mtp default, and libds4 rejects it
 	// against a Vision-Exp checkpoint: with no pinned drafter installed the
 	// engine must be opened without one.
-	cli := CLIConfig{Model: modelPath, MTP: mtpPath}
-	server := ServerConfig{Model: modelPath, MTP: mtpPath}
-	if got := cli.EngineOptions().MTPPath; got != "" {
+	cli := CLIConfig{EngineFlags: EngineFlags{Model: modelPath, MTP: mtpPath}}
+	server := ServerConfig{EngineFlags: EngineFlags{Model: modelPath, MTP: mtpPath}}
+	if got := mustEngineOptions(t, &cli).MTPPath; got != "" {
 		t.Errorf("CLI MTPPath = %q with no pinned drafter installed, want empty", got)
 	}
-	if got := server.EngineOptions().MTPPath; got != "" {
+	if got := mustEngineOptions(t, &server).MTPPath; got != "" {
 		t.Errorf("server MTPPath = %q with no pinned drafter installed, want empty", got)
 	}
 
@@ -298,10 +298,10 @@ func TestEngineOptionsPinsVisionExpDSparkDrafter(t *testing.T) {
 	if err := os.WriteFile(drafterPath, []byte("gguf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := cli.EngineOptions().MTPPath; got != drafterPath {
+	if got := mustEngineOptions(t, &cli).MTPPath; got != drafterPath {
 		t.Errorf("CLI MTPPath = %q, want the pinned drafter %q", got, drafterPath)
 	}
-	if got := server.EngineOptions().MTPPath; got != drafterPath {
+	if got := mustEngineOptions(t, &server).MTPPath; got != drafterPath {
 		t.Errorf("server MTPPath = %q, want the pinned drafter %q", got, drafterPath)
 	}
 }

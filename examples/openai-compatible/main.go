@@ -184,6 +184,10 @@ func run(cfg *cliopts.ServerConfig) error {
 		}
 	}
 	cfg.Model = models.NewManager().ResolvePath(cfg.Model)
+	opts, err := cfg.EngineOptions()
+	if err != nil {
+		return err
+	}
 	var engine *ds4.Engine
 	if cfg.Lib != "" {
 		lib, err := ds4.Load(cfg.Lib)
@@ -191,13 +195,13 @@ func run(cfg *cliopts.ServerConfig) error {
 			return err
 		}
 		ds4.SetDefaultLibrary(lib)
-		engine, err = lib.NewEngine(cfg.EngineOptions())
+		engine, err = lib.NewEngine(opts)
 		if err != nil {
 			return ds4.EnrichEngineOpenError(err)
 		}
 	} else {
 		var err error
-		engine, err = ds4.NewEngine(cfg.EngineOptions())
+		engine, err = ds4.NewEngine(opts)
 		if err != nil {
 			return err
 		}

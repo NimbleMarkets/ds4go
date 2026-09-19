@@ -79,17 +79,20 @@ func run(cfg *cliopts.CLIConfig) error {
 	if err := preflightPromptModel(cfg.Model); err != nil {
 		return err
 	}
+	opts, err := cfg.EngineOptions()
+	if err != nil {
+		return err
+	}
 	var engine *ds4.Engine
-	var err error
 	if cfg.Lib != "" {
-		lib, err := ds4.Load(cfg.Lib)
-		if err != nil {
-			return err
+		lib, lerr := ds4.Load(cfg.Lib)
+		if lerr != nil {
+			return lerr
 		}
 		ds4.SetDefaultLibrary(lib)
-		engine, err = lib.NewEngine(cfg.EngineOptions())
+		engine, err = lib.NewEngine(opts)
 	} else {
-		engine, err = ds4.NewEngine(cfg.EngineOptions())
+		engine, err = ds4.NewEngine(opts)
 	}
 	if err != nil {
 		return ds4.EnrichEngineOpenError(err)

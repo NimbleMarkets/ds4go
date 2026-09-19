@@ -4,6 +4,13 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* **cliopts refactor**: the engine and runtime flags shared by the `ds4` CLI
+  and `ds4-server` surfaces now live on one embedded `EngineFlags` struct with
+  a single registration and resolver, and `EngineOptions()` returns an error
+  for invalid values instead of exiting the process from inside configuration
+  code. The flag surface (names, shorthands, defaults, per-program help text)
+  is unchanged.
+
 * **New `scratchtool` package**: a session-scoped key/value scratchpad tool
   (`scratch_list/get/set/append/delete`) giving the model small, durable
   working memory under `$DS4_DIR/scratch/<session>/`, with per-key atomic
