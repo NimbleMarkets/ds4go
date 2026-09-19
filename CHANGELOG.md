@@ -9,6 +9,8 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
   the existing effort. README and catalog instructions use `--mtp-timing` to
   enable embedded speculation with counters (`EngineOptions.GLMMTP` in Go).
 
+* `ModelInfo.Qwen` marks Qwen3.8 Flash Next entries so selectors and serving layers can apply its family rules without loading an engine.
+
 * **Public model selection API**: `ListModels()` returns curated entries with paths,
   installed/default/partial state, display metadata, model capabilities, and
   companion aliases. `ModelInfo.Family` groups quantization variants of the same

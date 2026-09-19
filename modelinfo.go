@@ -65,6 +65,10 @@ type ModelInfo struct {
 	GLM bool
 	// DeepSeek41 identifies the DeepSeek V4.1 family.
 	DeepSeek41 bool
+	// Qwen identifies the Qwen3.8 Flash Next family (checkpoint or encoder):
+	// ChatML history, reasoning effort as a system-turn instruction, built-in
+	// speculation, and a tool-call dialect the dsml package does not yet speak.
+	Qwen bool
 }
 
 // IsChatModel reports whether this is a standalone chat checkpoint rather than
@@ -95,7 +99,7 @@ func ListModels() ([]ModelInfo, error) {
 			Installed: m.Installed, Partial: m.Partial, PartialBytes: m.PartialBytes, Default: m.Default,
 			Legacy: m.Legacy, Optional: m.Optional, Distributed: m.Distributed,
 			DistributedRole: m.DistributedRole, LayerRange: m.LayerRange,
-			Vision: m.Vision, Encoder: m.Encoder, DSpark: m.DSpark, GLM: m.GLM, DeepSeek41: m.DeepSeek41,
+			Vision: m.Vision, Encoder: m.Encoder, DSpark: m.DSpark, GLM: m.GLM, DeepSeek41: m.DeepSeek41, Qwen: m.Qwen,
 		})
 	}
 	return result, nil

@@ -87,3 +87,28 @@ func TestResolveModelInfoUnknownPath(t *testing.T) {
 		t.Error("resolved a nonexistent path")
 	}
 }
+
+func TestListModelsCarriesQwenTrait(t *testing.T) {
+	fixtureCatalogDir(t)
+	list, err := ListModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, m := range list {
+		switch m.Alias {
+		case "qwen38-q2", "qwen38-q4k", "qwen38-vision":
+			seen = true
+			if !m.Qwen {
+				t.Errorf("%s: Qwen = false, want true", m.Alias)
+			}
+		case "glm53-q2", "q2-imatrix", "v41-q2":
+			if m.Qwen {
+				t.Errorf("%s: Qwen = true, want false", m.Alias)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("no Qwen entries in the catalog")
+	}
+}
