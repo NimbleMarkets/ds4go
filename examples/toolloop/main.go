@@ -15,6 +15,7 @@ import (
 	"github.com/NimbleMarkets/ds4go/dsml"
 	"github.com/NimbleMarkets/ds4go/internal/cliopts"
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/NimbleMarkets/ds4go/scratchtool"
 	"github.com/NimbleMarkets/ds4go/webtool"
 	"github.com/spf13/pflag"
 )
@@ -30,18 +31,20 @@ func main() {
 	mock := fs.Bool("mock", false, "run with ds4api.NewMockLibrary and scripted model output")
 	fetchImage := fs.Bool("fetch-image", false, "also register webtool's fetch_image (needs a vision model and encoder)")
 	allowPrivate := fs.Bool("allow-private-fetch", false, "let fetch_image reach loopback and private addresses")
+	scratch := fs.Bool("scratch", false, "also register the scratchtool session scratchpad tools")
+	scratchSession := fs.String("scratch-session", "", "scratchpad session name (default \"default\")")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, "Usage: toolloop [options]\n\nRun a DSML tool-calling loop with a Go add tool.\n\nOptions:\n")
 		fmt.Fprint(os.Stderr, fs.FlagUsagesWrapped(100))
 	}
 	cliopts.Parse(fs, os.Args[1:])
 
-	if err := run(cfg, *mock, *fetchImage, *allowPrivate); err != nil {
+	if err := run(cfg, *mock, *fetchImage, *allowPrivate, *scratch, *scratchSession); err != nil {
 		fatal(err)
 	}
 }
 
-func run(cfg *cliopts.CLIConfig, mock, fetchImage, allowPrivate bool) error {
+func run(cfg *cliopts.CLIConfig, mock, fetchImage, allowPrivate, scratch bool, scratchSession string) error {
 	engine, err := openEngine(cfg, mock)
 	if err != nil {
 		return err
@@ -86,6 +89,17 @@ func run(cfg *cliopts.CLIConfig, mock, fetchImage, allowPrivate bool) error {
 		system += "\n\n"
 	}
 	system += toolSystem
+	if scratch {
+		pad, err := scratchtool.New(scratchtool.Config{Session: scratchSession})
+		if err != nil {
+			return err
+		}
+		defer pad.Close()
+		if err := pad.Register(reg); err != nil {
+			return err
+		}
+		system = scratchtool.SystemHint + "\n\n" + system
+	}
 
 	gen := cfg.GenerateOptions()
 	gen.OnToken = func(token int) {

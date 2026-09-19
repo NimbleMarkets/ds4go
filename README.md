@@ -381,6 +381,10 @@ Run 'ds4go help <command>' for detailed usage.
 - [`workspacetool`](./workspacetool/README.md) exposes local workspace tools:
   `read`, `more`, `list`, `search`, `view_image` (with a vision encoder),
   opt-in `write` / `edit`, and opt-in shell jobs.
+- [`scratchtool`](./scratchtool/README.md) exposes a session-scoped key/value
+  scratchpad (`scratch_list/get/set/append/delete`): durable private working
+  memory for plans and intermediate notes, persisted under
+  `$DS4_DIR/scratch/<session>/`.
 - [`webtool`](./webtool/README.md) exposes browser-backed `google_search` and
   `visit_page` tools, and `fetch_image` for pulling a web image into a vision
   model's context.
@@ -397,6 +401,7 @@ shell commands require `AllowShell`.
 go run ./examples/simple --model ./ds4flash.gguf
 go run ./examples/chat --model ./ds4flash.gguf
 go run ./examples/toolloop --mock
+go run ./examples/toolloop --mock --scratch   # add the scratchpad tools
 go run ./examples/toolloop --model ./ds4flash.gguf --nothink --tokens 512
 go run ./examples/openai-compatible --model ./ds4flash.gguf --host 127.0.0.1 --port 8000
 ```

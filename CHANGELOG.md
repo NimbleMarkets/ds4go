@@ -4,6 +4,11 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* **New `scratchtool` package**: a session-scoped key/value scratchpad tool
+  (`scratch_list/get/set/append/delete`) giving the model small, durable
+  working memory under `$DS4_DIR/scratch/<session>/`, with per-key atomic
+  writes, size limits, and an optional read-only registration.
+
 * **Qwen chat fixes**: assistant history uses ChatML and preserves recorded
   reasoning across turns; null `chat_template_kwargs.reasoning_effort` keeps
   the existing effort. README and catalog instructions use `--mtp-timing` to
