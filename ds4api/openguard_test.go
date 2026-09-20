@@ -14,14 +14,14 @@ import (
 // twice.
 func TestEngineOpenGuardWrapsEngineLifetime(t *testing.T) {
 	var acquired, released int
-	SetEngineOpenGuard(func(opts EngineOptions) (func(), error) {
+	prev := SetEngineOpenGuard(func(opts EngineOptions) (func(), error) {
 		acquired++
 		if opts.ModelPath != "mock-model" {
 			t.Errorf("guard saw ModelPath %q, want mock-model", opts.ModelPath)
 		}
 		return func() { released++ }, nil
 	})
-	t.Cleanup(func() { SetEngineOpenGuard(nil) })
+	t.Cleanup(func() { SetEngineOpenGuard(prev) })
 
 	lib := NewMockLibrary()
 	eng, err := lib.NewEngine(EngineOptions{ModelPath: "mock-model"})
@@ -43,10 +43,10 @@ func TestEngineOpenGuardWrapsEngineLifetime(t *testing.T) {
 
 // A guard refusal aborts the open and surfaces its error.
 func TestEngineOpenGuardErrorAbortsOpen(t *testing.T) {
-	SetEngineOpenGuard(func(EngineOptions) (func(), error) {
+	prev := SetEngineOpenGuard(func(EngineOptions) (func(), error) {
 		return nil, errors.New("model busy")
 	})
-	t.Cleanup(func() { SetEngineOpenGuard(nil) })
+	t.Cleanup(func() { SetEngineOpenGuard(prev) })
 
 	lib := NewMockLibrary()
 	if _, err := lib.NewEngine(EngineOptions{ModelPath: "m"}); err == nil || !strings.Contains(err.Error(), "model busy") {
@@ -69,5 +69,43 @@ func TestNoGuardMeansNoFilesystemPolicy(t *testing.T) {
 	defer eng.Close()
 	if _, err := os.Stat(model + ".run.lock"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("run lock beside the model: stat err = %v, want not-exist", err)
+	}
+}
+
+// A guard that acquires and then fails must have its release called: the
+// open never happens, so nothing else will free what the guard took.
+func TestGuardErrorReleasesWhatItAcquired(t *testing.T) {
+	released := 0
+	prev := SetEngineOpenGuard(func(EngineOptions) (func(), error) {
+		return func() { released++ }, errors.New("refused after acquiring")
+	})
+	t.Cleanup(func() { SetEngineOpenGuard(prev) })
+
+	lib := NewMockLibrary()
+	if _, err := lib.NewEngine(EngineOptions{ModelPath: "m"}); err == nil {
+		t.Fatal("NewEngine = nil error, want the guard's error")
+	}
+	if released != 1 {
+		t.Errorf("released = %d, want 1", released)
+	}
+}
+
+// SetEngineOpenGuard returns the previously installed guard so a caller
+// layering additional policy can chain to it instead of silently replacing
+// it (the module root's run-lock policy, for one).
+func TestSetEngineOpenGuardReturnsThePreviousGuard(t *testing.T) {
+	firstRan := false
+	orig := SetEngineOpenGuard(func(EngineOptions) (func(), error) {
+		firstRan = true
+		return nil, nil
+	})
+	t.Cleanup(func() { SetEngineOpenGuard(orig) })
+
+	prev := SetEngineOpenGuard(nil)
+	if prev == nil {
+		t.Fatal("SetEngineOpenGuard returned nil, want the guard installed above")
+	}
+	if _, err := prev(EngineOptions{}); err != nil || !firstRan {
+		t.Errorf("returned guard ran: err=%v firstRan=%v, want nil/true", err, firstRan)
 	}
 }

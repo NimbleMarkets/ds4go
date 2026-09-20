@@ -10,6 +10,12 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
   import, preserving the single-runner behavior for every ds4go binary while
   keeping the binding layer strict.
 
+* **Open-guard hardening**: `ds4api.SetEngineOpenGuard` returns the
+  previously installed guard so a caller layering policy chains to it instead
+  of silently replacing the run-lock, and a guard returning both a release
+  and an error has the release called immediately — the open never happens,
+  so nothing else would free what the guard acquired.
+
 * **One default-library authority**: `ds4api` owns the single mutable default
   library; the root package no longer keeps its own copy, so
   `ds4.SetDefaultLibrary` and `ds4api.SetDefaultLibrary` can no longer

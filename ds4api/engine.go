@@ -33,6 +33,9 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 		var err error
 		release, err = guard(opts)
 		if err != nil {
+			if release != nil {
+				release()
+			}
 			return nil, err
 		}
 	}
