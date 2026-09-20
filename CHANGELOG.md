@@ -20,8 +20,10 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
   and `ds4-server` surfaces now live on one embedded `EngineFlags` struct with
   a single registration and resolver, and `EngineOptions()` returns an error
   for invalid values instead of exiting the process from inside configuration
-  code. The flag surface (names, shorthands, defaults, per-program help text)
-  is unchanged.
+  code; the command boundary still reports them upstream-style — `ds4: ...` /
+  `ds4-server: ...` on stderr with exit status 2 (`cliopts.ReportUsage`). The
+  flag surface (names, shorthands, defaults, per-program help text) is
+  unchanged.
 
 * **New `scratchtool` package**: a session-scoped key/value scratchpad tool
   (`scratch_list/get/set/append/delete`) giving the model small, durable

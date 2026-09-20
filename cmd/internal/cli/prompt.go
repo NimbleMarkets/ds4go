@@ -81,7 +81,10 @@ func run(cfg *cliopts.CLIConfig) error {
 	}
 	opts, err := cfg.EngineOptions()
 	if err != nil {
-		return err
+		// Upstream ds4_cli.c reports invalid flag values as "ds4: ..." with
+		// exit status 2; cobra's error path would print "Error: ..." and
+		// main would exit 1.
+		os.Exit(cliopts.ReportUsage(os.Stderr, "ds4", err))
 	}
 	var engine *ds4.Engine
 	if cfg.Lib != "" {

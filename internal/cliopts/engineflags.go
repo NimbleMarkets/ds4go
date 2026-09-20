@@ -99,11 +99,14 @@ func registerEngineFlags(fs *pflag.FlagSet, c *EngineFlags, help engineFlagHelp)
 	fs.Uint32Var(&c.PrefillChunk, "prefill-chunk", 0, "prefill chunk size")
 }
 
-// EngineOptions builds the shared ds4.EngineOptions from the parsed flags.
+// engineOptions builds the shared ds4.EngineOptions from the parsed flags.
 // Invalid flag values return an error instead of terminating the process;
-// each command decides how to report it and exit. CLIConfig and ServerConfig
-// wrap this with their command-specific fields.
-func (c *EngineFlags) EngineOptions() (ds4.EngineOptions, error) {
+// each command decides how to report it and exit. Unexported on purpose:
+// CLIConfig and ServerConfig wrap it with their command-specific fields
+// (InspectOnly, ExpertProfilePath, the server placement hints), and a caller
+// reaching the promoted method through the embedded struct would silently
+// miss them.
+func (c *EngineFlags) engineOptions() (ds4.EngineOptions, error) {
 	var ssdExperts uint32
 	var ssdBytes uint64
 	if c.SSDStreamingCacheExperts != "" {

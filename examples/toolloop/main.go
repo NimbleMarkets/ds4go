@@ -152,7 +152,7 @@ func openEngine(cfg *cliopts.CLIConfig, mock bool) (*ds4.Engine, error) {
 	}
 	opts, err := cfg.EngineOptions()
 	if err != nil {
-		return nil, err
+		os.Exit(cliopts.ReportUsage(os.Stderr, "ds4", err))
 	}
 	if cfg.Lib != "" {
 		lib, err := ds4.Load(cfg.Lib)

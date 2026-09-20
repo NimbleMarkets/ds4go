@@ -186,7 +186,7 @@ func run(cfg *cliopts.ServerConfig) error {
 	cfg.Model = models.NewManager().ResolvePath(cfg.Model)
 	opts, err := cfg.EngineOptions()
 	if err != nil {
-		return err
+		os.Exit(cliopts.ReportUsage(os.Stderr, "ds4-server", err))
 	}
 	var engine *ds4.Engine
 	if cfg.Lib != "" {

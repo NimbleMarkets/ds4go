@@ -1,7 +1,9 @@
 package cliopts
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -303,5 +305,20 @@ func TestEngineOptionsPinsVisionExpDSparkDrafter(t *testing.T) {
 	}
 	if got := mustEngineOptions(t, &server).MTPPath; got != drafterPath {
 		t.Errorf("server MTPPath = %q, want the pinned drafter %q", got, drafterPath)
+	}
+}
+
+// Invalid flag values keep upstream's reporting shape at the command
+// boundary: "<program>: <message>" on stderr and exit status 2, matching the
+// old in-place os.Exit(2) that EngineOptions performed before it returned
+// errors.
+func TestReportUsageMatchesUpstreamShape(t *testing.T) {
+	var buf bytes.Buffer
+	code := ReportUsage(&buf, "ds4", errors.New("--power must be between 1 and 100"))
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if got, want := buf.String(), "ds4: --power must be between 1 and 100\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }

@@ -20,6 +20,7 @@ package cliopts
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -143,7 +144,7 @@ func (c *CLIConfig) ThinkMode() ds4.ThinkMode {
 // EngineOptions builds ds4.EngineOptions from the parsed flags. Invalid flag
 // values return an error; the command boundary decides how to report it.
 func (c *CLIConfig) EngineOptions() (ds4.EngineOptions, error) {
-	opts, err := c.EngineFlags.EngineOptions()
+	opts, err := c.EngineFlags.engineOptions()
 	if err != nil {
 		return ds4.EngineOptions{}, err
 	}
@@ -300,7 +301,7 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 // EngineOptions builds ds4.EngineOptions from the parsed flags. Invalid flag
 // values return an error; the command boundary decides how to report it.
 func (c *ServerConfig) EngineOptions() (ds4.EngineOptions, error) {
-	opts, err := c.EngineFlags.EngineOptions()
+	opts, err := c.EngineFlags.engineOptions()
 	if err != nil {
 		return ds4.EngineOptions{}, err
 	}
@@ -324,4 +325,14 @@ func Parse(fs *pflag.FlagSet, args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+}
+
+// ReportUsage writes an invalid flag value the way upstream ds4_cli.c and
+// ds4_server.c report it — "<program>: <message>" — and returns exit status
+// 2 for the command boundary to pass to os.Exit. EngineOptions returns these
+// errors instead of exiting so they stay testable; the boundary keeps the
+// upstream exit shape.
+func ReportUsage(w io.Writer, program string, err error) int {
+	fmt.Fprintf(w, "%s: %v\n", program, err)
+	return 2
 }
