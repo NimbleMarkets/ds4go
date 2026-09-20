@@ -24,6 +24,12 @@ func EnrichEngineOpenError(err error) error {
 	if err == nil {
 		return nil
 	}
+	// Idempotent: the CLI enriches engine-open failures whose path may have
+	// enriched already (root NewEngine does), and the details line itself
+	// mentions the PIDs it names.
+	if strings.Contains(err.Error(), "\nLock holder details: ") {
+		return err
+	}
 	pids := extractPIDs(err.Error())
 	if len(pids) == 0 {
 		return err

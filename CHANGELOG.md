@@ -31,6 +31,11 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
   flag surface (names, shorthands, defaults, per-program help text) is
   unchanged.
 
+* Engine-open errors carry the lock-holder details line once:
+  `EnrichEngineOpenError` is now idempotent, so the CLI no longer repeats
+  `Lock holder details: ...` when the root `NewEngine` already enriched the
+  error.
+
 * **New `scratchtool` package**: a session-scoped key/value scratchpad tool
   (`scratch_list/get/set/append/delete`) giving the model small, durable
   working memory under `$DS4_DIR/scratch/<session>/`, with per-key atomic

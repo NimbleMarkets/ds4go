@@ -47,3 +47,17 @@ func TestIsVisionEncoderMissing(t *testing.T) {
 		t.Error("unrelated error classified as a missing encoder")
 	}
 }
+
+// Enriching an already-enriched error must not append a second details line:
+// the CLI enriches after root NewEngine, which has enriched already.
+func TestEnrichEngineOpenErrorIsIdempotent(t *testing.T) {
+	old := processNameForPID
+	processNameForPID = func(int) (string, error) { return "ds4-server", nil }
+	defer func() { processNameForPID = old }()
+
+	once := EnrichEngineOpenError(errors.New("ds4_engine_open: lock held by pid 1234"))
+	twice := EnrichEngineOpenError(once)
+	if twice.Error() != once.Error() {
+		t.Errorf("second enrichment changed the error:\nonce:  %q\ntwice: %q", once, twice)
+	}
+}
