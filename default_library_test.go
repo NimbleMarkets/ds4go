@@ -11,9 +11,10 @@ import (
 // validation load) must be visible to the root package's callback helpers;
 // with a second root-owned copy they could diverge.
 func TestLowLevelDefaultIsVisibleToRootCallbacks(t *testing.T) {
+	prev := ds4api.CurrentDefaultLibrary()
+	t.Cleanup(func() { ds4api.SetDefaultLibrary(prev) })
 	lib := ds4api.NewMockLibrary()
 	ds4api.SetDefaultLibrary(lib)
-	t.Cleanup(func() { ds4api.SetDefaultLibrary(nil) })
 
 	got, err := defaultCallbackLibrary(false)
 	if err != nil {
@@ -27,6 +28,8 @@ func TestLowLevelDefaultIsVisibleToRootCallbacks(t *testing.T) {
 // With no default installed and load=false, the helper stays a no-op and
 // must not lazily load a library.
 func TestCallbackLibraryWithoutDefaultIsNil(t *testing.T) {
+	prev := ds4api.CurrentDefaultLibrary()
+	t.Cleanup(func() { ds4api.SetDefaultLibrary(prev) })
 	ds4api.SetDefaultLibrary(nil)
 	got, err := defaultCallbackLibrary(false)
 	if err != nil {
