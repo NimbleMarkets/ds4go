@@ -23,13 +23,12 @@ func engineRunLockGuard(opts ds4api.EngineOptions) (func(), error) {
 	if opts.ModelPath == "" || opts.InspectOnly {
 		return nil, nil
 	}
-	lockPath := opts.ModelPath + ".run.lock"
 	lock, err := models.AcquireEngineRunLock(opts.ModelPath)
 	if err != nil {
 		return nil, err
 	}
 	return func() {
 		lock.Close()
-		os.Remove(lockPath)
+		os.Remove(lock.Path())
 	}, nil
 }
