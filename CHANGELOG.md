@@ -4,6 +4,12 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* **Run-lock policy moved to the root layer**: `ds4api` no longer imports
+  `internal/models` or writes `<model>.run.lock` files; it exposes a policy
+  hook (`ds4api.SetEngineOpenGuard`) that the root package installs on
+  import, preserving the single-runner behavior for every ds4go binary while
+  keeping the binding layer strict.
+
 * **One default-library authority**: `ds4api` owns the single mutable default
   library; the root package no longer keeps its own copy, so
   `ds4.SetDefaultLibrary` and `ds4api.SetDefaultLibrary` can no longer
