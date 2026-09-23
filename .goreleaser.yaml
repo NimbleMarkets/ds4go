@@ -20,6 +20,7 @@ builds:
     env: [CGO_ENABLED=0]
     goos: [linux, darwin]
     goarch: [amd64, arm64]
+    flags: [-trimpath]
     ldflags:
       - -s -w -X github.com/NimbleMarkets/ds4go/cmd/internal/cli.version=v{{ .Version }}
 
