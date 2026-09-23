@@ -222,3 +222,42 @@ func TestQwenParameterBodyIsNotStructural(t *testing.T) {
 		t.Errorf("lastStructuralIndex = %d, want %d", got, len("<think>plan"))
 	}
 }
+
+// qwenBracketedValueCases mirrors ds4-server's qwen_param_value_is_json: a
+// bracketed value is JSON only when it parses as one complete JSON value;
+// otherwise it is a string. The resulting arguments must always be valid JSON.
+var qwenBracketedValueCases = []struct {
+	name string
+	raw  string
+	want string
+}{
+	{"object not json", `{not json}`, `"{not json}"`},
+	{"array unterminated", `[1, 2`, `"[1, 2"`},
+	{"object trailing garbage", `{"a":1}}`, `"{\"a\":1}}"`},
+	{"array invalid", `[1, 2,]`, `"[1, 2,]"`},
+	{"valid object", `{"a":1}`, `{"a":1}`},
+	{"valid array", `[1, 2]`, `[1, 2]`},
+	{"valid object whitespace", "  {\"a\":1} \t", `{"a":1}`},
+}
+
+func TestQwenParseBracketedValueMustBeJSON(t *testing.T) {
+	for _, tc := range qwenBracketedValueCases {
+		t.Run(tc.name, func(t *testing.T) {
+			text := "<tool_call>\n<function=f>\n<parameter=v>\n" + tc.raw + "\n</parameter>\n</function>\n</tool_call>"
+			msg, err := ParseCompletionSyntax(SyntaxQwen, text, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg.MalformedReason != "" || len(msg.ToolCalls) != 1 {
+				t.Fatalf("calls = %+v (%s)", msg.ToolCalls, msg.MalformedReason)
+			}
+			got := msg.ToolCalls[0].Arguments
+			if !json.Valid([]byte(got)) {
+				t.Errorf("Arguments = %s is not valid JSON", got)
+			}
+			if want := `{"v": ` + tc.want + `}`; got != want {
+				t.Errorf("Arguments = %s, want %s", got, want)
+			}
+		})
+	}
+}

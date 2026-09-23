@@ -52,10 +52,19 @@ type sessionCleanupState struct {
 	cancelID          uintptr
 }
 
+// sessionCleanupArg is the runtime.AddCleanup argument for a leaked Session.
+// It must not reference the Session (the cleanup would then never run), but it
+// deliberately holds the *Engine: ds4_session_free dereferences s->engine, and
+// runtime.AddCleanup orders nothing between objects, so when a leaked session
+// and its engine become unreachable in the same GC cycle the engine's cleanup
+// could otherwise call ds4_engine_close first. Reaching the engine from this
+// argument keeps it alive until the session cleanup has run; only then can a
+// later cycle collect the engine and close it.
 type sessionCleanupArg struct {
-	lib   *Library
-	ptr   uintptr
-	state *sessionCleanupState
+	lib    *Library
+	engine *Engine
+	ptr    uintptr
+	state  *sessionCleanupState
 }
 
 func cleanSession(arg sessionCleanupArg) {
@@ -91,9 +100,10 @@ func (e *Engine) NewSession(ctxSize int) (*Session, error) {
 	state := &sessionCleanupState{}
 	s := &Session{lib: e.lib, engine: e, ptr: out, state: state}
 	s.cleanup = runtime.AddCleanup(s, cleanSession, sessionCleanupArg{
-		lib:   e.lib,
-		ptr:   out,
-		state: state,
+		lib:    e.lib,
+		engine: e,
+		ptr:    out,
+		state:  state,
 	})
 	return s, nil
 }
@@ -129,6 +139,23 @@ func (s *Session) require() (unlock func(), err error) {
 		return nil, errClosed
 	}
 	return libCallMu.Unlock, nil
+}
+
+// requireEngine is require for methods that also call into the session's
+// engine (ds4_engine_vocab_size): after Engine.Close that pointer is freed C
+// memory, so the engine must be open as well. Both checks happen under the
+// single libCallMu, which Engine.Close also takes, so the engine cannot close
+// between the check and the call.
+func (s *Session) requireEngine() (unlock func(), err error) {
+	unlock, err = s.require()
+	if err != nil {
+		return nil, err
+	}
+	if s.engine == nil || s.engine.ptr == 0 {
+		unlock()
+		return nil, errClosed
+	}
+	return unlock, nil
 }
 
 // SetProgress sets a persistent progress callback for ds4_session_set_progress.
@@ -345,7 +372,7 @@ func (s *Session) ArgmaxIgnoringEOS(mode ThinkMode) int {
 // The vector must hold exactly the engine's vocabulary size; the next
 // Argmax, Sample, or logprob call reads it.
 func (s *Session) SetLogits(logits []float32) error {
-	unlock, err := s.require()
+	unlock, err := s.requireEngine()
 	if err != nil {
 		return err
 	}
@@ -441,7 +468,7 @@ func (s *Session) TokenLogprob(token int) (TokenScore, error) {
 // CopyLogits returns a copy of the current logits vector for the session.
 // The slice length equals the engine vocabulary size.
 func (s *Session) CopyLogits() ([]float32, error) {
-	unlock, err := s.require()
+	unlock, err := s.requireEngine()
 	if err != nil {
 		return nil, err
 	}

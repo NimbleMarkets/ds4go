@@ -15,20 +15,48 @@ import (
 //
 // DS4_DIR overrides the default. When DS4_DIR is unset, DefaultDir returns
 // "$HOME/.ds4" when the user home directory can be determined, otherwise ".ds4".
+//
+// The ".ds4" fallback is relative to the working directory and is used only
+// for data (models, config, scratch). It is never used to locate libds4:
+// DefaultLibraryDir returns "" and DefaultLibraryPath skips the DS4_DIR/lib
+// candidate in that case, because loading a shared library from a
+// working-directory-relative path is the binary-planting vector described at
+// DefaultLibraryPath. A shared location such as os.TempDir would be no
+// better, since another local user can pre-create it. Set DS4_DIR to load a
+// library when no home directory is available.
 func DefaultDir() string {
-	if dir := os.Getenv("DS4_DIR"); dir != "" {
+	if dir, ok := resolveDefaultDir(); ok {
 		return dir
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".ds4")
 	}
 	return ".ds4"
 }
 
+// resolveDefaultDir returns the ds4go data directory from DS4_DIR or the
+// user home directory. ok is false when neither is available, which is the
+// only case in which DefaultDir falls back to the working-directory-relative
+// ".ds4"; library lookups must not use that fallback.
+func resolveDefaultDir() (dir string, ok bool) {
+	if dir := os.Getenv("DS4_DIR"); dir != "" {
+		return dir, true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".ds4"), true
+	}
+	return "", false
+}
+
 // DefaultLibraryDir returns the directory where libds4 is installed by
 // default: the "lib" subdirectory of DefaultDir.
+//
+// It returns "" when neither DS4_DIR nor a home directory is available, since
+// the library is never searched relative to the working directory (see
+// DefaultDir and DefaultLibraryPath).
 func DefaultLibraryDir() string {
-	return filepath.Join(DefaultDir(), "lib")
+	dir, ok := resolveDefaultDir()
+	if !ok {
+		return ""
+	}
+	return filepath.Join(dir, "lib")
 }
 
 // DefaultModelsDir returns the directory where downloaded models are stored:
@@ -70,29 +98,36 @@ func DefaultMTPPath() string {
 // libds4 and gain code execution (binary planting). For the same reason a
 // bare library name is never returned for the OS loader to resolve: dyld
 // and Windows LoadLibrary both search the working directory for a leaf
-// name. Use DS4_LIB or DS4_DIR to load a library from a non-default
-// location.
+// name, and the DS4_DIR/lib candidate is skipped when DefaultDir would
+// fall back to the working-directory-relative ".ds4" (no DS4_DIR and no
+// home directory). Use DS4_LIB or DS4_DIR to load a library from a
+// non-default location.
 func DefaultLibraryPath() string {
 	if path := os.Getenv("DS4_LIB"); path != "" {
 		return path
 	}
-
-	name := libraryFileName()
-	var candidates []string
-	if ds4Dir := DefaultDir(); ds4Dir != "" {
-		candidates = append(candidates, filepath.Join(ds4Dir, "lib", name))
-	}
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))
-	}
-
-	for _, candidate := range candidates {
+	for _, candidate := range defaultLibraryCandidates() {
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
 			return candidate
 		}
 	}
 	return ""
+}
+
+// defaultLibraryCandidates lists the paths DefaultLibraryPath probes after
+// DS4_LIB, in order. None is relative to the working directory: the
+// DS4_DIR/lib candidate is omitted when no absolute data directory resolves.
+func defaultLibraryCandidates() []string {
+	name := libraryFileName()
+	var candidates []string
+	if libDir := DefaultLibraryDir(); libDir != "" {
+		candidates = append(candidates, filepath.Join(libDir, name))
+	}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(dir, name), filepath.Join(dir, "lib", name))
+	}
+	return candidates
 }
 
 func libraryFileName() string {

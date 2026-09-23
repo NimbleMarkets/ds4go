@@ -305,3 +305,62 @@ func TestDSparkSupportPath(t *testing.T) {
 		t.Errorf("DSparkSupportPath(\"\") = (%q, %v), want (\"\", false)", path, required)
 	}
 }
+
+// With no home directory and no DS4_DIR, the data directory falls back to a
+// working-directory-relative ".ds4", but the library search must never
+// consider it: a libds4 under CWD/.ds4/lib is the binary-planting vector the
+// loader's bare-name refusal cannot catch (the path has a directory
+// component).
+func TestDefaultLibraryPathSkipsRelativeFallbackWithoutHome(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("HOME", "")
+	t.Setenv("DS4_DIR", "")
+	t.Setenv("DS4_LIB", "")
+
+	name := libraryFileName()
+	planted := filepath.Join(cwd, ".ds4", "lib", name)
+	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planted, []byte("malicious"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := DefaultLibraryPath(); got != "" {
+		t.Fatalf("DefaultLibraryPath() = %q, want \"\" (a working-directory-relative .ds4/lib must not be searched)", got)
+	}
+	if got := DefaultLibraryDir(); got != "" {
+		t.Fatalf("DefaultLibraryDir() = %q, want \"\" when no absolute data directory resolves", got)
+	}
+	for _, candidate := range defaultLibraryCandidates() {
+		if !filepath.IsAbs(candidate) {
+			t.Errorf("library candidate %q is relative to the working directory", candidate)
+		}
+	}
+}
+
+// DefaultDir keeps its documented ".ds4" fallback for data (models, config,
+// scratch) when neither DS4_DIR nor a home directory is available. It must not
+// return "" (filepath.Abs("") is the working directory, which would widen the
+// safe domain checked by LibraryHolders/EngineHolders to the whole CWD) and
+// must not move to a shared location such as os.TempDir, where another local
+// user could pre-create the directory.
+func TestDefaultDirFallbackWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("DS4_DIR", "")
+
+	if got := DefaultDir(); got != ".ds4" {
+		t.Fatalf("DefaultDir() = %q, want \".ds4\"", got)
+	}
+	if got := DefaultModelsDir(); got != filepath.Join(".ds4", "models") {
+		t.Fatalf("DefaultModelsDir() = %q, want .ds4/models", got)
+	}
+	if dir, ok := resolveDefaultDir(); ok || dir != "" {
+		t.Fatalf("resolveDefaultDir() = (%q, %v), want (\"\", false)", dir, ok)
+	}
+	t.Setenv("DS4_DIR", "/tmp/example-ds4")
+	if dir, ok := resolveDefaultDir(); !ok || dir != "/tmp/example-ds4" {
+		t.Fatalf("resolveDefaultDir() = (%q, %v), want (DS4_DIR, true)", dir, ok)
+	}
+}

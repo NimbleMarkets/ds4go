@@ -241,7 +241,13 @@ func (w *WebHelper) VisitPageTool() ds4.Tool {
 
 // runPageJS opens pageURL in a fresh tab and evaluates js on it. With
 // checkLanding set, the page the browser ends up on (after any redirects)
-// must pass checkFetchURL before js runs.
+// must pass checkFetchURL before js runs, again after a consent click that
+// may have navigated, and once more on the page js actually ran against:
+// the location is read in the same evaluation as js, so a page that moves
+// itself (a timed location change, a meta refresh) to an internal address
+// while the consent and scroll waits run is refused rather than extracted.
+// js must be a synchronous expression yielding a string for that read to
+// describe the extracted document.
 func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dynamicScroll bool, checkLanding bool) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -340,6 +346,11 @@ func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dy
 				case <-time.After(1500 * time.Millisecond):
 				}
 				_ = w.waitNavigatedReady(ctx, tConn, pageURL)
+				if checkLanding {
+					if err := w.checkLandingURL(ctx, tConn); err != nil {
+						return "", err
+					}
+				}
 			}
 		}
 	}
@@ -353,8 +364,11 @@ func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dy
 		})
 	}
 
+	// The location and the extraction come from one synchronous evaluation,
+	// so the href describes the document the content was taken from; no
+	// navigation can slip in between the two.
 	extractRaw, err := tConn.call(ctx, "Runtime.evaluate", map[string]any{
-		"expression":            js,
+		"expression":            "location.href+'\\n'+" + js,
 		"returnByValue":         true,
 		"awaitPromise":          true,
 		"includeCommandLineAPI": true,
@@ -370,7 +384,16 @@ func (w *WebHelper) runPageJS(ctx context.Context, pageURL string, js string, dy
 	if evalRes.ExceptionDetails != nil {
 		return "", fmt.Errorf("javascript extraction failed: %v", evalRes.ExceptionDetails)
 	}
-	return evalRes.Result.Value, nil
+	href, content, found := strings.Cut(evalRes.Result.Value, "\n")
+	if !found {
+		return "", fmt.Errorf("javascript extraction returned no location")
+	}
+	if checkLanding {
+		if err := w.checkPageURL(href); err != nil {
+			return "", err
+		}
+	}
+	return content, nil
 }
 
 func (w *WebHelper) ensureBrowser(ctx context.Context) error {
@@ -578,7 +601,12 @@ func (w *WebHelper) checkLandingURL(ctx context.Context, conn *wsConn) error {
 	if err := json.Unmarshal(raw, &evalRes); err != nil {
 		return fmt.Errorf("visit_page: reading the landing URL: %w", err)
 	}
-	href := evalRes.Result.Value
+	return w.checkPageURL(evalRes.Result.Value)
+}
+
+// checkPageURL applies the destination policy to a location the tab
+// reported. A blank tab has nothing to extract and passes.
+func (w *WebHelper) checkPageURL(href string) error {
 	if href == "" || href == "about:blank" {
 		return nil
 	}

@@ -3,7 +3,9 @@ package ds4
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 )
@@ -92,5 +94,61 @@ func TestSetAbortFuncUsesDefaultLibrary(t *testing.T) {
 	}
 	if err := SetAbortFunc(nil); err != nil {
 		t.Fatalf("SetAbortFunc(nil): %v", err)
+	}
+}
+
+// Close must restore the captured library and drain its output even when the
+// default has changed and a fresh lookup would fail or use different symbols.
+func TestStderrCaptureCloseUsesOriginalLibrary(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		replacement *ds4api.Library
+	}{
+		{name: "default cleared"},
+		// This sentinel has no bound symbols: attempting to restore through
+		// the replacement instead of the original library would panic.
+		{name: "default replaced", replacement: &ds4api.Library{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lib := ds4api.NewMockLibrary()
+			SetDefaultLibrary(lib)
+			t.Cleanup(func() {
+				_ = lib.SetStderrFd(-1)
+				SetDefaultLibrary(nil)
+			})
+			t.Setenv("DS4_LIB", filepath.Join(t.TempDir(), "missing", libraryFileName()))
+			t.Setenv("DS4_DIR", t.TempDir())
+
+			var buf bytes.Buffer
+			cap, err := CaptureStderr(&buf)
+			if err != nil {
+				t.Fatalf("CaptureStderr: %v", err)
+			}
+			const message = "ds4: before restore\n"
+			ds4api.LogString(0, ds4api.LogWarning, message)
+			SetDefaultLibrary(tc.replacement)
+
+			closed := make(chan error, 1)
+			go func() { closed <- cap.Close() }()
+			select {
+			case err := <-closed:
+				if err != nil {
+					t.Fatalf("Close: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Close hung after changing the default library")
+			}
+			if got := buf.String(); got != message {
+				t.Fatalf("captured = %q, want %q", got, message)
+			}
+			if tc.replacement != nil {
+				got, err := ds4api.DefaultLibrary()
+				if err != nil || got != tc.replacement {
+					t.Fatalf("Close changed the default library: got %p, error %v", got, err)
+				}
+			} else if _, err := ds4api.DefaultLibrary(); err == nil {
+				t.Fatal("Close repopulated the cleared default library")
+			}
+		})
 	}
 }

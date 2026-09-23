@@ -19,7 +19,7 @@ func TestLibrarySetStderrFdRedirectsLogOutput(t *testing.T) {
 	if err := lib.SetStderrFd(int(f.Fd())); err != nil {
 		t.Fatalf("SetStderrFd: %v", err)
 	}
-	lib.raw.ds4LogString(0, LogWarning, "%s", "ds4: redirected\n")
+	lib.raw.ds4LogString(0, LogWarning, "ds4: redirected\n")
 
 	got, err := os.ReadFile(f.Name())
 	if err != nil {
@@ -33,7 +33,7 @@ func TestLibrarySetStderrFdRedirectsLogOutput(t *testing.T) {
 	if err := lib.SetStderrFd(-1); err != nil {
 		t.Fatalf("SetStderrFd(-1): %v", err)
 	}
-	lib.raw.ds4LogString(0, LogError, "%s", "ds4: native\n")
+	lib.raw.ds4LogString(0, LogError, "ds4: native\n")
 	if got2, _ := os.ReadFile(f.Name()); string(got2) != "ds4: redirected\n" {
 		t.Fatalf("file changed after restore = %q", got2)
 	}

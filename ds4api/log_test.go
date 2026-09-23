@@ -1,6 +1,9 @@
 package ds4api
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestLibrarySetAbortFuncRoutesFatalMessage(t *testing.T) {
 	lib := NewMockLibrary()
@@ -38,5 +41,52 @@ func TestLibrarySetAbortFuncRoutesFatalMessage(t *testing.T) {
 	invokeAbortCallback(oldID, "hidden")
 	if got != "" {
 		t.Fatalf("abort callback invoked after reset: %q", got)
+	}
+}
+
+// LogString must hand ds4_log a message that survives the trip through C's
+// printf machinery unchanged. purego cannot pass C variadic arguments, so a
+// "%s" format with the message as a trailing argument makes va_arg read
+// garbage (the real library prints "(null)" on darwin/arm64). The message
+// therefore has to travel as the format string itself, with every literal
+// '%' escaped so printf reproduces it and never consults va_arg.
+func TestLogStringRoundTripsThroughFormat(t *testing.T) {
+	defaultMu.Lock()
+	prev := defaultLib
+	defaultMu.Unlock()
+	lib := NewMockLibrary()
+	SetDefaultLibrary(lib)
+	t.Cleanup(func() { SetDefaultLibrary(prev) })
+
+	f, err := os.CreateTemp(t.TempDir(), "ds4-log-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := lib.SetStderrFd(int(f.Fd())); err != nil {
+		t.Fatalf("SetStderrFd: %v", err)
+	}
+	t.Cleanup(func() { _ = lib.SetStderrFd(-1) })
+
+	for _, msg := range []string{
+		"hello-from-go\n",
+		"prefill 50% done\n",
+		"format %s must be literal: %d %5.2f %%\n",
+		"100%",
+	} {
+		if err := f.Truncate(0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Seek(0, 0); err != nil {
+			t.Fatal(err)
+		}
+		LogString(0, LogDefault, msg)
+		got, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != msg {
+			t.Errorf("LogString(%q) wrote %q", msg, got)
+		}
 	}
 }

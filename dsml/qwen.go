@@ -167,8 +167,11 @@ func qwenStripValueNewlines(v string) string {
 
 // qwenValueIsJSON mirrors agent_qwen_value_is_json: after trimming, an
 // object or array by its brackets, the three literals, or a number that
-// fits upstream's 64-byte buffer. The number must also be valid JSON so the
-// arguments object stays well formed (strtod would accept "0x10" or "inf").
+// fits upstream's 64-byte buffer. A bracketed value must also parse as JSON,
+// as ds4-server's qwen_param_value_is_json requires (json_raw_value must
+// consume the whole value), and the number must be valid JSON (strtod would
+// accept "0x10" or "inf"), so the arguments object stays well formed;
+// anything that fails is a string.
 func qwenValueIsJSON(v string) bool {
 	v = strings.TrimLeft(v, " \t")
 	v = strings.TrimRight(v, " \t\n")
@@ -176,7 +179,7 @@ func qwenValueIsJSON(v string) bool {
 		return false
 	}
 	if (v[0] == '{' && v[len(v)-1] == '}') || (v[0] == '[' && v[len(v)-1] == ']') {
-		return true
+		return json.Valid([]byte(v))
 	}
 	if v == "true" || v == "false" || v == "null" {
 		return true

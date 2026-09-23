@@ -31,7 +31,7 @@ func TestWebHelperMock(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		mockCDPServer(t, l)
+		mockCDPServer(t, l, nil)
 	}()
 
 	cfg := Config{
@@ -67,18 +67,66 @@ func TestWebHelperMock(t *testing.T) {
 	fmt.Println("=== Test Finished ===")
 }
 
-func mockCDPServer(t *testing.T, l net.Listener) {
+// mockEvaluate answers a Runtime.evaluate expression the way the mock
+// browser's page would. It stands in for the JavaScript engine, so a test
+// can model a page whose state (location, readiness, content) changes over
+// the course of one visit.
+type mockEvaluate func(expr string) string
+
+// defaultMockEvaluate models a static page at http://dummy.com.
+func defaultMockEvaluate(expr string) string {
+	switch {
+	case expr == "document.readyState":
+		return "complete"
+	case expr == "location.href":
+		return "http://dummy.com"
+	case strings.HasPrefix(expr, "location.href+'\\n'+document.readyState"):
+		return "http://dummy.com\ncomplete\n100"
+	case strings.Contains(expr, "accept all"):
+		return ""
+	case strings.HasPrefix(expr, "location.href+'\\n'+"):
+		// An extraction that reads the location alongside its result.
+		return "http://dummy.com\nDummy markdown extraction result"
+	default: // extraction JS
+		return "Dummy markdown extraction result"
+	}
+}
+
+// startMockCDP serves the mock browser on a loopback port until stop is
+// called. A nil evaluate uses defaultMockEvaluate.
+func startMockCDP(t *testing.T, evaluate mockEvaluate) (port int, stop func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		mockCDPServer(t, l, evaluate)
+	}()
+	return l.Addr().(*net.TCPAddr).Port, func() {
+		l.Close()
+		wg.Wait()
+	}
+}
+
+func mockCDPServer(t *testing.T, l net.Listener, evaluate mockEvaluate) {
+	if evaluate == nil {
+		evaluate = defaultMockEvaluate
+	}
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			return
 		}
 		fmt.Printf("Mock server accepted connection from %s\n", conn.RemoteAddr())
-		go handleMockConn(t, conn, l.Addr().(*net.TCPAddr).Port)
+		go handleMockConn(t, conn, l.Addr().(*net.TCPAddr).Port, evaluate)
 	}
 }
 
-func handleMockConn(t *testing.T, conn net.Conn, port int) {
+func handleMockConn(t *testing.T, conn net.Conn, port int, evaluate mockEvaluate) {
 	defer func() {
 		conn.Close()
 		fmt.Println("Mock server connection handler exiting and closing connection")
@@ -139,11 +187,11 @@ func handleMockConn(t *testing.T, conn net.Conn, port int) {
 		fmt.Println("Mock server sent WebSocket 101 response")
 
 		isBrowserWS := req.URL.Path == "/devtools/browser"
-		handleWSProtocol(t, conn, isBrowserWS)
+		handleWSProtocol(t, conn, isBrowserWS, evaluate)
 	}
 }
 
-func handleWSProtocol(t *testing.T, conn net.Conn, isBrowserWS bool) {
+func handleWSProtocol(t *testing.T, conn net.Conn, isBrowserWS bool, evaluate mockEvaluate) {
 	fmt.Printf("Starting handleWSProtocol, isBrowserWS=%t\n", isBrowserWS)
 	for {
 		header := make([]byte, 2)
@@ -217,16 +265,7 @@ func handleWSProtocol(t *testing.T, conn net.Conn, isBrowserWS bool) {
 				case "Runtime.evaluate":
 					params, _ := req["params"].(map[string]any)
 					expr, _ := params["expression"].(string)
-					var value string
-					if expr == "document.readyState" {
-						value = "complete"
-					} else if strings.Contains(expr, "location.href+'\\n'") {
-						value = "http://dummy.com\ncomplete\n100"
-					} else if strings.Contains(expr, "accept all") {
-						value = ""
-					} else { // extraction JS
-						value = "Dummy markdown extraction result"
-					}
+					value := evaluate(expr)
 					respBody = fmt.Sprintf(`{"id":%d,"result":{"result":{"type":"string","value":%q}}}`, id, value)
 				}
 			}

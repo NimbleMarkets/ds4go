@@ -892,18 +892,29 @@ func assistantRendered(msg ChatMessage, renderedCalls string, turn turnRenderInf
 		return renderedChatMessage{role: "assistant", content: b.String(), prerendered: true}
 	}
 	if turn.syntax == dsml.SyntaxGLM {
-		// libds4 owns the GLM assistant envelope, including the <think></think>
-		// pair it inserts for a non-thinking turn (ds4_chat_append_message), so
-		// the content is handed over under its real role rather than
-		// pre-rendered as chat-template text.
-		content := msg.Content
-		if renderedCalls != "" {
-			if content != "" {
-				content += "\n"
+		// libds4 owns the GLM <|assistant|> envelope (ds4_chat_append_message),
+		// so the content is handed over under its real role rather than
+		// pre-rendered as chat-template text. The bytes after the role marker
+		// mirror ds4-server's render_glm_chat_prompt_text exactly: the think
+		// block (append_glm_assistant_message_prefix), the content trimmed
+		// (append_trimmed_text), then the <tool_call> block inline with no
+		// separating whitespace, as GLM's chat template renders it
+		// (append_glm_tool_calls_text, upstream fff391e). A turn that already
+		// starts with a think tag is passed through unprefixed. Because the
+		// result always starts with <think>, libds4 skips the empty
+		// <think></think> pair it would otherwise insert.
+		var b strings.Builder
+		if !strings.HasPrefix(msg.Content, "<think>") && !strings.HasPrefix(msg.Content, "</think>") {
+			b.WriteString("<think>")
+			if turn.thinking && turn.replayReasoning {
+				b.WriteString(msg.ReasoningContent)
 			}
-			content += renderedCalls
+			b.WriteString("</think>")
 		}
-		return renderedChatMessage{role: "assistant", content: content}
+		// C isspace, not Unicode White_Space, so the trim matches upstream.
+		b.WriteString(strings.Trim(msg.Content, " \t\n\v\f\r"))
+		b.WriteString(renderedCalls)
+		return renderedChatMessage{role: "assistant", content: b.String()}
 	}
 	return renderedChatMessage{
 		role:        "assistant",

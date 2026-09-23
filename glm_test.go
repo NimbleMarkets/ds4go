@@ -289,7 +289,11 @@ func renderedTokensRole(t *testing.T, eng *Engine, role, content string) []int {
 	return append([]int(nil), toks.Slice()...)
 }
 
-// Assistant tool-call history replays in the model's own markup.
+// Assistant tool-call history replays in the model's own markup. With
+// thinking off the turn is exactly <think></think> followed by the inline
+// <tool_call> block (no separating whitespace, as GLM's chat template and
+// ds4-server render it), which the whitespace-splitting mock tokenizes as one
+// word.
 func TestBuildChatPromptGLMAssistantCallsUseGLMMarkup(t *testing.T) {
 	eng, ctl := glmMockEngine(t)
 	ctl.SetGLM(true)
@@ -311,7 +315,7 @@ func TestBuildChatPromptGLMAssistantCallsUseGLMMarkup(t *testing.T) {
 		t.Fatalf("RenderToolCallsSyntax: %v", err)
 	}
 	// The markup words appear inside the rendered assistant turn.
-	markup, err := eng.TokenizeText(want)
+	markup, err := eng.TokenizeText("<think></think>" + want)
 	if err != nil {
 		t.Fatalf("TokenizeText: %v", err)
 	}
@@ -615,5 +619,126 @@ func TestBuildChatPromptDeepSeek41ReasoningEffort(t *testing.T) {
 	ctl.SetDeepSeek41(false)
 	if containsSubsequence(promptTokens(t, eng, "", ThinkHigh), renderedTokens(t, eng, "Reasoning Effort:")) {
 		t.Error("V4 prompt gained a reasoning-effort line")
+	}
+}
+
+// GLM assistant history must replay exactly what ds4-server renders after
+// <|assistant|> (render_glm_chat_prompt_text): a <think>reasoning</think>
+// prefix when thinking is on and the turn is in tool context or after the
+// last user turn, an empty <think></think> otherwise, the content trimmed,
+// and the <tool_call> block inline with no separating newline (upstream
+// fff391e). Anything else diverges from the sampled bytes and breaks the
+// session's KV prefix on every tool round.
+func TestRenderPromptMessagesGLMAssistantTurnBytes(t *testing.T) {
+	const calls = "<tool_call>bash<arg_key>command</arg_key><arg_value>pwd</arg_value></tool_call>" +
+		"<tool_call>bash<arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>"
+	twoCalls := []ToolCall{
+		{ID: "1", Name: "bash", Arguments: `{"command":"pwd"}`},
+		{ID: "2", Name: "bash", Arguments: `{"command":"ls"}`},
+	}
+	cases := []struct {
+		name    string
+		history []ChatMessage
+		opts    promptRenderOptions
+		index   int
+		want    string
+	}{
+		{
+			// Mirrors upstream test_render_glm_preserves_reasoning_with_tools.
+			name: "reasoning and calls with thinking on",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", ReasoningContent: "tool reasoning", ToolCalls: twoCalls},
+				{Role: "tool", ToolCallID: "1", Content: "/tmp"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, thinking: true, toolContext: true},
+			index: 1,
+			want:  "<think>tool reasoning</think>" + calls,
+		},
+		{
+			name: "reasoning, content and calls with thinking on",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", ReasoningContent: "tool reasoning", Content: "  Let me check.\n", ToolCalls: twoCalls},
+				{Role: "tool", ToolCallID: "1", Content: "/tmp"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, thinking: true, toolContext: true},
+			index: 1,
+			want:  "<think>tool reasoning</think>Let me check." + calls,
+		},
+		{
+			name: "content and calls with thinking off",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", Content: "Let me check.", ToolCalls: twoCalls},
+				{Role: "tool", ToolCallID: "1", Content: "/tmp"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, toolContext: true},
+			index: 1,
+			want:  "<think></think>Let me check." + calls,
+		},
+		{
+			name: "reasoning present but thinking off",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", ReasoningContent: "hidden", Content: "answer", ToolCalls: twoCalls},
+				{Role: "tool", ToolCallID: "1", Content: "/tmp"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, toolContext: true},
+			index: 1,
+			want:  "<think></think>answer" + calls,
+		},
+		{
+			// Mirrors upstream test_render_glm_drops_old_reasoning_without_tools.
+			name: "plain chat drops reasoning before the last user turn",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", ReasoningContent: "old hidden reasoning", Content: "first answer"},
+				{Role: "user", Content: "second"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, thinking: true},
+			index: 1,
+			want:  "<think></think>first answer",
+		},
+		{
+			name: "plain chat keeps reasoning after the last user turn",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", ReasoningContent: "fresh reasoning", Content: "first answer"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, thinking: true},
+			index: 1,
+			want:  "<think>fresh reasoning</think>first answer",
+		},
+		{
+			// Content that already carries its own think block is passed
+			// through with no second prefix (text_starts_with_think_tag).
+			name: "content with its own think block",
+			history: []ChatMessage{
+				{Role: "user", Content: "first"},
+				{Role: "assistant", ReasoningContent: "ignored", Content: "<think>inline</think>answer\n"},
+			},
+			opts:  promptRenderOptions{syntax: dsml.SyntaxGLM, thinking: true},
+			index: 1,
+			want:  "<think>inline</think>answer",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := renderPromptMessages(c.history, renderChatMessage, c.opts)
+			if err != nil {
+				t.Fatalf("renderPromptMessages: %v", err)
+			}
+			got := out[c.index]
+			if got.role != "assistant" {
+				t.Errorf("role = %q, want %q", got.role, "assistant")
+			}
+			if got.prerendered {
+				t.Error("GLM assistant turn marked prerendered; libds4 owns the <|assistant|> envelope")
+			}
+			if got.content != c.want {
+				t.Errorf("assistant content\n got: %q\nwant: %q", got.content, c.want)
+			}
+		})
 	}
 }

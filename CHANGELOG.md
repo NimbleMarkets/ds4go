@@ -16,6 +16,22 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 * `ModelInfo.Qwen` marks Qwen3.8 Flash Next entries so selectors and serving layers can apply its family rules without loading an engine.
 
+* **Fixes**: GLM assistant history replays `<think>{reasoning}</think>` when
+  thinking is on and renders the `<tool_call>` block inline with trimmed
+  content, byte-for-byte with ds4-server (upstream fff391e), so a tool loop
+  no longer re-prefills every round; the Qwen parser treats a bracketed
+  value that is not valid JSON as a string instead of emitting unparseable
+  arguments; `ds4api.LogString` passes the message as the format string
+  (purego cannot pass C variadics, so it printed `(null)` on macOS arm64);
+  a leaked `Session` keeps its `Engine` reachable until the session cleanup
+  has run, and `SetLogits`/`CopyLogits` report a closed engine instead of
+  dereferencing it; `StderrCapture.Close` restores the library it originally
+  redirected, even after the default library is cleared or replaced; the
+  libds4 search skips the working-directory-relative `.ds4/lib` fallback when
+  neither `DS4_DIR` nor a home directory is set; `visit_page` re-checks the
+  destination policy in the same evaluation as extraction, so a page that
+  moves itself to a private address after landing is refused.
+
 * **Public model selection API**: `ListModels()` returns curated entries with paths,
   installed/default/partial state, display metadata, model capabilities, and
   companion aliases. `ModelInfo.Family` groups quantization variants of the same

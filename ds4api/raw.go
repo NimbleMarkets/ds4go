@@ -156,7 +156,7 @@ type rawSymbols struct {
 	ds4ContextMemoryEstimate                   func(backend Backend, ctxSize int32) cContextMemory
 	ds4ContextMemoryEstimateWithPrefill        func(backend Backend, ctxSize int32, prefillChunk uint32) cContextMemory
 	ds4LogIsTTY                                func(fp uintptr) bool
-	ds4LogString                               func(fp uintptr, typ LogType, format string, msg string)
+	ds4LogString                               func(fp uintptr, typ LogType, format string)
 	ds4SetStderrFd                             func(fd int32)
 	ds4AbortSet                                func(fn uintptr, ud uintptr)
 	ds4EngineGenerateArgmax                    func(e uintptr, prompt *cTokens, nPredict int32, ctxSize int32, emit uintptr, done uintptr, emitUD uintptr, progress uintptr, progressUD uintptr) int32

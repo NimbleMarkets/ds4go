@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -327,13 +328,19 @@ func LogIsTTY(fp File) bool {
 	return lib.raw.ds4LogIsTTY(uintptr(fp))
 }
 
-// LogString writes a plain string through ds4_log using a "%s" format.
+// LogString writes a plain string through ds4_log.
+//
+// ds4_log is C-variadic and purego cannot pass variadic arguments: a "%s"
+// format with msg as a trailing argument makes va_arg read garbage on
+// darwin/arm64 (the callee expects variadics on the stack). The message is
+// therefore passed as the format string itself, with every '%' escaped as
+// "%%", so vfprintf reproduces it verbatim and never consults va_arg.
 func LogString(fp File, typ LogType, msg string) {
 	lib, err := DefaultLibrary()
 	if err != nil {
 		return
 	}
-	lib.raw.ds4LogString(uintptr(fp), typ, "%s", msg)
+	lib.raw.ds4LogString(uintptr(fp), typ, strings.ReplaceAll(msg, "%", "%%"))
 }
 
 // SetStderrFd redirects libds4's diagnostic stream to fd for the default

@@ -68,6 +68,34 @@ func (m *mockStderrStream) write(msg string) {
 	}
 }
 
+// mockFormatLog emulates what ds4_log's vfprintf produces for format when no
+// variadic arguments were passed: "%%" prints a literal '%', and every other
+// conversion consumes an argument that was never supplied, so it renders as
+// "(null)" (what the darwin/arm64 build printed for an unread "%s").
+func mockFormatLog(format string) string {
+	var b strings.Builder
+	for i := 0; i < len(format); i++ {
+		c := format[i]
+		if c != '%' {
+			b.WriteByte(c)
+			continue
+		}
+		if i+1 < len(format) && format[i+1] == '%' {
+			b.WriteByte('%')
+			i++
+			continue
+		}
+		// Skip flags, width, precision and length modifiers, then the
+		// conversion character itself.
+		i++
+		for i < len(format) && strings.IndexByte("-+ #0123456789.hlLqjzt", format[i]) >= 0 {
+			i++
+		}
+		b.WriteString("(null)")
+	}
+	return b.String()
+}
+
 // mockVocabSize is the canonical vocab size returned by the mock library.
 // Must stay in sync between ds4_engine_vocab_size and ds4_session_copy_logits
 // mocks: TestSessionCopyLogits asserts the two agree.
@@ -372,8 +400,11 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	// The mock mirrors the real engine's redirect semantics: ds4_log writes to
 	// the descriptor installed via ds4_set_stderr_fd (unbuffered), or is dropped
 	// when none is set (the real library would write to native stderr).
-	r.ds4LogString = func(fp uintptr, typ LogType, format string, msg string) {
-		mockStderr.write(msg)
+	// It applies printf semantics to the format: purego cannot pass C variadic
+	// arguments, so any conversion other than "%%" reads an empty va_list and
+	// prints garbage ("(null)" on darwin/arm64), as the real library does.
+	r.ds4LogString = func(fp uintptr, typ LogType, format string) {
+		mockStderr.write(mockFormatLog(format))
 	}
 	r.ds4SetStderrFd = func(fd int32) { mockStderr.set(fd) }
 	r.ds4AbortSet = func(fn uintptr, ud uintptr) {}

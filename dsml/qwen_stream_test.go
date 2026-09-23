@@ -119,3 +119,31 @@ func TestQwenStreamIgnoresToolInsideThink(t *testing.T) {
 		t.Errorf("msg = %+v", msg)
 	}
 }
+
+func TestQwenStreamBracketedValueMustBeJSON(t *testing.T) {
+	for _, tc := range qwenBracketedValueCases {
+		t.Run(tc.name, func(t *testing.T) {
+			text := "<tool_call>\n<function=f>\n<parameter=v>\n" + tc.raw + "\n</parameter>\n</function>\n</tool_call>"
+			events, msg := feedQwen(t, false, text[:len(text)/2], text[len(text)/2:])
+			if msg.MalformedReason != "" || len(msg.ToolCalls) != 1 {
+				t.Fatalf("calls = %+v (%s)", msg.ToolCalls, msg.MalformedReason)
+			}
+			want := `{"v": ` + tc.want + `}`
+			if got := msg.ToolCalls[0].Arguments; got != want {
+				t.Errorf("Arguments = %s, want %s", got, want)
+			}
+			var ended int
+			for _, e := range events {
+				if e.Type == EventToolCallEnd {
+					ended++
+					if e.Arguments != want {
+						t.Errorf("end arguments = %s, want %s", e.Arguments, want)
+					}
+				}
+			}
+			if ended != 1 {
+				t.Errorf("end events = %d, want 1", ended)
+			}
+		})
+	}
+}
