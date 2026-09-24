@@ -56,7 +56,7 @@ func TestChatPromptWithImagesUsesMultimodalBuilder(t *testing.T) {
 }
 
 func TestVisionHintNamesFlagAndAlias(t *testing.T) {
-	cfg := &cliopts.CLIConfig{Model: "/models/GLM-5.3-Flash-Q2.gguf"}
+	cfg := &cliopts.CLIConfig{EngineFlags: cliopts.EngineFlags{Model: "/models/GLM-5.3-Flash-Q2.gguf"}}
 	hint := visionHint(cfg)
 	if !strings.Contains(hint, "--vision") || !strings.Contains(hint, "glm53-vision") {
 		t.Fatalf("hint = %q, want --vision and the encoder alias", hint)

@@ -59,7 +59,7 @@ func stripANSI(s string) string {
 // updating in place. The rendered frame must therefore never exceed the
 // terminal width.
 func TestProgressLineFitsTerminalWidth(t *testing.T) {
-	defer restoreTerminalSize(t)
+	restoreTerminalSize(t)
 	terminalSizeFunc = func(io.Writer) (int, bool) { return 80, true }
 	t.Setenv("COLUMNS", "")
 
@@ -78,7 +78,7 @@ func TestProgressLineFitsTerminalWidth(t *testing.T) {
 // With no terminal and no COLUMNS, assume a conservative 80 columns rather
 // than a width most terminals do not have.
 func TestProgressWidthFallsBackToEightyColumns(t *testing.T) {
-	defer restoreTerminalSize(t)
+	restoreTerminalSize(t)
 	terminalSizeFunc = func(io.Writer) (int, bool) { return 0, false }
 	t.Setenv("COLUMNS", "")
 
@@ -92,7 +92,7 @@ func TestProgressWidthFallsBackToEightyColumns(t *testing.T) {
 // An explicit COLUMNS still wins when there is no measurable terminal, so
 // callers can size output in pipelines.
 func TestProgressWidthUsesColumnsEnv(t *testing.T) {
-	defer restoreTerminalSize(t)
+	restoreTerminalSize(t)
 	terminalSizeFunc = func(io.Writer) (int, bool) { return 0, false }
 	t.Setenv("COLUMNS", "100")
 
@@ -106,7 +106,7 @@ func TestProgressWidthUsesColumnsEnv(t *testing.T) {
 // Redirected output has no cursor to rewind, so "\r" frames just accumulate in
 // the log. Only the first and final frames belong there.
 func TestProgressDoesNotSpamWhenNotATerminal(t *testing.T) {
-	defer restoreTerminalSize(t)
+	restoreTerminalSize(t)
 	terminalSizeFunc = func(io.Writer) (int, bool) { return 0, false }
 
 	var buf bytes.Buffer
@@ -145,7 +145,7 @@ func renderedFrames(out string) []string {
 // padded row reflows into two rows when the terminal shrinks, and "\r" then
 // rewinds only the last of them, orphaning the head above every redraw.
 func TestProgressRedrawErasesAndParksCursor(t *testing.T) {
-	defer restoreTerminalSize(t)
+	restoreTerminalSize(t)
 	terminalSizeFunc = func(io.Writer) (int, bool) { return 80, true }
 
 	var buf bytes.Buffer
@@ -166,7 +166,7 @@ func TestProgressRedrawErasesAndParksCursor(t *testing.T) {
 // Width is re-read per frame, so a shrink between frames yields a frame that
 // fits the new width, sized consistently for name and padding alike.
 func TestProgressFollowsResize(t *testing.T) {
-	defer restoreTerminalSize(t)
+	restoreTerminalSize(t)
 	width := 140
 	terminalSizeFunc = func(io.Writer) (int, bool) { return width, true }
 	t.Setenv("COLUMNS", "")

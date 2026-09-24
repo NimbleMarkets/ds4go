@@ -10,15 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/install"
 	"github.com/NimbleMarkets/ds4go/internal/models"
 )
-
-var defaultLibraryMu sync.Mutex
-var defaultLibrary *ds4api.Library
 
 type (
 	// Library is a loaded libds4 shared library.
@@ -148,10 +144,10 @@ func Load(path string) (*ds4api.Library, error) {
 }
 
 // SetDefaultLibrary makes lib the low-level package default library.
+//
+// ds4api owns the one authoritative default; this package keeps no copy, so
+// setting it here or through ds4api.SetDefaultLibrary is equivalent.
 func SetDefaultLibrary(lib *ds4api.Library) {
-	defaultLibraryMu.Lock()
-	defaultLibrary = lib
-	defaultLibraryMu.Unlock()
 	ds4api.SetDefaultLibrary(lib)
 }
 
@@ -232,11 +228,11 @@ func NewEngine(opts ds4api.EngineOptions) (*ds4api.Engine, error) {
 	return engine, nil
 }
 
+// defaultCallbackLibrary returns the authoritative default library for
+// process-global callback installation, lazily loading one with the root
+// path policy when load is set and no default is installed yet.
 func defaultCallbackLibrary(load bool) (*ds4api.Library, error) {
-	defaultLibraryMu.Lock()
-	lib := defaultLibrary
-	defaultLibraryMu.Unlock()
-	if lib != nil {
+	if lib := ds4api.CurrentDefaultLibrary(); lib != nil {
 		return lib, nil
 	}
 	if !load {

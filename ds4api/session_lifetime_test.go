@@ -88,6 +88,12 @@ func TestSessionCleanupRunsBeforeEngineCleanup(t *testing.T) {
 		defer mu.Unlock()
 		return slices.Clone(events)
 	}
+	// The runtime policy's release must also wait until the session is freed
+	// and the native engine closes, including when cleanup follows a leak.
+	prevGuard := SetEngineOpenGuard(func(EngineOptions) (func(), error) {
+		return func() { record("guard_release") }, nil
+	})
+	t.Cleanup(func() { SetEngineOpenGuard(prevGuard) })
 	origFree, origClose := lib.raw.ds4SessionFree, lib.raw.ds4EngineClose
 	lib.raw.ds4SessionFree = func(s uintptr) {
 		record("session_free")
@@ -131,10 +137,10 @@ func TestSessionCleanupRunsBeforeEngineCleanup(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !waitFor("engine_close") {
-		t.Fatalf("engine cleanup never ran after the session was freed; events = %v", snapshot())
+	if !waitFor("guard_release") {
+		t.Fatalf("engine cleanup never released its guard after the session was freed; events = %v", snapshot())
 	}
-	if got, want := snapshot(), []string{"session_free", "engine_close"}; !slices.Equal(got, want) {
+	if got, want := snapshot(), []string{"session_free", "engine_close", "guard_release"}; !slices.Equal(got, want) {
 		t.Fatalf("cleanup order = %v, want %v", got, want)
 	}
 }

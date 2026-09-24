@@ -150,19 +150,23 @@ func openEngine(cfg *cliopts.CLIConfig, mock bool) (*ds4.Engine, error) {
 		ds4.SetDefaultLibrary(lib)
 		return lib.NewEngine(ds4.EngineOptions{})
 	}
+	opts, err := cfg.EngineOptions()
+	if err != nil {
+		os.Exit(cliopts.ReportUsage(os.Stderr, "ds4", err))
+	}
 	if cfg.Lib != "" {
 		lib, err := ds4.Load(cfg.Lib)
 		if err != nil {
 			return nil, err
 		}
 		ds4.SetDefaultLibrary(lib)
-		engine, err := lib.NewEngine(cfg.EngineOptions())
+		engine, err := lib.NewEngine(opts)
 		if err != nil {
 			return nil, ds4.EnrichEngineOpenError(err)
 		}
 		return engine, nil
 	}
-	return ds4.NewEngine(cfg.EngineOptions())
+	return ds4.NewEngine(opts)
 }
 
 func addTool(ctx context.Context, raw json.RawMessage) (string, error) {

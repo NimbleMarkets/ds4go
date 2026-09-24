@@ -29,7 +29,7 @@ func TestDsparkFlagsMapToEngineOptions(t *testing.T) {
 		if err := fs.Parse(tc.args); err != nil {
 			t.Fatalf("Parse(%v): %v", tc.args, err)
 		}
-		got := cfg.EngineOptions()
+		got := mustEngineOptions(t, cfg)
 		if got.Dspark != tc.dspark || got.DsparkStrict != tc.strict || got.DsparkExactSampling != tc.exact || got.DsparkConfidenceThreshold != tc.threshold {
 			t.Errorf("CLI %v: dspark=%v strict=%v exact=%v threshold=%v, want %v/%v/%v/%v",
 				tc.args, got.Dspark, got.DsparkStrict, got.DsparkExactSampling, got.DsparkConfidenceThreshold,
@@ -41,7 +41,7 @@ func TestDsparkFlagsMapToEngineOptions(t *testing.T) {
 		if err := sfs.Parse(tc.args); err != nil {
 			t.Fatalf("server Parse(%v): %v", tc.args, err)
 		}
-		sgot := scfg.EngineOptions()
+		sgot := mustEngineOptions(t, scfg)
 		if sgot.Dspark != tc.dspark || sgot.DsparkStrict != tc.strict || sgot.DsparkExactSampling != tc.exact || sgot.DsparkConfidenceThreshold != tc.threshold {
 			t.Errorf("server %v: dspark=%v strict=%v exact=%v threshold=%v, want %v/%v/%v/%v",
 				tc.args, sgot.Dspark, sgot.DsparkStrict, sgot.DsparkExactSampling, sgot.DsparkConfidenceThreshold,
@@ -86,14 +86,14 @@ func TestHardwareFlagsMapToEngineOptions(t *testing.T) {
 		if err := fs.Parse(tc.args); err != nil {
 			t.Fatalf("Parse(%v): %v", tc.args, err)
 		}
-		check("CLI", tc.args, cfg.EngineOptions(), tc.want)
+		check("CLI", tc.args, mustEngineOptions(t, cfg), tc.want)
 
 		sfs := pflag.NewFlagSet("server", pflag.ContinueOnError)
 		scfg := RegisterServer(sfs)
 		if err := sfs.Parse(tc.args); err != nil {
 			t.Fatalf("server Parse(%v): %v", tc.args, err)
 		}
-		check("server", tc.args, scfg.EngineOptions(), tc.want)
+		check("server", tc.args, mustEngineOptions(t, scfg), tc.want)
 	}
 }
 
@@ -105,11 +105,11 @@ func TestBatchedSessionMapsToPlacementHints(t *testing.T) {
 	if err := sfs.Parse([]string{"--batched-session", "4"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := scfg.EngineOptions(); got.PlacementSessionCountHint != 4 || !got.ShareSessionPrefillWorkspace {
+	if got := mustEngineOptions(t, scfg); got.PlacementSessionCountHint != 4 || !got.ShareSessionPrefillWorkspace {
 		t.Errorf("batched: hint=%d share=%v, want 4/true", got.PlacementSessionCountHint, got.ShareSessionPrefillWorkspace)
 	}
 	plain := RegisterServer(pflag.NewFlagSet("server", pflag.ContinueOnError))
-	if got := plain.EngineOptions(); got.PlacementSessionCountHint != 1 || got.ShareSessionPrefillWorkspace {
+	if got := mustEngineOptions(t, plain); got.PlacementSessionCountHint != 1 || got.ShareSessionPrefillWorkspace {
 		t.Errorf("unbatched: hint=%d share=%v, want 1/false", got.PlacementSessionCountHint, got.ShareSessionPrefillWorkspace)
 	}
 }
@@ -185,12 +185,12 @@ func TestEngineOptionsSuppressExternalMTPForDeepSeek41(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing %s catalog entry", alias)
 		}
-		cli := CLIConfig{Model: model.FileName, MTP: mtp}
-		server := ServerConfig{Model: model.FileName, MTP: mtp}
-		if got := cli.EngineOptions().MTPPath; got != "" {
+		cli := CLIConfig{EngineFlags: EngineFlags{Model: model.FileName, MTP: mtp}}
+		server := ServerConfig{EngineFlags: EngineFlags{Model: model.FileName, MTP: mtp}}
+		if got := mustEngineOptions(t, &cli).MTPPath; got != "" {
 			t.Errorf("%s: CLI MTPPath = %q, want suppressed", alias, got)
 		}
-		if got := server.EngineOptions().MTPPath; got != "" {
+		if got := mustEngineOptions(t, &server).MTPPath; got != "" {
 			t.Errorf("%s: server MTPPath = %q, want suppressed", alias, got)
 		}
 	}

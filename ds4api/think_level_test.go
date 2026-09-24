@@ -33,8 +33,9 @@ func TestThinkLevelEncodesLikeUpstream(t *testing.T) {
 }
 
 func TestThinkModeEnabledHonoursLevelZero(t *testing.T) {
-	lib, _ := NewMockLibraryWithControls()
-	_ = lib
+	prev := CurrentDefaultLibrary()
+	SetDefaultLibrary(NewMockLibrary())
+	t.Cleanup(func() { SetDefaultLibrary(prev) })
 	if ThinkModeEnabled(ThinkLevel(0)) {
 		t.Error("level 0 reported as thinking enabled")
 	}

@@ -117,3 +117,17 @@ func TestAcquireEngineRunLock(t *testing.T) {
 	}
 	lock2.Close()
 }
+
+// Path reports the lock file the lock holds, so releasers remove the file
+// actually locked instead of rebuilding the name themselves.
+func TestFileLockPathNamesTheLockedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m.gguf.run.lock")
+	l, err := TryLock(path)
+	if err != nil {
+		t.Fatalf("TryLock: %v", err)
+	}
+	defer l.Close()
+	if got := l.Path(); got != path {
+		t.Errorf("Path() = %q, want %q", got, path)
+	}
+}

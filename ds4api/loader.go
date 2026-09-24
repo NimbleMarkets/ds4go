@@ -68,6 +68,15 @@ func SetDefaultLibrary(lib *Library) {
 	defaultLib = lib
 }
 
+// CurrentDefaultLibrary returns the installed default library without
+// lazily loading one, or nil when no default is set. It is the authoritative
+// default: the module root keeps no copy of its own.
+func CurrentDefaultLibrary() *Library {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	return defaultLib
+}
+
 // DefaultLibrary returns the lazily loaded default library.
 func DefaultLibrary() (*Library, error) {
 	defaultMu.Lock()

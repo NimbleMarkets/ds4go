@@ -18,6 +18,12 @@ type FileLock struct {
 	f *os.File
 }
 
+// Path returns the lock file this lock holds. Releasers remove this path
+// rather than rebuilding the name from what they locked.
+func (l *FileLock) Path() string {
+	return l.f.Name()
+}
+
 // LockExclusive acquires an exclusive lock on path, creating the file if
 // needed. Unlike TryLock, it waits for the existing holder to release it.
 func LockExclusive(path string) (*FileLock, error) {

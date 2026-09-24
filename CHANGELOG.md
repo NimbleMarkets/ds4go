@@ -14,6 +14,13 @@ This release adds a `scratchtool` scratchpad for agents to store small text valu
 
 Applications can list models and read model information without loading the inference library.
 
+The command-line programs use one set of engine options. Invalid values
+produce consistent error messages. Both Go packages use the same default
+library.
+
+Applications that import only `ds4api` must now provide their own model-lock
+policy. The root `ds4` package installs the existing policy automatically.
+
 Qwen conversations keep recorded reasoning between turns. GLM conversations
 include reasoning and tool calls when they reuse earlier messages. The Qwen
 parser keeps invalid JSON values as strings so tools can read their arguments.
@@ -29,6 +36,39 @@ private addresses unless the configuration permits that access.
 
 <details>
 <summary>Details</summary>
+
+* **Run-lock policy moved to the root layer**: `ds4api` no longer imports
+  `internal/models` or writes `<model>.run.lock` files; it exposes a policy
+  hook (`ds4api.SetEngineOpenGuard`) that the root package installs on
+  import, preserving the single-runner behavior for every ds4go binary while
+  keeping the binding layer strict. Applications that import only `ds4api`
+  must install their own guard if they need model run locks.
+
+* **Open-guard hardening**: `ds4api.SetEngineOpenGuard` returns the
+  previously installed guard so a caller layering policy chains to it instead
+  of silently replacing the run-lock, and a guard returning both a release
+  and an error has the release called immediately — the open never happens,
+  so nothing else would free what the guard acquired.
+
+* **One default-library authority**: `ds4api` owns the single mutable default
+  library; the root package no longer keeps its own copy, so
+  `ds4.SetDefaultLibrary` and `ds4api.SetDefaultLibrary` can no longer
+  diverge, and root callback installers see a default set through either. New
+  `ds4api.CurrentDefaultLibrary()` peeks without lazy-loading.
+
+* **cliopts refactor**: the engine and runtime flags shared by the `ds4` CLI
+  and `ds4-server` surfaces now live on one embedded `EngineFlags` struct with
+  a single registration and resolver, and `EngineOptions()` returns an error
+  for invalid values instead of exiting the process from inside configuration
+  code; the command boundary still reports them upstream-style — `ds4: ...` /
+  `ds4-server: ...` on stderr with exit status 2 (`cliopts.ReportUsage`). The
+  flag surface (names, shorthands, defaults, per-program help text) is
+  unchanged.
+
+* Engine-open errors carry the lock-holder details line once:
+  `EnrichEngineOpenError` is now idempotent, so the CLI no longer repeats
+  `Lock holder details: ...` when the root `NewEngine` already enriched the
+  error.
 
 * **New `scratchtool` package**: a session-scoped key/value scratchpad tool
   (`scratch_list/get/set/append/delete`) giving the model small, durable

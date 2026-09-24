@@ -146,7 +146,7 @@ func TestValidatePromptFlagsMirrorsUpstream(t *testing.T) {
 
 func TestIMatrixMinExpertSamplesReachesTheEngine(t *testing.T) {
 	eng, ctl := mockCLIEngine(t)
-	cfg := &cliopts.CLIConfig{IMatrixDataset: "d.txt", IMatrixOut: "o.dat", Ctx: 4096, IMatrixMaxPrompts: 2, IMatrixMaxTokens: 300, IMatrixMinExpertSamples: 7}
+	cfg := &cliopts.CLIConfig{EngineFlags: cliopts.EngineFlags{Ctx: 4096}, IMatrixDataset: "d.txt", IMatrixOut: "o.dat", IMatrixMaxPrompts: 2, IMatrixMaxTokens: 300, IMatrixMinExpertSamples: 7}
 	if err := collectIMatrix(eng, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestDumpLogitsWritesFullVocabulary(t *testing.T) {
 	prompt, _ := eng.TokenizeText("a b c")
 	defer prompt.Free()
 	path := filepath.Join(t.TempDir(), "logits.json")
-	cfg := &cliopts.CLIConfig{Model: "m.gguf", Ctx: 4096, DumpLogits: path}
+	cfg := &cliopts.CLIConfig{EngineFlags: cliopts.EngineFlags{Model: "m.gguf", Ctx: 4096}, DumpLogits: path}
 	if err := dumpLogits(eng, session, cfg, prompt); err != nil {
 		t.Fatalf("dumpLogits: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestRunPerplexityScoresTheText(t *testing.T) {
 		words[i] = "w" + string(rune('a'+i%26)) + string(rune('a'+i/26))
 	}
 	path := writeTemp(t, "text.txt", strings.Join(words, " "))
-	cfg := &cliopts.CLIConfig{PerplexityFile: path, Ctx: 4096, Tokens: 50000}
+	cfg := &cliopts.CLIConfig{EngineFlags: cliopts.EngineFlags{Ctx: 4096}, PerplexityFile: path, Tokens: 50000}
 	var out bytes.Buffer
 	if err := runPerplexity(eng, cfg, &out); err != nil {
 		t.Fatalf("runPerplexity: %v", err)
@@ -230,7 +230,7 @@ func TestRunPerplexityScoresTheText(t *testing.T) {
 		t.Errorf("capped run: err=%v out=%q", err, out.String())
 	}
 	short := writeTemp(t, "short.txt", "too short")
-	if err := runPerplexity(eng, &cliopts.CLIConfig{PerplexityFile: short, Ctx: 4096}, &out); err == nil || !strings.Contains(err.Error(), "more than 32 tokens") {
+	if err := runPerplexity(eng, &cliopts.CLIConfig{EngineFlags: cliopts.EngineFlags{Ctx: 4096}, PerplexityFile: short}, &out); err == nil || !strings.Contains(err.Error(), "more than 32 tokens") {
 		t.Errorf("short text: err = %v", err)
 	}
 }
@@ -239,7 +239,7 @@ func TestRunDecodeConsistencyComparesLiveAndFresh(t *testing.T) {
 	eng, _ := mockCLIEngine(t)
 	prompt, _ := eng.TokenizeText("one two three")
 	defer prompt.Free()
-	cfg := &cliopts.CLIConfig{Ctx: 4096, DecodeConsistency: 3}
+	cfg := &cliopts.CLIConfig{EngineFlags: cliopts.EngineFlags{Ctx: 4096}, DecodeConsistency: 3}
 	var out bytes.Buffer
 	if err := runDecodeConsistency(eng, cfg, prompt, &out); err != nil {
 		t.Fatalf("runDecodeConsistency: %v\n%s", err, out.String())

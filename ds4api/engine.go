@@ -2,23 +2,19 @@ package ds4api
 
 import (
 	"errors"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"unsafe"
-
-	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
 // Engine wraps a ds4_engine.
 type Engine struct {
-	lib      *Library
-	ptr      uintptr
-	once     sync.Once
-	runLock  *models.FileLock
-	lockPath string
-	cleanup  runtime.Cleanup
+	lib     *Library
+	ptr     uintptr
+	once    sync.Once
+	release func() // installed EngineOpenGuard's release, if any
+	cleanup runtime.Cleanup
 }
 
 // NewEngine opens a ds4 engine using the default shared library.
@@ -30,15 +26,17 @@ func NewEngine(opts EngineOptions) (*Engine, error) {
 	return lib.NewEngine(opts)
 }
 
-// NewEngine opens a ds4 engine using this shared library.
+// NewEngine opens a ds4 engine using this shared library. Any installed
+// EngineOpenGuard runs first; its release is held for the engine lifetime.
 func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
-	var runLock *models.FileLock
-	var lockPath string
-	if opts.ModelPath != "" && !opts.InspectOnly {
-		lockPath = opts.ModelPath + ".run.lock"
+	var release func()
+	if guard := currentEngineOpenGuard(); guard != nil {
 		var err error
-		runLock, err = models.AcquireEngineRunLock(opts.ModelPath)
+		release, err = guard(opts)
 		if err != nil {
+			if release != nil {
+				release()
+			}
 			return nil, err
 		}
 	}
@@ -122,27 +120,24 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 	runtime.KeepAlive(listenHostBytes)
 	runtime.KeepAlive(coordHostBytes)
 	if err := ds4Error("ds4_engine_open", code); err != nil {
-		if runLock != nil {
-			runLock.Close()
-			os.Remove(lockPath)
+		if release != nil {
+			release()
 		}
 		return nil, err
 	}
-	e := &Engine{lib: l, ptr: out, runLock: runLock, lockPath: lockPath}
+	e := &Engine{lib: l, ptr: out, release: release}
 	e.cleanup = runtime.AddCleanup(e, cleanEngine, engineCleanupArg{
-		lib:      l,
-		ptr:      out,
-		runLock:  runLock,
-		lockPath: lockPath,
+		lib:     l,
+		ptr:     out,
+		release: release,
 	})
 	return e, nil
 }
 
 type engineCleanupArg struct {
-	lib      *Library
-	ptr      uintptr
-	runLock  *models.FileLock
-	lockPath string
+	lib     *Library
+	ptr     uintptr
+	release func()
 }
 
 func cleanEngine(arg engineCleanupArg) {
@@ -151,11 +146,8 @@ func cleanEngine(arg engineCleanupArg) {
 	if arg.ptr != 0 {
 		arg.lib.raw.ds4EngineClose(arg.ptr)
 	}
-	if arg.runLock != nil {
-		arg.runLock.Close()
-		if arg.lockPath != "" {
-			os.Remove(arg.lockPath)
-		}
+	if arg.release != nil {
+		arg.release()
 	}
 }
 
@@ -172,12 +164,9 @@ func (e *Engine) Close() {
 			e.lib.raw.ds4EngineClose(e.ptr)
 			e.ptr = 0
 		}
-		if e.runLock != nil {
-			e.runLock.Close()
-			if e.lockPath != "" {
-				os.Remove(e.lockPath)
-			}
-			e.runLock = nil
+		if e.release != nil {
+			e.release()
+			e.release = nil
 		}
 	})
 }

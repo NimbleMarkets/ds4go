@@ -12,9 +12,7 @@ import (
 // the replayed turn under a thinking mode, and V4.1 levels follow the same
 // rule with level 0 meaning off.
 func TestBuildChatPromptReplaysReasoningWithoutADefaultLibrary(t *testing.T) {
-	defaultLibraryMu.Lock()
-	prev := defaultLibrary
-	defaultLibraryMu.Unlock()
+	prev := ds4api.CurrentDefaultLibrary()
 	SetDefaultLibrary(nil)
 	t.Cleanup(func() { SetDefaultLibrary(prev) })
 	t.Setenv("DS4_LIB", "")
