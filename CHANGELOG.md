@@ -2,6 +2,39 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+ROCm support now covers AMD Instinct MI300 GPUs (`gfx942`) and records which
+GPUs each library supports. The release ROCm asset needs a libds4 build made
+with `ROCM_ARCHS`; it adds experimental RDNA3 and RDNA4 targets.
+
+A ROCm library built for a different AMD GPU used to load and then fail with
+`invalid device function` on its first kernel. ds4go now reads the library's
+GPU list from the file before it loads the library. It stops with an error that
+names the host GPU and the rebuild command when the host GPU is not in that
+list. `ds4go validate` shows both lists, `ds4go install` warns about a mismatch,
+and `DS4_SKIP_GPU_ARCH_CHECK=1` turns the check off.
+
+<details>
+<summary>Details</summary>
+
+* **New `internal/rocmarch` package** (pure Go, no cgo). It reads the
+  `ds4_rocm_offload_archs` symbol from the ELF file, falling back to the HIP
+  offload-bundle IDs in `.hip_fatbin`. It detects host GPUs from
+  `HSA_OVERRIDE_GFX_VERSION`, `rocminfo`, or the KFD sysfs topology, and it
+  understands LLVM generic targets such as `gfx9-4-generic` and `gfx11-generic`.
+* **`ds4.Load` checks the GPU architecture first.** It also exports
+  `CheckGPUArch` and `GPUArchError`. CUDA, Metal, and CPU libraries are not
+  affected. The check passes whenever either list is unknown.
+* **`ds4go-install.json` has a new `rocm_archs` field.** The installer and
+  `install --pin` write it, and the loader uses it when the library file does
+  not record its own list.
+* **Docs**: INSTALL.md has a new "AMD GPUs (ROCm)" section. It covers the
+  supported architectures, building with `ROCM_ARCHS`, the ROCm runtime
+  sonames, and an `ld.so.conf.d` entry for `/opt/rocm/core-*/lib`.
+
+</details>
+
 ## v0.8.0 (2026-09-23)
 
 Qwen3.8 Flash Next and low or medium reasoning modes require libds4

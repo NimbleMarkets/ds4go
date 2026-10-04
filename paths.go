@@ -141,6 +141,22 @@ func libraryFileName() string {
 	}
 }
 
+// installMetadataROCmArchs returns the rocm_archs list recorded in the
+// ds4go-install.json beside libPath, or nil.
+func installMetadataROCmArchs(libPath string) []string {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(libPath), "ds4go-install.json"))
+	if err != nil {
+		return nil
+	}
+	var meta struct {
+		ROCmArchs []string `json:"rocm_archs"`
+	}
+	if json.Unmarshal(data, &meta) != nil {
+		return nil
+	}
+	return meta.ROCmArchs
+}
+
 // DetectDefaultBackend probes the environment and installation metadata to determine
 // the preferred backend for the shared library at libPath.
 //

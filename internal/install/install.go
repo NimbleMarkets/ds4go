@@ -26,6 +26,7 @@ import (
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/NimbleMarkets/ds4go/internal/rocmarch"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -125,18 +126,22 @@ type CatalogAsset struct {
 //   - "pinned": a developer-supplied file copied in via `install --pin`.
 //     Source holds the absolute path the file was copied from.
 type InstallMetadata struct {
-	Kind        string    `json:"kind,omitempty"`
-	Repo        string    `json:"repo,omitempty"`
-	Version     string    `json:"version,omitempty"`
-	AssetName   string    `json:"asset_name,omitempty"`
-	AssetURL    string    `json:"asset_url,omitempty"`
-	Source      string    `json:"source,omitempty"`
-	Backend     string    `json:"backend"`
-	Variant     string    `json:"variant,omitempty"`
-	GOOS        string    `json:"goos"`
-	GOARCH      string    `json:"goarch"`
-	Digest      string    `json:"digest,omitempty"`
-	SHA256      string    `json:"sha256"`
+	Kind      string `json:"kind,omitempty"`
+	Repo      string `json:"repo,omitempty"`
+	Version   string `json:"version,omitempty"`
+	AssetName string `json:"asset_name,omitempty"`
+	AssetURL  string `json:"asset_url,omitempty"`
+	Source    string `json:"source,omitempty"`
+	Backend   string `json:"backend"`
+	Variant   string `json:"variant,omitempty"`
+	GOOS      string `json:"goos"`
+	GOARCH    string `json:"goarch"`
+	Digest    string `json:"digest,omitempty"`
+	SHA256    string `json:"sha256"`
+	// ROCmArchs lists the AMD GPU architectures a ROCm library was
+	// compiled for, as read from the library at install time. It is empty
+	// for non-ROCm builds and when the library does not record its list.
+	ROCmArchs   []string  `json:"rocm_archs,omitempty"`
 	InstalledAt time.Time `json:"installed_at"`
 }
 
@@ -288,6 +293,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			GOARCH:      opts.GOARCH,
 			Digest:      a.Digest,
 			SHA256:      libSHA,
+			ROCmArchs:   recordROCmArchs(ctx, opts.Out, res.Library),
 			InstalledAt: time.Now(),
 		}
 		metaPath := filepath.Join(opts.DestDir, MetadataFileName)
@@ -445,6 +451,7 @@ func runPin(ctx context.Context, opts Options) (*Result, error) {
 			GOOS:        opts.GOOS,
 			GOARCH:      opts.GOARCH,
 			SHA256:      libSHA,
+			ROCmArchs:   recordROCmArchs(ctx, opts.Out, libPath),
 			InstalledAt: time.Now(),
 		}
 		metaBytes, err := json.MarshalIndent(meta, "", "  ")
@@ -460,6 +467,23 @@ func runPin(ctx context.Context, opts Options) (*Result, error) {
 	fmt.Fprintf(opts.Out, "pinned %s -> %s\n", absSrc, libPath)
 	return res, nil
 }
+
+// recordROCmArchs reads the GPU architectures a freshly installed ROCm
+// library was compiled for, warns when none matches this host's GPUs, and
+// returns the list for the install metadata. It returns nil for non-ROCm
+// libraries and when the list is unknown.
+func recordROCmArchs(ctx context.Context, out io.Writer, libPath string) []string {
+	report, err := inspectROCmArchsFunc(ctx, libPath, nil)
+	if err != nil || !report.ROCm {
+		return nil
+	}
+	if err := report.Err(libPath); err != nil {
+		fmt.Fprintf(out, "warning: %v\n", err)
+	}
+	return report.LibraryArchs
+}
+
+var inspectROCmArchsFunc = rocmarch.Inspect
 
 // decidePinOverwrite returns true when the existing dest should be replaced.
 // Behavior depends on what is currently at libPath; see the design doc's
@@ -1186,6 +1210,18 @@ func defaultBackend(goos, goarch string) string {
 
 // Validate checks the installation of libds4 in opts.DestDir.
 // It verifies existence, permissions, checksums, and dynamic loading.
+// archListStatus formats an architecture list for Validate output.
+func archListStatus(archs []string, source string) string {
+	if len(archs) == 0 {
+		return "unknown"
+	}
+	s := strings.Join(archs, ", ")
+	if source != "" {
+		s += " (" + source + ")"
+	}
+	return s
+}
+
 // featureGateStatus renders an optional libds4 capability for `ds4go validate`.
 // A missing capability is informational, not an error: older libds4 builds load
 // fine but do not export the Dlsym-guarded symbol group.
@@ -1283,6 +1319,17 @@ func Validate(ctx context.Context, opts Options) error {
 			}
 		}
 	}
+	// A ROCm library built for other GPU architectures loads fine and then
+	// fails on the first kernel launch, so check before loading.
+	gpuReport, gpuErr := inspectROCmArchsFunc(ctx, libPath, meta.ROCmArchs)
+	if gpuErr == nil && gpuReport.ROCm {
+		if err := gpuReport.Err(libPath); err != nil && !rocmarch.Skipped() {
+			return err
+		}
+		if gpuReport.Known() && gpuReport.OK() {
+			fmt.Fprintf(opts.Out, "✓ Library supports host GPU %s\n", strings.Join(gpuReport.Compatible, ","))
+		}
+	}
 	lib, err := loadLibraryFunc(libPath)
 	if err != nil {
 		return fmt.Errorf("failed to load dynamic library: %w", err)
@@ -1302,6 +1349,11 @@ func Validate(ctx context.Context, opts Options) error {
 	fmt.Fprintln(opts.Out, "\n[Capabilities]")
 	fmt.Fprintf(opts.Out, "  Dynamic steering:      %s\n", featureGateStatus(lib.SupportsDynamicSteering()))
 	fmt.Fprintf(opts.Out, "  Distributed inference: %s\n", featureGateStatus(lib.SupportsDistributed()))
+	if gpuErr == nil && gpuReport.ROCm {
+		fmt.Fprintln(opts.Out, "\n[ROCm GPU architectures]")
+		fmt.Fprintf(opts.Out, "  Library:     %s\n", archListStatus(gpuReport.LibraryArchs, string(gpuReport.Source)))
+		fmt.Fprintf(opts.Out, "  Host:        %s\n", archListStatus(gpuReport.HostArchs, ""))
+	}
 
 	// 5. Active process verification (excluding the current process)
 	if holders, err := FindLibraryHolders(libPath); err == nil {

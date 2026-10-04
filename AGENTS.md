@@ -64,6 +64,13 @@ to avoid binary planting.
 - **macOS Code Signing**: macOS on Apple Silicon (arm64) requires all binaries to be signed. Foreign ad-hoc signed libraries (built on remote CI runners) will trigger a kernel `SIGKILL` on load. The validator and installer must verify code signature status and refuse loading invalid or foreign ad-hoc signed libraries, directing users to sign locally via `codesign -s - --force <libPath>`.
 - **Stderr Logging Redirection**: Logging is redirected via process-global file descriptors using `SetStderr`, `SetStderrFd`, `DiscardLogs`, and `CaptureStderr`. Do not use or reintroduce callback-based logging (`SetLogFunc`). Redirection is not supported on Windows.
 - **Backend Detection**: Use `DetectDefaultBackend(libPath)` to query preferred backends from the `ds4go-install.json` metadata sidecar file or fall back to system capability checks (e.g. checking `/dev/nvidiactl` or `nvidia-smi` on Linux).
+- **ROCm GPU architectures**: a HIP library only runs on the GPU archs it was
+  compiled for, and a mismatch fails at the first kernel launch, not at load.
+  `internal/rocmarch` (pure Go) reads the library's list from the ELF
+  (`ds4_rocm_offload_archs` symbol, else `.hip_fatbin` bundle IDs) and the
+  host's from `HSA_OVERRIDE_GFX_VERSION`/`rocminfo`/KFD sysfs; root `Load` and
+  `install.Validate` refuse a mismatch, and never block when either side is
+  unknown. Keep this out of `ds4api`.
 - **Model-family MTP Policy**: DeepSeek may use a separate external MTP support
   model. GLM 5.2's optional next-token predictor is embedded in the base GGUF,
   and libds4 rejects an external `mtp_path` for GLM. Root-package and CLI policy
