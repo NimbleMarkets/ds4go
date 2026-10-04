@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/NimbleMarkets/ds4go/internal/rocmarch"
 )
 
 func TestCandidateAssetNames(t *testing.T) {
@@ -1655,5 +1657,80 @@ func TestCatalogParsesAndSelectsTheGB10Asset(t *testing.T) {
 	opts.Variant = ""
 	if catalogAssetSelected(got, opts) || !catalogAssetSelected(generic, opts) {
 		t.Errorf("generic selection: gb10=%v generic=%v, want the generic asset only", catalogAssetSelected(got, opts), catalogAssetSelected(generic, opts))
+	}
+}
+
+// stubROCmInspect makes the installer see a ROCm library built for libArchs
+// on a host with hostArchs.
+func stubROCmInspect(t *testing.T, libArchs, hostArchs []string) {
+	t.Helper()
+	orig := inspectROCmArchsFunc
+	t.Cleanup(func() { inspectROCmArchsFunc = orig })
+	inspectROCmArchsFunc = func(_ context.Context, _ string, fallback []string) (rocmarch.Report, error) {
+		archs, src := libArchs, rocmarch.SourceSymbol
+		if len(archs) == 0 {
+			archs, src = fallback, rocmarch.SourceMetadata
+		}
+		return rocmarch.Report{
+			ROCm: true, LibraryArchs: archs, Source: src, HostArchs: hostArchs,
+			Compatible: rocmarch.Compatible(archs, hostArchs),
+		}, nil
+	}
+}
+
+func TestRunPinRecordsROCmArchsAndValidateChecksThem(t *testing.T) {
+	t.Setenv(rocmarch.SkipEnv, "")
+	srcPath := filepath.Join(t.TempDir(), "libds4.so")
+	if err := os.WriteFile(srcPath, []byte("rocm-lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+	if err := os.Chmod(destDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stubROCmInspect(t, []string{"gfx1151"}, []string{"gfx942"})
+
+	var installOut bytes.Buffer
+	if _, err := Run(context.Background(), Options{
+		Pin: srcPath, Backend: "rocm", GOOS: "linux", GOARCH: "amd64",
+		DestDir: destDir, Out: &installOut,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installOut.String(), "warning:") || !strings.Contains(installOut.String(), "gfx942") {
+		t.Errorf("install did not warn about the arch mismatch: %q", installOut.String())
+	}
+	meta, ok, err := readInstallMetadata(destDir)
+	if err != nil || !ok || !slices.Equal(meta.ROCmArchs, []string{"gfx1151"}) {
+		t.Fatalf("metadata rocm_archs = %v (ok=%v err=%v)", meta.ROCmArchs, ok, err)
+	}
+
+	loaded := false
+	origLoad := loadLibraryFunc
+	t.Cleanup(func() { loadLibraryFunc = origLoad })
+	loadLibraryFunc = func(string) (*ds4api.Library, error) {
+		loaded = true
+		return &ds4api.Library{}, nil
+	}
+	opts := Options{GOOS: "linux", GOARCH: "amd64", DestDir: destDir, Out: io.Discard}
+	var mm *rocmarch.MismatchError
+	if err := Validate(context.Background(), opts); !errors.As(err, &mm) {
+		t.Fatalf("Validate = %v, want *rocmarch.MismatchError", err)
+	}
+	if loaded {
+		t.Fatal("Validate loaded a library built for another GPU")
+	}
+
+	// The metadata list is the fallback when the library itself is silent.
+	stubROCmInspect(t, nil, []string{"gfx1151"})
+	var out bytes.Buffer
+	opts.Out = &out
+	if err := Validate(context.Background(), opts); err != nil {
+		t.Fatalf("Validate on matching host: %v", err)
+	}
+	for _, want := range []string{"✓ Library supports host GPU gfx1151", "[ROCm GPU architectures]", "gfx1151 (install metadata)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("Validate output lacks %q:\n%s", want, out.String())
+		}
 	}
 }

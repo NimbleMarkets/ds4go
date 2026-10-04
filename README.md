@@ -56,6 +56,18 @@ or direct archive. It installs into `$DS4_DIR/lib`, defaulting to `~/.ds4/lib`.
 `--backend auto` selects `metal` on macOS arm64, `cuda` or `rocm` on Linux when detected, and `cpu` elsewhere.
 On a DGX Spark (GB10) the installer picks the `linux-arm64-gb10-cuda` asset, whose sm_121a kernels
 the generic arm64 build lacks; `--variant gb10|sbsa` overrides that detection.
+The ROCm asset is a single fat binary for these AMD GPU architectures:
+
+| Architecture | GPUs | Status |
+| --- | --- | --- |
+| `gfx1151` | Strix Halo | supported |
+| `gfx942` | Instinct MI300X / MI300A / MI325X | supported |
+| `gfx1100`, `gfx1101`, `gfx1102` | Radeon RX 7000 (RDNA3) | experimental |
+| `gfx1200`, `gfx1201` | Radeon RX 9000 (RDNA4) | experimental |
+
+ds4go refuses to load a ROCm library that was not built for the host GPU. For
+any other GPU, see [AMD GPUs (ROCm)](INSTALL.md#amd-gpus-rocm) for how to build
+and pin your own `libds4`.
 Use `ds4go install catalog` to list release assets before choosing a build;
 add `--json` for machine-readable output.
 If the library is already installed and up-to-date, the installer exits successfully

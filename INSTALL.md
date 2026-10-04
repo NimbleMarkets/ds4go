@@ -140,6 +140,7 @@ This file records:
 - The resolved asset name and browser download URL
 - The architecture, operating system, and backend (e.g. `metal`, `cuda`, `cpu`)
 - The library SHA256 checksum and installation timestamp
+- For ROCm builds, the AMD GPU architectures the library was compiled for (`rocm_archs`)
 
 On subsequent installs, the installer checks if the library already exists:
 - **Up-to-Date**: If the same version and backend are already installed and the library checksum matches, the command prints a concise message and exits successfully.
@@ -175,11 +176,72 @@ This command will:
 - Check that the shared library exists and is a regular file.
 - Verify file permissions (making sure it is secure and not group/world-writable).
 - Verify the SHA256 integrity checksum against the sidecar `.sha256` and `ds4go-install.json` files.
+- For a ROCm build, compare the AMD GPU architectures the library was compiled for with the host GPU, before loading it (see [AMD GPUs (ROCm)](#amd-gpus-rocm)).
 - Attempt a dynamic `dlopen` load to resolve all ABI symbols (useful for troubleshooting driver/runtime dependencies like CUDA libraries on Linux or architecture mismatches).
 - Print a short fingerprint (first 8 hex chars of the SHA256) so you can eyeball it against a release's published checksum.
 - Report backend type and installation metadata.
 
 To see which processes are currently holding the library or running engines against installed models, use `ds4go status`.
+
+## AMD GPUs (ROCm)
+
+A ROCm `libds4` contains GPU code only for the architectures it was compiled
+for. On any other AMD GPU it still loads, but the first kernel launch fails
+with `invalid device function`. The release `linux-x86_64-rocm` asset is
+built for:
+
+| Architecture | GPUs | Status |
+| --- | --- | --- |
+| `gfx1151` | Strix Halo (Radeon 8060S, Framework Desktop) | supported, reference system |
+| `gfx942` | Instinct MI300X / MI300A / MI325X | supported, verified with `ds4-eval` |
+| `gfx1100`, `gfx1101`, `gfx1102` | Radeon RX 7900 / 7800 / 7700 / 7600 (RDNA3) | experimental: compiled, not yet verified on hardware |
+| `gfx1200`, `gfx1201` | Radeon RX 9060 / 9070 (RDNA4) | experimental: compiled, not yet verified on hardware |
+
+On wave64 GPUs (Instinct, `gfx9xx`) a few rocWMMA fast paths tuned for RDNA
+are disabled, so prefill there uses the portable kernels.
+
+Find your GPU's architecture with:
+
+```sh
+rocminfo | grep -o -m1 'gfx[0-9a-f]*'
+```
+
+If your architecture is not listed, build `libds4` yourself from
+[NimbleMarkets/ds4](https://github.com/NimbleMarkets/ds4) (branch `nm-shared`)
+and pin it:
+
+```sh
+make shared-rocm ROCM_ARCHS="gfx1030"            # one GPU
+make shared-rocm ROCM_ARCHS="gfx1151 gfx942"     # several, in one fat binary
+ds4go install --pin ./libds4.so --backend rocm
+```
+
+`ROCM_ARCH=gfx1100` (singular) still works for a single architecture.
+
+ds4go reads the compiled list from the library file itself, without loading
+it. A `libds4` built with `ROCM_ARCHS` exports it as the `ds4_rocm_offload_archs`
+symbol. For older libraries, ds4go reads the HIP fat binary bundle instead. The
+installer also records the list as `rocm_archs` in `ds4go-install.json`. The host
+GPU comes from `HSA_OVERRIDE_GFX_VERSION` when that is set, then from `rocminfo`,
+then from `/sys/class/kfd/kfd/topology`. When no host GPU is in the library's
+list, `ds4.Load`, the CLI, and `ds4go validate` stop with an error that names
+both lists and the rebuild command. `ds4go install` prints the same message as
+a warning. The check never blocks when either list is unknown. Set
+`DS4_SKIP_GPU_ARCH_CHECK=1` to bypass it.
+
+**ROCm runtime.** The release asset is built against ROCm 7.2.4 and links
+`libamdhip64.so.7`, `libhipblas.so.3`, `libhipblaslt.so.1`, and `librocblas.so.5`.
+Any ROCm 7.x runtime provides these; ROCm 10.0 ships the same sonames. Your
+installed hipBLASLt and rocBLAS must also support your GPU.
+
+ROCm installs that live under a versioned prefix such as
+`/opt/rocm/core-10.0/lib` are not on the default loader path. Register the
+directory once instead of exporting `LD_LIBRARY_PATH` everywhere:
+
+```sh
+echo /opt/rocm/core-10.0/lib | sudo tee /etc/ld.so.conf.d/rocm-10.conf
+sudo ldconfig
+```
 
 ## Uninstalling
 

@@ -6,6 +6,7 @@
 package ds4
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/install"
 	"github.com/NimbleMarkets/ds4go/internal/models"
+	"github.com/NimbleMarkets/ds4go/internal/rocmarch"
 )
 
 type (
@@ -133,6 +135,10 @@ var (
 // Passing an empty path searches DS4_LIB, DS4_DIR/lib, and executable-local
 // library locations. The current working directory is not searched and a
 // bare name is never handed to the OS loader; see DefaultLibraryPath.
+//
+// For a ROCm build, Load first compares the GPU architectures the library
+// was compiled for with the host's AMD GPUs and returns a *GPUArchError when
+// none matches; see CheckGPUArch.
 func Load(path string) (*ds4api.Library, error) {
 	if path == "" {
 		path = DefaultLibraryPath()
@@ -140,7 +146,30 @@ func Load(path string) (*ds4api.Library, error) {
 	if path == "" {
 		return nil, fmt.Errorf("ds4go: could not find %s; set DS4_LIB or DS4_DIR", libraryFileName())
 	}
+	if err := CheckGPUArch(path); err != nil {
+		return nil, err
+	}
 	return ds4api.Load(path)
+}
+
+// GPUArchError reports that a ROCm libds4 was not compiled for any AMD GPU
+// architecture present on this host. Its message names both lists and the
+// rebuild command.
+type GPUArchError = rocmarch.MismatchError
+
+// CheckGPUArch returns a *GPUArchError when the library at path is a ROCm
+// build and none of the host's AMD GPUs is among the architectures it was
+// compiled for. Without the check, the mismatch only surfaces as an
+// "invalid device function" error on the first kernel launch.
+//
+// The library's list is read from the file itself (the
+// ds4_rocm_offload_archs symbol, else the HIP fat binary), falling back to
+// the rocm_archs field of a ds4go-install.json beside it. Host GPUs come
+// from HSA_OVERRIDE_GFX_VERSION, rocminfo, or the KFD sysfs topology. The
+// check never blocks when either list is unknown, for non-ROCm libraries, or
+// when DS4_SKIP_GPU_ARCH_CHECK is set. The file is only read, never loaded.
+func CheckGPUArch(path string) error {
+	return rocmarch.Check(context.Background(), path, installMetadataROCmArchs(path))
 }
 
 // SetDefaultLibrary makes lib the low-level package default library.
