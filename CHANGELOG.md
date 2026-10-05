@@ -2,6 +2,101 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## v0.9.0 (2026-10-05)
+
+This release tracks libds4 **v0.9.20261005**. Older libraries keep working;
+the `ds4.h` ABI is unchanged for every function ds4go binds, and the new
+upstream entry points are server-side test and routing helpers that ds4go does
+not bind.
+
+The libds4 release improves AMD ROCm support. The `linux-x86_64-rocm` asset is
+now one library built for `gfx1151`, `gfx1100`, `gfx1101`, `gfx1102`,
+`gfx1200`, `gfx1201` and `gfx942`, so it covers Strix Halo, RDNA3, RDNA4 and
+Instinct MI300-class GPUs. `gfx1151` and `gfx942` are verified; the RDNA3 and
+RDNA4 targets are experimental. Instinct (wave64) GPUs now produce correct
+output, and discrete ROCm GPUs can run a full GLM DSA model from VRAM without
+`--ssd-streaming`. The release also fixes GLM 5.3 decoding on Metal and
+improves Metal router accuracy.
+
+A ROCm library built for a different AMD GPU used to load and then fail with
+`invalid device function` on its first kernel. ds4go now reads the library's
+GPU list from the file before it loads the library. It stops with an error that
+names the host GPU and the rebuild command when the host GPU is not in that
+list. `ds4go validate` shows both lists, `ds4go install` warns about a mismatch,
+and `DS4_SKIP_GPU_ARCH_CHECK=1` turns the check off.
+
+ROCm is now its own backend for Go callers. `ds4.BackendROCm` used to be
+`BackendCUDA` under another name, so asking for CUDA could silently run a ROCm
+library, and the reverse. It now has its own value. ds4go still sends libds4
+`DS4_BACKEND_CUDA`, the only value libds4 understands for either GPU flavor.
+Engine open rejects `BackendROCm` on a library that is not a ROCm build.
+
+**Transition policy:** `BackendCUDA` on a ROCm library still opens an engine in
+this release, with a one-time deprecation warning; a future release will reject
+it. ROCm callers should switch to `BackendROCm`. `--rocm` and `--backend rocm`
+already select it, and the CLI picks it automatically for a ROCm library.
+
+The example OpenAI-compatible server accepts `reasoning_effort` as a numeric
+string such as `"50"`, a think level from 0 to 100, for clients that cannot send
+a number. Names such as `"high"` and `"none"` behave as before.
+
+Dependencies are updated: `purego` v0.11.1, `bubbletea` v2.0.10, and newer
+`ultraviolet` and `terminfo`.
+
+<details>
+<summary>Details</summary>
+
+* **Upstream sync (libds4 v0.9.20261005)**: `scripts/check-ds4-sync.sh` reports
+  all 79 mirrored struct fields in sync. Upstream's GLM tool-call replay
+  (inline `<tool_call>` block, no surrounding newlines), the `--inspect`
+  run-lock skip, and the Qwen streaming fixes were already mirrored or do not
+  apply to the library.
+
+* **`ds4api.BackendROCm` (Go value 3)** is translated to the C CUDA value in
+  engine options and context-memory estimates. The raw bindings now take
+  `int32`, so an untranslated `Backend` no longer compiles. `Backend.String()`
+  returns fixed names, and `BackendName(BackendROCm)` is `"rocm"` without a
+  library.
+
+* **`Library.GPUFlavor()`** reports `rocm`, `cuda` or unknown from
+  `ds4_backend_name(DS4_BACKEND_CUDA)`, cached at load.
+  **`Library.CheckBackend`** returns a `*BackendMismatchError` naming the
+  library path and the build to load. Root **`ds4.CheckBackend`** also runs the
+  GPU arch check for ROCm.
+
+* **Detection:** `DetectDefaultBackend` returns `BackendROCm` for `rocm` install
+  metadata and for `/dev/kfd` or `/opt/rocm` hosts, and defers to the loaded
+  default library's flavor. New `DetectLibraryBackend(lib)` does the same for a
+  given library. The CLI loads the library first and uses its flavor when no
+  backend flag is given.
+
+* **Mock:** `MockControls.SetGPUFlavor`, `SetPath` and `LastEstimateBackend`.
+
+* **New `internal/rocmarch` package** (pure Go, no cgo). It reads the
+  `ds4_rocm_offload_archs` symbol libds4 now exports from the ELF file, falling
+  back to the HIP offload-bundle IDs in `.hip_fatbin`. It detects host GPUs from
+  `HSA_OVERRIDE_GFX_VERSION`, `rocminfo`, or the KFD sysfs topology, and it
+  understands LLVM generic targets such as `gfx9-4-generic` and `gfx11-generic`.
+
+* **`ds4.Load` checks the GPU architecture first.** It also exports
+  `CheckGPUArch` and `GPUArchError`. CUDA, Metal, and CPU libraries are not
+  affected. The check passes whenever either list is unknown.
+
+* **`ds4go-install.json` has a new `rocm_archs` field.** The installer and
+  `install --pin` write it, and the loader uses it when the library file does
+  not record its own list.
+
+* **Docs**: INSTALL.md has a new "AMD GPUs (ROCm)" section. It covers the
+  supported architectures, building with `ROCM_ARCHS`, the ROCm runtime
+  sonames, and an `ld.so.conf.d` entry for `/opt/rocm/core-*/lib`.
+
+* **`reasoning_effort` think levels**: the example server falls back to
+  `ds4.ParseThinkLevel` when the effort is not a named level, as ds4-server's
+  `parse_reasoning_effort_value` does. Out-of-range, signed, and non-numeric
+  strings are still rejected.
+
+</details>
+
 ## v0.8.0 (2026-09-23)
 
 Qwen3.8 Flash Next and low or medium reasoning modes require libds4
