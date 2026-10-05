@@ -27,6 +27,8 @@ func realBackend(t *testing.T) Backend {
 		return BackendMetal
 	case "cuda":
 		return BackendCUDA
+	case "rocm":
+		return BackendROCm
 	case "cpu":
 		return BackendCPU
 	}

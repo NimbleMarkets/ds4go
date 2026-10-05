@@ -143,6 +143,56 @@ type MockControls struct {
 	syncCalls       int
 	rewindCalls     int
 	multimodalSyncs int
+	lib             *Library
+	gpuFlavor       GPUFlavor // name the mock gives the CUDA slot; "" = "mock"
+	estimateBackend int32     // C backend value of the last memory estimate
+}
+
+// SetGPUFlavor makes the mock name its DS4_BACKEND_CUDA slot like a CUDA
+// (GPUFlavorCUDA) or ROCm (GPUFlavorROCm) build of libds4, and updates the
+// library's cached GPUFlavor. GPUFlavorUnknown restores the default "mock".
+func (c *MockControls) SetGPUFlavor(f GPUFlavor) {
+	c.mu.Lock()
+	c.gpuFlavor = f
+	c.mu.Unlock()
+	c.lib.cacheGPUFlavor()
+}
+
+func (c *MockControls) backendName(backend int32) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	switch Backend(backend) {
+	case BackendMetal:
+		return "metal"
+	case BackendCPU:
+		return "cpu"
+	case BackendCUDA:
+		if c.gpuFlavor != GPUFlavorUnknown {
+			return string(c.gpuFlavor)
+		}
+		return "mock"
+	}
+	return "unknown"
+}
+
+// SetPath sets the path the mock library reports from Library.Path, so tests
+// can pair it with files such as ds4go-install.json.
+func (c *MockControls) SetPath(path string) {
+	c.lib.path = path
+}
+
+// LastEstimateBackend reports the C ds4_backend value the most recent mock
+// context-memory estimate received, so tests can check ABI translation.
+func (c *MockControls) LastEstimateBackend() int32 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.estimateBackend
+}
+
+func (c *MockControls) recordEstimateBackend(backend int32) {
+	c.mu.Lock()
+	c.estimateBackend = backend
+	c.mu.Unlock()
 }
 
 // SyncCalls reports how many ds4_session_sync calls the mock has served, so
@@ -353,7 +403,7 @@ func NewMockLibrary() *Library {
 func NewMockLibraryWithControls() (*Library, *MockControls) {
 	lib := &Library{path: "mock", handle: 0}
 	r := &lib.raw
-	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}, multimodalFail: -1}
+	ctl := &MockControls{stops: map[int32]bool{}, thinking: map[int32]bool{}, multimodalFail: -1, lib: lib}
 	mockStderr.set(-1)
 	_ = loadCRuntime() // idempotent; cMalloc/cFree below require it.
 
@@ -361,7 +411,7 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r.ds4EngineOpen = mockEngineOpen
 	r.ds4EngineClose = mockEngineClose
 	r.ds4EngineSummary = func(e uintptr) {}
-	r.ds4BackendName = func(backend Backend) string { return "mock" }
+	r.ds4BackendName = func(backend int32) string { return ctl.backendName(backend) }
 	r.ds4ThinkModeEnabled = func(mode ThinkMode) bool { return mockThinkModeEnabled(mode) }
 	r.ds4ThinkModeLevel = func(mode ThinkMode) int32 { return int32(mode.Level()) }
 	r.ds4ThinkModeParseLevel = func(text string, out *ThinkMode) bool {
@@ -390,10 +440,12 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 	r.ds4ThinkMaxPrefix = func() string { return "<think_max>" }
 	r.ds4ThinkMaxMinContext = func() uint32 { return 32768 }
 	r.ds4ThinkModeForContext = func(mode ThinkMode, ctxSize int32) ThinkMode { return mode }
-	r.ds4ContextMemoryEstimate = func(backend Backend, ctxSize int32) cContextMemory {
+	r.ds4ContextMemoryEstimate = func(backend int32, ctxSize int32) cContextMemory {
+		ctl.recordEstimateBackend(backend)
 		return cContextMemory{TotalBytes: 1 << 30}
 	}
-	r.ds4ContextMemoryEstimateWithPrefill = func(backend Backend, ctxSize int32, prefillChunk uint32) cContextMemory {
+	r.ds4ContextMemoryEstimateWithPrefill = func(backend int32, ctxSize int32, prefillChunk uint32) cContextMemory {
+		ctl.recordEstimateBackend(backend)
 		return cContextMemory{TotalBytes: 1 << 30}
 	}
 	r.ds4LogIsTTY = func(fp uintptr) bool { return false }

@@ -71,6 +71,12 @@ to avoid binary planting.
   host's from `HSA_OVERRIDE_GFX_VERSION`/`rocminfo`/KFD sysfs; root `Load` and
   `install.Validate` refuse a mismatch, and never block when either side is
   unknown. Keep this out of `ds4api`.
+- **ROCm backend value**: libds4 has no ROCm enum; ROCm builds serve
+  `DS4_BACKEND_CUDA`. `ds4api.BackendROCm` (3) is Go-only and must cross the ABI
+  through `Backend.abi()`. The raw bindings take `int32` to force that.
+  `Library.CheckBackend` rejects ROCm on a non-ROCm library; `BackendCUDA` on a
+  ROCm library only warns during the transition release. Adopt a real enum value
+  only if upstream adds one.
 - **Model-family MTP Policy**: DeepSeek may use a separate external MTP support
   model. GLM 5.2's optional next-token predictor is embedded in the base GGUF,
   and libds4 rejects an external `mtp_path` for GLM. Root-package and CLI policy

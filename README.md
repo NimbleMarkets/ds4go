@@ -261,18 +261,40 @@ future port, not a working configuration.
 
 ### Side-by-side CUDA and ROCm libraries
 
-CUDA and ROCm are separate `libds4` build flavors, but upstream `ds4.h` uses the
-same backend enum value for both: `DS4_BACKEND_CUDA`. A ROCm-built library
-interprets that value as ROCm and reports `rocm` through `ds4_backend_name()`.
-For that reason, Go code should load distinct shared-library files explicitly
-and create engines from those `Library` handles:
+CUDA and ROCm are separate `libds4` build flavors. Upstream `ds4.h` has no ROCm
+entry: a ROCm build serves `DS4_BACKEND_CUDA` and names it `rocm` through
+`ds4_backend_name()`. ds4go hides that from Go callers.
+
+- `ds4.BackendROCm` is its own Go value, distinct from `ds4.BackendCUDA`.
+  ds4go translates it to `DS4_BACKEND_CUDA` at the ABI boundary (engine options
+  and context-memory estimates). It never sends a value libds4 does not know.
+- `lib.GPUFlavor()` reports what a loaded library serves in that slot:
+  `ds4.GPUFlavorROCm`, `ds4.GPUFlavorCUDA` (not ROCm; Metal and CPU-only builds
+  report this too), or `ds4.GPUFlavorUnknown`. It is read once at load.
+- `lib.NewEngine` rejects `BackendROCm` on a library that is not ROCm. The
+  `*ds4.BackendMismatchError` it returns names the library path and the build to
+  load instead.
+- **Transition:** `BackendCUDA` on a ROCm library still works in this release.
+  It logs a one-time deprecation warning, and a future release will reject it.
+  Code written before `BackendROCm` existed had to pass `BackendCUDA` for ROCm.
+- `ds4.Load` also checks that a ROCm library was compiled for the host's AMD GPU
+  (see [AMD GPUs (ROCm)](INSTALL.md#amd-gpus-rocm)). `ds4.CheckBackend(lib, b)`
+  runs both checks up front, before any model is loaded.
+- `Backend.String()` gives a fixed name (`metal`, `cuda`, `rocm`, `cpu`) without
+  a library. `ds4.DetectLibraryBackend(lib)` picks `BackendROCm` or
+  `BackendCUDA` from what the library actually is. `ds4.DetectDefaultBackend`
+  does the same when that library is the loaded default; otherwise it falls back
+  to install metadata and host probes (`/dev/kfd`, `/opt/rocm` select ROCm).
+
+Load distinct shared-library files explicitly and create engines from those
+`Library` handles:
 
 ```go
 cudaLib, err := ds4.Load("/opt/ds4/cuda/libds4.so")
 if err != nil {
     panic(err)
 }
-rocmLib, err := ds4.Load("/opt/ds4/rocm/libds4.so")
+rocmLib, err := ds4.Load("/opt/ds4/rocm/libds4.so") // fails here if built for another AMD GPU
 if err != nil {
     panic(err)
 }
@@ -288,7 +310,7 @@ defer cudaEngine.Close()
 
 rocmEngine, err := rocmLib.NewEngine(ds4.EngineOptions{
     ModelPath: "/models/ds4flash.gguf",
-    Backend:   ds4.BackendCUDA, // ROCm uses the CUDA ABI backend slot.
+    Backend:   ds4.BackendROCm, // a *ds4.BackendMismatchError if rocmLib is not ROCm
 })
 if err != nil {
     panic(err)
@@ -301,6 +323,13 @@ such as `ds4.NewEngine` use the singleton default library. Keep engines,
 sessions, and token vectors with the library that created them. ds4go currently
 serializes calls into libds4 across the process, so multiple engines can be
 loaded independently but inference is not run concurrently by the Go binding.
+
+In the CLI, `--rocm` / `--backend rocm` select `BackendROCm` and `--cuda` /
+`--backend cuda` select `BackendCUDA`. Without a backend flag, the CLI uses
+whichever flavor the loaded library is.
+
+Tests can fake either flavor with `ds4api.NewMockLibraryWithControls()` and
+`ctl.SetGPUFlavor(ds4api.GPUFlavorROCm)`.
 
 ## Usage
 

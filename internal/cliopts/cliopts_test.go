@@ -28,7 +28,7 @@ func TestSelectBackend_ExplicitFlags(t *testing.T) {
 		{
 			name: "rocm flag",
 			cfg:  EngineFlags{ROCm: true},
-			want: ds4.BackendCUDA,
+			want: ds4.BackendROCm,
 		},
 		{
 			name: "cpu flag",
@@ -48,7 +48,7 @@ func TestSelectBackend_ExplicitFlags(t *testing.T) {
 		{
 			name: "backend rocm",
 			cfg:  EngineFlags{Backend: "rocm"},
-			want: ds4.BackendCUDA,
+			want: ds4.BackendROCm,
 		},
 		{
 			name: "backend cpu case insensitive",
@@ -67,6 +67,9 @@ func TestSelectBackend_ExplicitFlags(t *testing.T) {
 			got := tt.cfg.SelectBackend()
 			if got != tt.want {
 				t.Errorf("SelectBackend() = %v, want %v", got, tt.want)
+			}
+			if !tt.cfg.BackendExplicit() {
+				t.Error("BackendExplicit() = false for an explicit flag")
 			}
 		})
 	}
@@ -102,8 +105,11 @@ func TestSelectBackend_MetadataFile(t *testing.T) {
 	}
 
 	got := cfg.SelectBackend()
-	if got != ds4.BackendCUDA {
-		t.Errorf("expected backend CUDA/ROCm from metadata, got %v", got)
+	if got != ds4.BackendROCm {
+		t.Errorf("expected backend ROCm from metadata, got %v", got)
+	}
+	if cfg.BackendExplicit() {
+		t.Error("metadata detection reported as an explicit backend")
 	}
 }
 
@@ -124,10 +130,10 @@ func TestSelectBackend_FallbackDefaults(t *testing.T) {
 			t.Errorf("expected CPU backend on non-darwin non-linux platform, got %v", got)
 		}
 	} else {
-		// On Linux it could be CUDA or CPU depending on the host '/dev/nvidiactl' etc.
-		// So we just verify it returns a valid backend.
-		if got != ds4.BackendCUDA && got != ds4.BackendCPU {
-			t.Errorf("expected CUDA or CPU on Linux, got %v", got)
+		// On Linux it is CUDA, ROCm, or CPU depending on /dev/nvidiactl,
+		// /dev/kfd, etc. So we just verify it returns a valid backend.
+		if got != ds4.BackendCUDA && got != ds4.BackendROCm && got != ds4.BackendCPU {
+			t.Errorf("expected CUDA, ROCm or CPU on Linux, got %v", got)
 		}
 	}
 }

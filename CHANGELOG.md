@@ -15,9 +15,36 @@ names the host GPU and the rebuild command when the host GPU is not in that
 list. `ds4go validate` shows both lists, `ds4go install` warns about a mismatch,
 and `DS4_SKIP_GPU_ARCH_CHECK=1` turns the check off.
 
+ROCm is now its own backend for Go callers. `ds4.BackendROCm` used to be
+`BackendCUDA` under another name, so asking for CUDA could silently run a ROCm
+library, and the reverse. It now has its own value. ds4go still sends libds4
+`DS4_BACKEND_CUDA`, the only value libds4 understands for either GPU flavor.
+Engine open rejects `BackendROCm` on a library that is not a ROCm build.
+
+**Transition policy:** `BackendCUDA` on a ROCm library still opens an engine in
+this release, with a one-time deprecation warning; a future release will reject
+it. ROCm callers should switch to `BackendROCm`. `--rocm` and `--backend rocm`
+already select it, and the CLI picks it automatically for a ROCm library.
+
 <details>
 <summary>Details</summary>
 
+* **`ds4api.BackendROCm` (Go value 3)** is translated to the C CUDA value in
+  engine options and context-memory estimates. The raw bindings now take
+  `int32`, so an untranslated `Backend` no longer compiles. `Backend.String()`
+  returns fixed names, and `BackendName(BackendROCm)` is `"rocm"` without a
+  library.
+* **`Library.GPUFlavor()`** reports `rocm`, `cuda` or unknown from
+  `ds4_backend_name(DS4_BACKEND_CUDA)`, cached at load.
+  **`Library.CheckBackend`** returns a `*BackendMismatchError` naming the
+  library path and the build to load. Root **`ds4.CheckBackend`** also runs the
+  GPU arch check for ROCm.
+* **Detection:** `DetectDefaultBackend` returns `BackendROCm` for `rocm` install
+  metadata and for `/dev/kfd` or `/opt/rocm` hosts, and defers to the loaded
+  default library's flavor. New `DetectLibraryBackend(lib)` does the same for a
+  given library. The CLI loads the library first and uses its flavor when no
+  backend flag is given.
+* **Mock:** `MockControls.SetGPUFlavor`, `SetPath` and `LastEstimateBackend`.
 * **New `internal/rocmarch` package** (pure Go, no cgo). It reads the
   `ds4_rocm_offload_archs` symbol from the ELF file, falling back to the HIP
   offload-bundle IDs in `.hip_fatbin`. It detects host GPUs from

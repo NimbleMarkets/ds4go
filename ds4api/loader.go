@@ -23,6 +23,9 @@ type Library struct {
 	raw     rawSymbols
 	abortMu sync.Mutex
 	abortID uintptr
+
+	gpuFlavor      GPUFlavor // see GPUFlavor; cached at load
+	cudaOnROCmWarn sync.Once // BackendCUDA-on-ROCm deprecation warning
 }
 
 var (
@@ -58,6 +61,7 @@ func Load(path string) (*Library, error) {
 	if err := lib.register(); err != nil {
 		return nil, err
 	}
+	lib.cacheGPUFlavor()
 	return lib, nil
 }
 

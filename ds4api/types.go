@@ -30,6 +30,11 @@ const (
 	BackendCUDA
 	// BackendCPU selects the CPU reference backend.
 	BackendCPU
+	// BackendROCm selects a ROCm build of libds4. It is a Go-only value:
+	// ds4.h has no ROCm entry, and a ROCm libds4 serves DS4_BACKEND_CUDA, so
+	// ds4api sends BackendCUDA across the ABI and checks the library's
+	// GPUFlavor instead. Never pass its numeric value to C directly.
+	BackendROCm
 )
 
 // ThinkMode controls ds4's rendered chat thinking mode.
@@ -184,7 +189,7 @@ type EngineOptions struct {
 	// VisionPath is the optional vision encoder GGUF for the selected model
 	// (upstream --vision). libds4 requires it to match the language model.
 	VisionPath string
-	// Backend selects Metal, CUDA, or CPU according to the libds4 build.
+	// Backend selects Metal, CUDA, ROCm, or CPU according to the libds4 build.
 	Backend Backend
 	// NThreads controls CPU worker threads when the backend uses them.
 	NThreads int

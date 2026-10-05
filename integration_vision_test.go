@@ -52,6 +52,8 @@ func TestRealLibraryVision(t *testing.T) {
 	switch os.Getenv("DS4_BACKEND") {
 	case "cuda":
 		backend = ds4api.BackendCUDA
+	case "rocm":
+		backend = ds4api.BackendROCm
 	case "cpu":
 		backend = ds4api.BackendCPU
 	}
