@@ -110,6 +110,11 @@ func parseReasoningEffort(raw json.RawMessage) (ds4.ThinkMode, error) {
 	case "none":
 		return ds4.ThinkNone, nil
 	}
+	// Numeric strings are think levels, as ds4-server falls back to
+	// ds4_think_mode_parse_level for clients that cannot send a number.
+	if mode, err := ds4.ParseThinkLevel(name); err == nil {
+		return mode, nil
+	}
 	return 0, fmt.Errorf("unknown reasoning_effort %q", name)
 }
 

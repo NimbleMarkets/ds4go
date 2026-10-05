@@ -214,6 +214,9 @@ func TestThinkModeForRequestMapsReasoningEffort(t *testing.T) {
 		"": serverThinkMode, "null": serverThinkMode,
 		`"max"`: ds4.ThinkMax, `"xhigh"`: ds4.ThinkHigh, `"high"`: ds4.ThinkHigh, `"medium"`: ds4.ThinkMedium,
 		`"low"`: ds4.ThinkLow, `"minimal"`: ds4.ThinkLow, `"none"`: ds4.ThinkNone,
+		// Numeric strings are think levels (upstream ecf7a93), for clients
+		// that can only send reasoning_effort as a string.
+		`"0"`: ds4.ThinkLevel(0), `"50"`: ds4.ThinkLevel(50), `"100"`: ds4.ThinkLevel(100),
 	}
 	for raw, want := range cases {
 		body := `{"messages":[]`
@@ -234,6 +237,12 @@ func TestThinkModeForRequestMapsReasoningEffort(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":"bogus"}`), &req)
 	if _, err := thinkModeForRequest(req); err == nil {
 		t.Error("unknown reasoning_effort accepted")
+	}
+	for _, bad := range []string{`"101"`, `"-1"`, `"5x"`, `""`, `"99999999999999999999"`} {
+		_ = json.Unmarshal([]byte(`{"messages":[],"reasoning_effort":`+bad+`}`), &req)
+		if _, err := thinkModeForRequest(req); err == nil {
+			t.Errorf("reasoning_effort %s accepted", bad)
+		}
 	}
 }
 
