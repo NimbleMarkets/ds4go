@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/NimbleMarkets/ds4go/ds4api"
 	"github.com/NimbleMarkets/ds4go/internal/models"
 )
 
@@ -160,12 +161,52 @@ func installMetadataROCmArchs(libPath string) []string {
 // DetectDefaultBackend probes the environment and installation metadata to determine
 // the preferred backend for the shared library at libPath.
 //
-// Passing an empty string probes using the default library path.
+// Passing an empty string probes using the default library path. When the
+// result is a GPU backend and the process default library is the one at that
+// path, the library's own GPUFlavor decides between BackendCUDA and
+// BackendROCm instead of the host guess; see DetectLibraryBackend.
 func DetectDefaultBackend(libPath string) Backend {
 	resolvedPath := libPath
 	if resolvedPath == "" {
 		resolvedPath = DefaultLibraryPath()
 	}
+	backend := detectBackendGuess(resolvedPath)
+	if lib := ds4api.CurrentDefaultLibrary(); lib != nil && resolvedPath != "" && sameFile(lib.Path(), resolvedPath) {
+		return refineGPUBackend(backend, lib)
+	}
+	return backend
+}
+
+// DetectLibraryBackend returns the preferred backend for a loaded library:
+// the DetectDefaultBackend guess for its path, with a GPU guess replaced by
+// what the library actually serves (BackendROCm for a ROCm build, otherwise
+// BackendCUDA). Metal and CPU guesses are kept.
+func DetectLibraryBackend(lib *ds4api.Library) Backend {
+	return refineGPUBackend(detectBackendGuess(lib.Path()), lib)
+}
+
+func refineGPUBackend(backend Backend, lib *ds4api.Library) Backend {
+	if backend != BackendCUDA && backend != BackendROCm {
+		return backend
+	}
+	if b, ok := lib.GPUFlavor().Backend(); ok {
+		return b
+	}
+	return backend
+}
+
+func sameFile(a, b string) bool {
+	if a == b {
+		return true
+	}
+	sa, errA := os.Stat(a)
+	sb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(sa, sb)
+}
+
+// detectBackendGuess is DetectDefaultBackend without the loaded-library
+// refinement: install metadata beside resolvedPath, then host capabilities.
+func detectBackendGuess(resolvedPath string) Backend {
 	if resolvedPath != "" {
 		dir := filepath.Dir(resolvedPath)
 		metaPath := filepath.Join(dir, "ds4go-install.json")
@@ -180,7 +221,7 @@ func DetectDefaultBackend(libPath string) Backend {
 				case "cuda":
 					return BackendCUDA
 				case "rocm":
-					return BackendCUDA
+					return BackendROCm
 				case "cpu":
 					return BackendCPU
 				}
@@ -202,10 +243,10 @@ func DetectDefaultBackend(libPath string) Backend {
 			return BackendCUDA
 		}
 		if _, err := os.Stat("/dev/kfd"); err == nil {
-			return BackendCUDA
+			return BackendROCm
 		}
 		if _, err := os.Stat("/opt/rocm"); err == nil {
-			return BackendCUDA
+			return BackendROCm
 		}
 		return BackendCPU
 	}

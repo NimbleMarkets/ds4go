@@ -57,7 +57,7 @@ type cEngineOptions struct {
 	ModelPath                    unsafe.Pointer
 	MTPPath                      unsafe.Pointer
 	VisionPath                   unsafe.Pointer
-	Backend                      Backend
+	Backend                      int32 // C ds4_backend; see Backend.abi
 	NThreads                     int32
 	ContextSize                  int32
 	PrefillChunk                 uint32
@@ -147,14 +147,14 @@ type rawSymbols struct {
 	ds4EngineVocabSize                         func(e uintptr) int32
 	ds4EngineModelName                         func(e uintptr) string
 	ds4EngineModelID                           func(e uintptr) int32
-	ds4BackendName                             func(backend Backend) string
+	ds4BackendName                             func(backend int32) string
 	ds4ThinkModeEnabled                        func(mode ThinkMode) bool
 	ds4ThinkModeName                           func(mode ThinkMode) string
 	ds4ThinkMaxPrefix                          func() string
 	ds4ThinkMaxMinContext                      func() uint32
 	ds4ThinkModeForContext                     func(mode ThinkMode, ctxSize int32) ThinkMode
-	ds4ContextMemoryEstimate                   func(backend Backend, ctxSize int32) cContextMemory
-	ds4ContextMemoryEstimateWithPrefill        func(backend Backend, ctxSize int32, prefillChunk uint32) cContextMemory
+	ds4ContextMemoryEstimate                   func(backend int32, ctxSize int32) cContextMemory
+	ds4ContextMemoryEstimateWithPrefill        func(backend int32, ctxSize int32, prefillChunk uint32) cContextMemory
 	ds4LogIsTTY                                func(fp uintptr) bool
 	ds4LogString                               func(fp uintptr, typ LogType, format string)
 	ds4SetStderrFd                             func(fd int32)

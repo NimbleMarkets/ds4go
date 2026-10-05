@@ -86,17 +86,19 @@ func run(cfg *cliopts.CLIConfig) error {
 		// main would exit 1.
 		os.Exit(cliopts.ReportUsage(os.Stderr, "ds4", err))
 	}
-	var engine *ds4.Engine
-	if cfg.Lib != "" {
-		lib, lerr := ds4.Load(cfg.Lib)
-		if lerr != nil {
-			return lerr
-		}
-		ds4.SetDefaultLibrary(lib)
-		engine, err = lib.NewEngine(opts)
-	} else {
-		engine, err = ds4.NewEngine(opts)
+	// Load first (an empty --lib uses the default search path) so an
+	// auto-detected backend can follow what the library actually serves:
+	// a ROCm build gets BackendROCm. cfg.EngineOptions already applied the
+	// MTP policy that ds4.NewEngine would.
+	lib, err := ds4.Load(cfg.Lib)
+	if err != nil {
+		return err
 	}
+	ds4.SetDefaultLibrary(lib)
+	if !cfg.BackendExplicit() {
+		opts.Backend = ds4.DetectLibraryBackend(lib)
+	}
+	engine, err := lib.NewEngine(opts)
 	if err != nil {
 		return ds4.EnrichEngineOpenError(err)
 	}

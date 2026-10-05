@@ -35,6 +35,10 @@ type (
 	TokenScore = ds4api.TokenScore
 	// Backend selects the accelerator implementation compiled into libds4.
 	Backend = ds4api.Backend
+	// GPUFlavor names what a libds4 build serves behind DS4_BACKEND_CUDA.
+	GPUFlavor = ds4api.GPUFlavor
+	// BackendMismatchError reports a CUDA/ROCm request the library cannot serve.
+	BackendMismatchError = ds4api.BackendMismatchError
 	// ThinkMode controls ds4's rendered chat thinking mode.
 	ThinkMode = ds4api.ThinkMode
 	// SessionRewriteResult is returned by session rewrite helpers.
@@ -67,10 +71,19 @@ const (
 	BackendMetal = ds4api.BackendMetal
 	// BackendCUDA selects the CUDA backend.
 	BackendCUDA = ds4api.BackendCUDA
-	// BackendROCm selects ROCm builds, which use the CUDA ABI backend slot.
-	BackendROCm = ds4api.BackendCUDA
+	// BackendROCm selects a ROCm build of libds4. It is a Go-only value that
+	// crosses the ABI as DS4_BACKEND_CUDA, which ROCm builds serve; engine
+	// open rejects it on a library that is not ROCm.
+	BackendROCm = ds4api.BackendROCm
 	// BackendCPU selects the CPU reference backend.
 	BackendCPU = ds4api.BackendCPU
+
+	// GPUFlavorUnknown means the library's GPU slot name was not recognized.
+	GPUFlavorUnknown = ds4api.GPUFlavorUnknown
+	// GPUFlavorCUDA means the library is not a ROCm build.
+	GPUFlavorCUDA = ds4api.GPUFlavorCUDA
+	// GPUFlavorROCm means the library is a ROCm build.
+	GPUFlavorROCm = ds4api.GPUFlavorROCm
 
 	// ThinkNone disables thinking markers in chat prompts.
 	ThinkNone = ds4api.ThinkNone
@@ -150,6 +163,25 @@ func Load(path string) (*ds4api.Library, error) {
 		return nil, err
 	}
 	return ds4api.Load(path)
+}
+
+// CheckBackend reports whether lib can serve backend before any model is
+// loaded. BackendROCm on a library that is not ROCm returns a
+// *BackendMismatchError; BackendCUDA on a ROCm library is still accepted for
+// one transition release with a deprecation warning (see
+// ds4api.Library.CheckBackend). For a ROCm library it also runs
+// CheckGPUArch, so a ROCm request gets both the flavor and the GPU
+// architecture check. Library.NewEngine repeats the flavor check, and Load
+// the architecture check; this is the early, combined form for callers that
+// want to fail before opening an engine.
+func CheckBackend(lib *ds4api.Library, backend Backend) error {
+	if err := lib.CheckBackend(backend); err != nil {
+		return err
+	}
+	if backend == BackendROCm || lib.GPUFlavor() == GPUFlavorROCm {
+		return CheckGPUArch(lib.Path())
+	}
+	return nil
 }
 
 // GPUArchError reports that a ROCm libds4 was not compiled for any AMD GPU

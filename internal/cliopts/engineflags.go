@@ -187,25 +187,45 @@ func (c *EngineFlags) engineOptions() (ds4.EngineOptions, error) {
 }
 
 // SelectBackend resolves the backend from --metal/--cuda/--rocm/--cpu/--backend,
-// falling back to metadata detection or host capabilities.
+// falling back to metadata detection or host capabilities. --rocm selects
+// ds4.BackendROCm, which engine open rejects on a library that is not ROCm.
 func (c *EngineFlags) SelectBackend() ds4.Backend {
+	if b, ok := c.explicitBackend(); ok {
+		return b
+	}
+	return ds4.DetectDefaultBackend(c.Lib)
+}
+
+// BackendExplicit reports whether a flag chose the backend. When it did not,
+// callers holding the loaded library should prefer
+// ds4.DetectLibraryBackend over the SelectBackend guess.
+func (c *EngineFlags) BackendExplicit() bool {
+	_, ok := c.explicitBackend()
+	return ok
+}
+
+func (c *EngineFlags) explicitBackend() (ds4.Backend, bool) {
 	switch {
 	case c.CPU:
-		return ds4.BackendCPU
-	case c.CUDA, c.ROCm:
-		return ds4.BackendCUDA
+		return ds4.BackendCPU, true
+	case c.CUDA:
+		return ds4.BackendCUDA, true
+	case c.ROCm:
+		return ds4.BackendROCm, true
 	case c.Metal:
-		return ds4.BackendMetal
+		return ds4.BackendMetal, true
 	}
 	switch strings.ToLower(c.Backend) {
 	case "cpu":
-		return ds4.BackendCPU
-	case "cuda", "rocm":
-		return ds4.BackendCUDA
+		return ds4.BackendCPU, true
+	case "cuda":
+		return ds4.BackendCUDA, true
+	case "rocm":
+		return ds4.BackendROCm, true
 	case "metal":
-		return ds4.BackendMetal
+		return ds4.BackendMetal, true
 	}
-	return ds4.DetectDefaultBackend(c.Lib)
+	return 0, false
 }
 
 // dsparkEnabled mirrors upstream ds4_cli.c: --dspark-confidence and

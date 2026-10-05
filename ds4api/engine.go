@@ -29,6 +29,9 @@ func NewEngine(opts EngineOptions) (*Engine, error) {
 // NewEngine opens a ds4 engine using this shared library. Any installed
 // EngineOpenGuard runs first; its release is held for the engine lifetime.
 func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
+	if err := l.CheckBackend(opts.Backend); err != nil {
+		return nil, err
+	}
 	var release func()
 	if guard := currentEngineOpenGuard(); guard != nil {
 		var err error
@@ -52,7 +55,7 @@ func (l *Library) NewEngine(opts EngineOptions) (*Engine, error) {
 		ModelPath:                 modelPtr,
 		MTPPath:                   mtpPtr,
 		VisionPath:                visionPtr,
-		Backend:                   opts.Backend,
+		Backend:                   opts.Backend.abi(),
 		NThreads:                  int32(opts.NThreads),
 		ContextSize:               int32(opts.ContextSize),
 		PrefillChunk:              opts.PrefillChunk,
@@ -193,13 +196,19 @@ func (e *Engine) Summary() error {
 	return nil
 }
 
-// BackendName returns ds4's printable name for backend.
+// BackendName returns ds4's printable name for backend, as the default
+// library reports it: a ROCm build names BackendCUDA "rocm". BackendROCm is
+// a Go-only value and is always "rocm", with no library needed. Use
+// [Backend.String] for a fixed name that never consults a library.
 func BackendName(backend Backend) string {
+	if backend == BackendROCm {
+		return "rocm"
+	}
 	lib, err := DefaultLibrary()
 	if err != nil {
 		return ""
 	}
-	return lib.raw.ds4BackendName(backend)
+	return lib.raw.ds4BackendName(backend.abi())
 }
 
 // ThinkModeEnabled reports whether mode emits thinking markers, asking the
@@ -272,7 +281,7 @@ func ContextMemoryEstimate(backend Backend, ctxSize int) ContextMemory {
 	if err != nil {
 		return ContextMemory{}
 	}
-	cm := lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	cm := lib.raw.ds4ContextMemoryEstimate(backend.abi(), int32(ctxSize))
 	return ContextMemory{
 		TotalBytes:      cm.TotalBytes,
 		RawBytes:        cm.RawBytes,
@@ -293,9 +302,9 @@ func ContextMemoryEstimateWithPrefill(backend Backend, ctxSize int, prefillChunk
 	}
 	var cm cContextMemory
 	if lib.raw.ds4ContextMemoryEstimateWithPrefill != nil {
-		cm = lib.raw.ds4ContextMemoryEstimateWithPrefill(backend, int32(ctxSize), prefillChunk)
+		cm = lib.raw.ds4ContextMemoryEstimateWithPrefill(backend.abi(), int32(ctxSize), prefillChunk)
 	} else {
-		cm = lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+		cm = lib.raw.ds4ContextMemoryEstimate(backend.abi(), int32(ctxSize))
 	}
 	return ContextMemory{
 		TotalBytes:      cm.TotalBytes,
@@ -1021,7 +1030,7 @@ func (e *Engine) ContextMemoryEstimate(backend Backend, ctxSize int) ContextMemo
 	if e == nil || e.ptr == 0 {
 		return ContextMemory{}
 	}
-	cm := e.lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+	cm := e.lib.raw.ds4ContextMemoryEstimate(backend.abi(), int32(ctxSize))
 	return ContextMemory{
 		TotalBytes:      cm.TotalBytes,
 		RawBytes:        cm.RawBytes,
@@ -1043,9 +1052,9 @@ func (e *Engine) ContextMemoryEstimateWithPrefill(backend Backend, ctxSize int, 
 	}
 	var cm cContextMemory
 	if e.lib.raw.ds4ContextMemoryEstimateWithPrefill != nil {
-		cm = e.lib.raw.ds4ContextMemoryEstimateWithPrefill(backend, int32(ctxSize), prefillChunk)
+		cm = e.lib.raw.ds4ContextMemoryEstimateWithPrefill(backend.abi(), int32(ctxSize), prefillChunk)
 	} else {
-		cm = e.lib.raw.ds4ContextMemoryEstimate(backend, int32(ctxSize))
+		cm = e.lib.raw.ds4ContextMemoryEstimate(backend.abi(), int32(ctxSize))
 	}
 	return ContextMemory{
 		TotalBytes:      cm.TotalBytes,
