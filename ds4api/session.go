@@ -580,8 +580,12 @@ func (s *Session) Invalidate() {
 // GLM (5.3 only when pos is its MTP rollback point): on DeepSeek the
 // compressor frontier cannot be truncated, so Argmax and Sample return -1,
 // Eval fails with "decode requires a synchronized checkpoint", and
-// CommonPrefix returns 0 until the retained prefix is synced again. Use
-// RewindSynced unless you re-sync yourself.
+// CommonPrefix returns 0 until the retained prefix is synced again. Since
+// upstream fc80bd6, a GPU build first tries a cheap restore when pos lies
+// inside the most recent DSpark verifier block (ds4_session_rewind_speculative);
+// when that succeeds the checkpoint stays valid and no re-sync is needed. Use
+// RewindSynced unless you re-sync yourself: it only rebuilds when the fast
+// path did not apply.
 func (s *Session) Rewind(pos int) {
 	if s == nil {
 		return

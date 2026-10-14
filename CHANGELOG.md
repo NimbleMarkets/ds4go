@@ -2,6 +2,15 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+* **Upstream sync (nm-shared 597874f, libds4 v0.9.20261005 + 10)**:
+  `scripts/check-ds4-sync.sh` reports all 79 mirrored struct fields in sync. The
+  new header entries are TP-worker and test internals that ds4go does not bind,
+  plus the stderr/abort hooks already bound. `Session.Rewind` now benefits from
+  upstream's DSpark boundary fast restore automatically: `RewindSynced` only
+  rebuilds when the checkpoint was actually lost. Godoc updated; no code change.
+
 ## v0.9.0 (2026-10-05)
 
 Matches libds4 **v0.9.20261005**. Older libraries keep working.
