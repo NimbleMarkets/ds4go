@@ -4,6 +4,27 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* **Upstream sync (nm-shared ac82f40)**: `scripts/check-ds4-sync.sh` reports
+  all 79 mirrored struct fields in sync; the only header change is a
+  `DS4_TEST_HOOKS` verify helper that ds4go does not bind.
+  * **DeepSeek V4.1 DSpark**: upstream now runs V4.1 speculative decoding
+    from a separate V4.1 support GGUF (`--dspark --mtp FILE`) on Metal, CUDA
+    and ROCm. ds4go no longer strips `--mtp` / `MTPPath` for V4.1 catalog
+    models: the CLI flag sets keep an explicit path and drop only the
+    installed V4 Flash drafter that `--mtp` defaults to, and root
+    `ApplyMTPDefaults` / `NewEngine` keep an explicit path and never fill in
+    the default, since libds4 rejects the V4 drafter for V4.1 ("support model
+    and target checkpoint families differ"). There is no published download
+    for the V4.1 drafter (upstream converts it), so no catalog entry pins it.
+  * **V4.1 Q2 1017 checkpoint**: new catalog entry `v41-q2-1017` for
+    upstream's refreshed default `DeepSeek-V4.1-Flash-1017-IQ2_XXS-Q2_K-imatrix.gguf`
+    (same 340.6 GiB, new hash). The V4.1 Q2 aliases now both carry their
+    checkpoint date: the original `DeepSeek-V4.1-Flash-Q2.gguf` is
+    `v41-q2-0912` (**renamed from `v41-q2`**; the installed file is still
+    recognized, but scripts and a saved `defaultModel` that name `v41-q2`
+    must switch to the dated alias).
+  * **ROCm runs V4.1 text** with SSD streaming; catalog and README text
+    updated.
 * **Upstream sync (nm-shared 597874f, libds4 v0.9.20261005 + 10)**:
   `scripts/check-ds4-sync.sh` reports all 79 mirrored struct fields in sync. The
   new header entries are TP-worker and test internals that ds4go does not bind,

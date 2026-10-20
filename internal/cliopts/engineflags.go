@@ -136,10 +136,15 @@ func (c *EngineFlags) engineOptions() (ds4.EngineOptions, error) {
 	model, ok := models.ModelForPath(c.Model)
 	mtpPath := c.MTP
 	switch {
-	case ok && (model.GLM || model.DeepSeek41 || model.Qwen):
+	case ok && (model.GLM || model.Qwen):
 		// libds4 rejects an external --mtp support model for GLM and Qwen3.8:
-		// their next-token predictors are embedded in the base GGUF. DSpark
-		// and external MTP are not implemented for V4.1 either.
+		// their next-token predictors are embedded in the base GGUF.
+		mtpPath = ""
+	case ok && model.DeepSeek41 && mtpPath == models.DefaultMTPPath():
+		// V4.1 takes its own DSpark support GGUF through --mtp, but libds4
+		// rejects the installed V4 Flash drafter --mtp defaults to ("support
+		// model and target checkpoint families differ"), so drop that
+		// default and keep any other path.
 		mtpPath = ""
 	case ok && model.DSpark != "":
 		// This checkpoint pins its own DSpark drafter; libds4 rejects every

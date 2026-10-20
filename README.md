@@ -161,9 +161,14 @@ seconds-based fields.
 after another, checking the combined size against free space before the
 first byte moves.
 
-DeepSeek V4.1 Flash (`v41-q2`, `v41-q4`, encoder `v41-vision`) is a separate
-model family: Metal upstream, with text inference on CUDA; no DSpark or
-external MTP; and thinking as a numeric reasoning effort. `--think-level 25` (or `/think 25` in chat) sets
+DeepSeek V4.1 Flash (`v41-q2-0912`, `v41-q2-1017`, `v41-q4`, encoder `v41-vision`) is a separate
+model family: Metal upstream, with text inference on CUDA and ROCm; its own
+DSpark drafter (a separate V4.1 support GGUF built with upstream's conversion
+tools, passed as `--mtp` with `--dspark`; the V4 Flash drafter is rejected,
+so `--mtp` has no default for V4.1); and thinking as a numeric reasoning
+effort. Q2 aliases carry their checkpoint date: `v41-q2-1017` is upstream's
+refreshed Q2 (its current `ds41f-q2`), `v41-q2-0912` the original file
+(formerly `v41-q2`). `--think-level 25` (or `/think 25` in chat) sets
 1 to 100, 0 disables thinking, `--think` is 75 and `--think-max` 100. Q2 runs
 on one 128 GB Mac with `--ssd-streaming`; Q4 is published in two parts that
 `model download` fetches, joins, and verifies (allow 37 GiB extra while

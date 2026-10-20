@@ -79,57 +79,53 @@ func TestApplyMTPDefaultsSuppressesExternalMTPForGLM(t *testing.T) {
 	}
 }
 
-// DeepSeek V4.1 has no external MTP or DSpark support, so the root policy
-// suppresses an external MTP path for it as the CLI does, whether the model
-// is named by its catalog file or through the active-model hard link.
-func TestApplyMTPDefaultsSuppressesExternalMTPForDeepSeek41(t *testing.T) {
-	v41, ok := models.Lookup("v41-q2")
-	if !ok {
-		t.Fatal("missing v41-q2 catalog entry")
+// DeepSeek V4.1 takes its own DSpark drafter through MTPPath, but libds4
+// rejects the V4 Flash drafter for it ("families differ"), so the root policy
+// keeps an explicit path and never fills in the installed default, whether
+// the model is named by its catalog file or through the active-model hard link.
+func TestApplyMTPDefaultsKeepsExplicitMTPForDeepSeek41(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	opts := EngineOptions{ModelPath: v41.FileName, MTPPath: "/models/deepseek-mtp.gguf"}
-	ApplyMTPDefaults(&opts)
-	if opts.MTPPath != "" {
-		t.Errorf("MTPPath = %q, want empty for V4.1", opts.MTPPath)
+	mtp, _ := models.Lookup(models.MTPAlias)
+	if err := os.WriteFile(filepath.Join(modelsDir, mtp.FileName), []byte("fake-mtp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if DefaultMTPPath() == "" {
+		t.Fatal("DefaultMTPPath() = empty, want the installed drafter")
 	}
 
-	dir := t.TempDir()
-	file := filepath.Join(dir, v41.FileName)
+	v41, ok := models.Lookup("v41-q2-0912")
+	if !ok {
+		t.Fatal("missing v41-q2-0912 catalog entry")
+	}
+	file := filepath.Join(modelsDir, v41.FileName)
 	if err := os.WriteFile(file, []byte("gguf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(dir, models.DefaultModelSymlink)
+	link := filepath.Join(modelsDir, models.DefaultModelSymlink)
 	if err := os.Link(file, link); err != nil {
 		t.Fatal(err)
 	}
-	opts = EngineOptions{ModelPath: link, MTPPath: "/models/deepseek-mtp.gguf"}
-	ApplyMTPDefaults(&opts)
-	if opts.MTPPath != "" {
-		t.Errorf("MTPPath via hard link = %q, want empty for V4.1", opts.MTPPath)
-	}
-	// NewEngine applies the same family policy before opening.
-	for _, path := range []string{v41.FileName, link} {
-		if !externalMTPUnsupported(path) {
-			t.Errorf("externalMTPUnsupported(%q) = false, want true", path)
+	const drafter = "/models/DeepSeek-V4.1-Flash-DSpark.gguf"
+	for _, path := range []string{file, link} {
+		opts := EngineOptions{ModelPath: path}
+		ApplyMTPDefaults(&opts)
+		if opts.MTPPath != "" {
+			t.Errorf("ApplyMTPDefaults(%q).MTPPath = %q, want no default drafter for V4.1", path, opts.MTPPath)
 		}
-	}
-	q2, _ := models.Lookup("q2-imatrix")
-	if externalMTPUnsupported(q2.FileName) {
-		t.Errorf("externalMTPUnsupported(%q) = true for a DeepSeek V4 model", q2.FileName)
-	}
-	// Qwen3.8's MTP is built in and enabled with --mtp, like GLM's; there is
-	// no external support model to pass.
-	qwen, ok := models.Lookup("qwen38-q2")
-	if !ok {
-		t.Fatal("missing qwen38-q2 catalog entry")
-	}
-	if !externalMTPUnsupported(qwen.FileName) {
-		t.Errorf("externalMTPUnsupported(%q) = false, want true for Qwen3.8", qwen.FileName)
-	}
-	opts = EngineOptions{ModelPath: qwen.FileName, MTPPath: "/models/deepseek-mtp.gguf"}
-	ApplyMTPDefaults(&opts)
-	if opts.MTPPath != "" {
-		t.Errorf("MTPPath = %q, want empty for Qwen3.8", opts.MTPPath)
+		opts = EngineOptions{ModelPath: path, MTPPath: drafter}
+		ApplyMTPDefaults(&opts)
+		if opts.MTPPath != drafter {
+			t.Errorf("ApplyMTPDefaults(%q).MTPPath = %q, want the explicit %q", path, opts.MTPPath, drafter)
+		}
+		// NewEngine passes an explicit V4.1 drafter through unchanged.
+		if externalMTPUnsupported(path) {
+			t.Errorf("externalMTPUnsupported(%q) = true, want false", path)
+		}
 	}
 }
 

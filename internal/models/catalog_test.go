@@ -382,10 +382,11 @@ func TestCuratedDeepSeek41AndFP8Models(t *testing.T) {
 		optional            bool
 		parts               []part
 	}{
-		"v41-q2":     {"DeepSeek-V4.1-Flash-Q2.gguf", ds41Repo, "v41-vision", 340.6, "1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42", true, false, true, false, nil},
-		"v41-q4":     {"DeepSeek-V4.1-Flash-Q4.gguf", ds41Repo, "v41-vision", 483.0, "a5e2e2c3ada4b2e98d9f9e4b50f6d9c2a12c2c96f5da165c07e13aff9264984e", true, false, true, false, []part{{"DeepSeek-V4.1-Flash-Q4.gguf.part1", 447.0, 480000000000, "6442b1f9224079662c02003c0ef9ef6be6e2aff509510f681dab9e6cc41df246"}, {"DeepSeek-V4.1-Flash-Q4.gguf.part2", 35.9, 38596067328, "7c3e10646c918eeaffbc39305a75ec96117450262c61454ff194cef00d7617f0"}}},
-		"v41-vision": {"DeepSeek-V4.1-Flash-Vision.gguf", ds41Repo, "", 0.9, "cc283f032b3e8b8d78aeb5fccaa14e97b859b0c53aae3cd6bffa690ddf0e9e15", true, false, false, true, nil},
-		"glm53-fp8":  {"GLM-5.3-Flash-FP8.gguf", glm53FlashRepo, "glm53-vision", 304.7, "59275e79a5246835226230616b3865fb599c661f242c38316b1cf82869bd14c9", false, true, true, false, nil},
+		"v41-q2-0912": {"DeepSeek-V4.1-Flash-Q2.gguf", ds41Repo, "v41-vision", 340.6, "1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42", true, false, true, false, nil},
+		"v41-q2-1017": {"DeepSeek-V4.1-Flash-1017-IQ2_XXS-Q2_K-imatrix.gguf", ds41Repo, "v41-vision", 340.6, "5296e85ff64b42ecb62c8d0c0c54e1caa07e3df8e93112f2365ebbaed62ce93a", true, false, true, false, nil},
+		"v41-q4":      {"DeepSeek-V4.1-Flash-Q4.gguf", ds41Repo, "v41-vision", 483.0, "a5e2e2c3ada4b2e98d9f9e4b50f6d9c2a12c2c96f5da165c07e13aff9264984e", true, false, true, false, []part{{"DeepSeek-V4.1-Flash-Q4.gguf.part1", 447.0, 480000000000, "6442b1f9224079662c02003c0ef9ef6be6e2aff509510f681dab9e6cc41df246"}, {"DeepSeek-V4.1-Flash-Q4.gguf.part2", 35.9, 38596067328, "7c3e10646c918eeaffbc39305a75ec96117450262c61454ff194cef00d7617f0"}}},
+		"v41-vision":  {"DeepSeek-V4.1-Flash-Vision.gguf", ds41Repo, "", 0.9, "cc283f032b3e8b8d78aeb5fccaa14e97b859b0c53aae3cd6bffa690ddf0e9e15", true, false, false, true, nil},
+		"glm53-fp8":   {"GLM-5.3-Flash-FP8.gguf", glm53FlashRepo, "glm53-vision", 304.7, "59275e79a5246835226230616b3865fb599c661f242c38316b1cf82869bd14c9", false, true, true, false, nil},
 	}
 	found := map[string]bool{}
 	for _, m := range Curated() {
@@ -399,7 +400,7 @@ func TestCuratedDeepSeek41AndFP8Models(t *testing.T) {
 			t.Errorf("%s = %+v, want %+v", m.Alias, m, w)
 		}
 		if m.DSpark != "" {
-			t.Errorf("%s pins DSpark %q; DSpark is not implemented for V4.1", m.Alias, m.DSpark)
+			t.Errorf("%s pins DSpark %q; the V4.1 drafter has no published download", m.Alias, m.DSpark)
 		}
 		if len(m.Parts) != len(w.parts) {
 			t.Errorf("%s has %d parts, want %d", m.Alias, len(m.Parts), len(w.parts))
@@ -441,7 +442,8 @@ func TestCuratedFamilies(t *testing.T) {
 		"vision-q2":              "deepseek-flash-vision",
 		"vision-q2-q4":           "deepseek-flash-vision",
 		"vision-mxfp4":           "deepseek-flash-vision",
-		"v41-q2":                 "deepseek-v4.1-flash",
+		"v41-q2-0912":            "deepseek-v4.1-flash",
+		"v41-q2-1017":            "deepseek-v4.1-flash",
 		"v41-q4":                 "deepseek-v4.1-flash",
 		"qwen38-q2":              "qwen3.8-flash-next",
 		"qwen38-q4k":             "qwen3.8-flash-next",

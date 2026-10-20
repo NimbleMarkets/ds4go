@@ -1,6 +1,8 @@
 package cliopts
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/NimbleMarkets/ds4go"
@@ -176,11 +178,11 @@ func TestThinkLevelAndMTPModelFlags(t *testing.T) {
 	}
 }
 
-// DSpark and external MTP are not implemented for V4.1, so a V4.1 catalog
-// model drops --mtp the way GLM does.
-func TestEngineOptionsSuppressExternalMTPForDeepSeek41(t *testing.T) {
+// Qwen3.8's predictor is embedded in the base GGUF, so a Qwen catalog model
+// drops --mtp the way GLM does.
+func TestEngineOptionsSuppressExternalMTPForQwen(t *testing.T) {
 	const mtp = "/models/deepseek-mtp.gguf"
-	for _, alias := range []string{"v41-q2", "qwen38-q2", "qwen38-q4k"} {
+	for _, alias := range []string{"qwen38-q2", "qwen38-q4k"} {
 		model, ok := models.Lookup(alias)
 		if !ok {
 			t.Fatalf("missing %s catalog entry", alias)
@@ -192,6 +194,44 @@ func TestEngineOptionsSuppressExternalMTPForDeepSeek41(t *testing.T) {
 		}
 		if got := mustEngineOptions(t, &server).MTPPath; got != "" {
 			t.Errorf("%s: server MTPPath = %q, want suppressed", alias, got)
+		}
+	}
+}
+
+// V4.1 takes its own DSpark drafter through --mtp, but libds4 rejects the
+// installed V4 Flash drafter that --mtp defaults to ("families differ"), so
+// only that default is dropped for a V4.1 catalog model.
+func TestEngineOptionsKeepExplicitMTPForDeepSeek41(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DS4_DIR", dir)
+	modelsDir := filepath.Join(dir, "models")
+	if err := os.MkdirAll(modelsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mtp, _ := models.Lookup(models.MTPAlias)
+	if err := os.WriteFile(filepath.Join(modelsDir, mtp.FileName), []byte("fake-mtp"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	def := models.DefaultMTPPath()
+	if def == "" {
+		t.Fatal("DefaultMTPPath() = empty, want the installed drafter")
+	}
+	v41, ok := models.Lookup("v41-q2-0912")
+	if !ok {
+		t.Fatal("missing v41-q2-0912 catalog entry")
+	}
+	const drafter = "/models/DeepSeek-V4.1-Flash-DSpark.gguf"
+	for _, tc := range []struct{ mtp, want string }{
+		{def, ""},
+		{drafter, drafter},
+	} {
+		cli := CLIConfig{EngineFlags: EngineFlags{Model: v41.FileName, MTP: tc.mtp}}
+		server := ServerConfig{EngineFlags: EngineFlags{Model: v41.FileName, MTP: tc.mtp}}
+		if got := mustEngineOptions(t, &cli).MTPPath; got != tc.want {
+			t.Errorf("--mtp %q: CLI MTPPath = %q, want %q", tc.mtp, got, tc.want)
+		}
+		if got := mustEngineOptions(t, &server).MTPPath; got != tc.want {
+			t.Errorf("--mtp %q: server MTPPath = %q, want %q", tc.mtp, got, tc.want)
 		}
 	}
 }
