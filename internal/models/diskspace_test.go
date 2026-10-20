@@ -174,6 +174,7 @@ func TestAvailableBytesRejectsMissingPath(t *testing.T) {
 // volume it would live on is what matters, so the lookup must walk up to the
 // nearest existing ancestor rather than reporting "no such file or directory".
 func TestAvailableBytesForMissingDirUsesExistingAncestor(t *testing.T) {
+	withAvailableBytes(t, availableBytes) // TestMain stubs it; this test needs the real volume
 	root := t.TempDir()
 	missing := filepath.Join(root, "models", "nested", "deeper")
 

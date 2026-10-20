@@ -43,6 +43,13 @@ working.
 * **ROCm runs V4.1 text** with SSD streaming; catalog `RecommendedRAM` and
   README text updated.
 
+* **Tests**: the `internal/models` download tests no longer depend on the
+  machine's real free space. The free-space check sizes a download from the
+  catalog when the mock server sends no `X-Linked-Size`, so on a CI runner
+  with a small `/tmp` two of them failed with "not enough free space"; a
+  package `TestMain` now stubs the check, and the one test of the real
+  syscall walk-up restores it.
+
 * **Upstream sync (nm-shared 597874f, libds4 v0.9.20261005 + 10)**:
   `scripts/check-ds4-sync.sh` reports all 79 mirrored struct fields in sync. The
   new header entries are TP-worker and test internals that ds4go does not bind,
