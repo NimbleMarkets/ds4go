@@ -45,7 +45,7 @@ func TestPublicModelCatalogFreshInstall(t *testing.T) {
 		"vision-q2":     "deepseek-flash-vision",
 		"glm53-q2":      "glm-5.3-flash",
 		"glm53-full-q2": "glm-5.3",
-		"v41-q2":        "deepseek-v4.1-flash",
+		"v41-q2-0912":   "deepseek-v4.1-flash",
 	} {
 		if got := entries[alias].Family; got != want {
 			t.Errorf("%s: Family = %q, want %q", alias, got, want)

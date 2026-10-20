@@ -264,12 +264,22 @@ func DiscardLogs() error {
 // externalMTPUnsupported reports whether the catalog model at modelPath
 // (by file name, or through the active-model link) is a family that takes
 // no external MTP support model: libds4 rejects one for GLM and Qwen3.8,
-// whose predictors are embedded in the base GGUF, and DeepSeek V4.1 has no
-// MTP or DSpark support. This is the CLI's --mtp policy applied at the root
-// API.
+// whose predictors are embedded in the base GGUF. This is the CLI's --mtp
+// policy applied at the root API. DeepSeek V4.1 is not such a family: it
+// takes its own DSpark drafter through MTPPath (see ApplyMTPDefaults).
 func externalMTPUnsupported(modelPath string) bool {
 	model, ok := models.ModelForPath(modelPath)
-	return ok && (model.GLM || model.DeepSeek41 || model.Qwen)
+	return ok && (model.GLM || model.Qwen)
+}
+
+// noDefaultMTP reports whether the catalog model at modelPath must never
+// fall back to the installed default MTP model: DeepSeek V4.1 needs its own
+// DSpark support GGUF, and libds4 refuses the V4 Flash drafter for it
+// ("support model and target checkpoint families differ"). An explicit
+// MTPPath is kept.
+func noDefaultMTP(modelPath string) bool {
+	model, ok := models.ModelForPath(modelPath)
+	return ok && model.DeepSeek41
 }
 
 // NewEngine loads the default libds4 shared library and opens a ds4 engine.
@@ -310,11 +320,12 @@ func defaultCallbackLibrary(load bool) (*ds4api.Library, error) {
 // ApplyMTPDefaults populates MTPPath, MTPDraftTokens, and MTPMargin with
 // sensible defaults when an MTP model is installed. GLM models suppress the
 // external MTP path because their optional predictor is embedded in the base
-// GGUF, Qwen3.8 for the same reason, and DeepSeek V4.1 models because they
-// have no MTP support. A model that pins its own DSpark drafter (see DSparkSupportPath) gets
-// that drafter or none at all, never the standard MTP model. For other model
-// families, only empty or zero fields are filled, so explicit caller settings
-// are respected.
+// GGUF, and Qwen3.8 for the same reason. DeepSeek V4.1 models keep an
+// explicit MTPPath (their own DSpark support GGUF) but never receive the
+// installed default, which libds4 rejects for them. A model that pins its
+// own DSpark drafter (see DSparkSupportPath) gets that drafter or none at
+// all, never the standard MTP model. For other model families, only empty or
+// zero fields are filled, so explicit caller settings are respected.
 func ApplyMTPDefaults(opts *EngineOptions) {
 	if opts == nil {
 		return
@@ -330,7 +341,7 @@ func ApplyMTPDefaults(opts *EngineOptions) {
 		if opts.MTPPath == "" {
 			opts.MTPPath = path
 		}
-	} else if opts.MTPPath == "" {
+	} else if opts.MTPPath == "" && !noDefaultMTP(opts.ModelPath) {
 		opts.MTPPath = DefaultMTPPath()
 	}
 	if opts.MTPPath != "" && opts.MTPDraftTokens <= 0 {

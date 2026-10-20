@@ -43,9 +43,10 @@ type Model struct {
 	// DSpark is the catalog alias of the DSpark support model this checkpoint
 	// requires, when it is not the default one (Vision-Exp has its own).
 	DSpark string `json:"dspark,omitempty"`
-	// DeepSeek41 marks a DeepSeek V4.1 Flash checkpoint: Metal, or CUDA for
-	// text, upstream; no DSpark or external MTP; thinking as an effort level
-	// (--think-level).
+	// DeepSeek41 marks a DeepSeek V4.1 Flash checkpoint: Metal, or CUDA and
+	// ROCm for text, upstream; its own DSpark drafter (a separate V4.1 support
+	// GGUF with no published download; the V4 Flash drafter is rejected);
+	// thinking as an effort level (--think-level).
 	DeepSeek41 bool `json:"deepseek41,omitempty"`
 	// Qwen marks a Qwen3.8 Flash Next file (checkpoint or its encoder): a
 	// ChatML template with the reasoning effort in the system turn, an XML
@@ -328,18 +329,18 @@ var curated = []Model{
 		Notes:          "DSpark drafter for the Vision-Exp checkpoints only; the 0731 drafter is rejected",
 	},
 	{
-		Alias:          "v41-q2",
+		Alias:          "v41-q2-0912",
 		Family:         "deepseek-v4.1-flash",
 		FileName:       "DeepSeek-V4.1-Flash-Q2.gguf",
 		Repo:           ds41Repo,
 		SizeGB:         340.6,
-		RecommendedRAM: "128 GB + SSD streaming; Metal, or CUDA for text",
+		RecommendedRAM: "128 GB + SSD streaming; Metal, or CUDA/ROCm for text",
 		SHA256:         "1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42",
 		DeepSeek41:     true,
 		Vision:         true,
 		Encoder:        "v41-vision",
 		Imatrix:        true,
-		Notes:          "DeepSeek V4.1 Flash q2 (152 GiB main weights + 189 GiB on-disk Engram tables); one 128 GB Mac with --ssd-streaming, or two over RDMA; keep it on a fast local SSD",
+		Notes:          "original (September 12) DeepSeek V4.1 Flash q2 (152 GiB main weights + 189 GiB on-disk Engram tables); one 128 GB Mac with --ssd-streaming, or two over RDMA; keep it on a fast local SSD",
 	},
 	{
 		Alias:          "v41-q4",
@@ -347,7 +348,7 @@ var curated = []Model{
 		FileName:       "DeepSeek-V4.1-Flash-Q4.gguf",
 		Repo:           ds41Repo,
 		SizeGB:         483.0,
-		RecommendedRAM: ">=512 GB, or SSD streaming; Metal, or CUDA for text",
+		RecommendedRAM: ">=512 GB, or SSD streaming; Metal, or CUDA/ROCm for text",
 		SHA256:         "a5e2e2c3ada4b2e98d9f9e4b50f6d9c2a12c2c96f5da165c07e13aff9264984e",
 		DeepSeek41:     true,
 		Vision:         true,
@@ -470,6 +471,20 @@ var curated = []Model{
 		RecommendedRAM: ">=192 GB",
 		SHA256:         "0e3a161b670f686128ec5f92a601dfde616a37bf5e7e48999fa2d32471b57ec6",
 		Notes:          "MXFP4 experts; Metal has exact fast paths for this format",
+	},
+	{
+		Alias:          "v41-q2-1017",
+		Family:         "deepseek-v4.1-flash",
+		FileName:       "DeepSeek-V4.1-Flash-1017-IQ2_XXS-Q2_K-imatrix.gguf",
+		Repo:           ds41Repo,
+		SizeGB:         340.6,
+		RecommendedRAM: "128 GB + SSD streaming; Metal, or CUDA/ROCm for text",
+		SHA256:         "5296e85ff64b42ecb62c8d0c0c54e1caa07e3df8e93112f2365ebbaed62ce93a",
+		DeepSeek41:     true,
+		Vision:         true,
+		Encoder:        "v41-vision",
+		Imatrix:        true,
+		Notes:          "refreshed 1017 DeepSeek V4.1 Flash q2 imatrix (upstream's current ds41f-q2); same footprint as v41-q2-0912",
 	},
 	{
 		Alias:          "pro-q2-imatrix-0813",

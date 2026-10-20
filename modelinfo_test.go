@@ -102,7 +102,7 @@ func TestListModelsCarriesQwenTrait(t *testing.T) {
 			if !m.Qwen {
 				t.Errorf("%s: Qwen = false, want true", m.Alias)
 			}
-		case "glm53-q2", "q2-imatrix", "v41-q2":
+		case "glm53-q2", "q2-imatrix", "v41-q2-0912":
 			if m.Qwen {
 				t.Errorf("%s: Qwen = true, want false", m.Alias)
 			}
