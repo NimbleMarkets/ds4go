@@ -23,6 +23,9 @@ func splitPartBase(name string) string {
 // the parts after the first are appended onto the first, so they exist
 // twice until removed. Upstream documents this as "allow another 37 GiB".
 func splitJoinScratchBytes(model Model) int64 {
+	if model.MergeGGUF {
+		return model.MergedBytes
+	}
 	var n int64
 	for _, part := range model.Parts[1:] {
 		n += part.Bytes
@@ -184,4 +187,13 @@ func appendFile(dst, src string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// splitDownloadBytes includes the temporary space needed during assembly.
+func splitDownloadBytes(model Model) int64 {
+	total := splitJoinScratchBytes(model)
+	for _, part := range model.Parts {
+		total += part.Bytes
+	}
+	return total
 }

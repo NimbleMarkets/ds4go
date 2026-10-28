@@ -204,6 +204,9 @@ func (m *Manager) Download(ctx context.Context, alias, token string, force bool)
 		return Model{}, err
 	}
 	out := filepath.Join(m.ModelsDir, model.FileName)
+	if model.MergeGGUF {
+		return m.downloadGGUFShards(ctx, model, token, force)
+	}
 	if len(model.Parts) > 0 {
 		return m.downloadSplit(ctx, model, token, force)
 	}
@@ -359,6 +362,10 @@ func (m *Manager) checkCombinedDiskSpace(models []Model) error {
 		}
 		total := int64(model.SizeGB * (1 << 30))
 		_, have := m.partial(model)
+		if model.MergeGGUF {
+			total = splitDownloadBytes(model)
+			have = m.ggufDownloadedBytes(model)
+		}
 		if total > have {
 			remaining += total - have
 		}
@@ -428,7 +435,12 @@ func (m *Manager) DownloadDryRun(ctx context.Context, alias, token string) (Mode
 	if model.SizeGB > 0 {
 		total = int64(model.SizeGB * (1 << 30))
 	}
-	if meta, err := m.remoteMetadata(ctx, url, token); err != nil {
+	if len(model.Parts) > 0 {
+		total = splitDownloadBytes(model)
+		if model.MergeGGUF {
+			fmt.Fprintln(m.Out, "  Merge:       GGUF shards; restores 16 KiB alignment and retains inputs")
+		}
+	} else if meta, err := m.remoteMetadata(ctx, url, token); err != nil {
 		fmt.Fprintf(m.Out, "  Remote:      metadata unavailable (%v)\n", err)
 	} else {
 		if meta.Size > 0 {
@@ -440,6 +452,9 @@ func (m *Manager) DownloadDryRun(ctx context.Context, alias, token string) (Mode
 		}
 	}
 	_, have := m.partial(model)
+	if model.MergeGGUF {
+		have = m.ggufDownloadedBytes(model)
+	}
 	fmt.Fprintf(m.Out, "  Disk space:  %s\n", m.diskSpaceReport(m.ModelsDir, total, have))
 	return model, nil
 }

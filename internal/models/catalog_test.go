@@ -445,6 +445,7 @@ func TestCuratedFamilies(t *testing.T) {
 		"v41-q2-0912":            "deepseek-v4.1-flash",
 		"v41-q2-1017":            "deepseek-v4.1-flash",
 		"v41-q4":                 "deepseek-v4.1-flash",
+		"v41-mxfp4-1017":         "deepseek-v4.1-flash",
 		"qwen38-q2":              "qwen3.8-flash-next",
 		"qwen38-q4k":             "qwen3.8-flash-next",
 	}

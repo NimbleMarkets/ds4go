@@ -2,6 +2,16 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+* Add `v41-mxfp4-1017` for DeepSeek V4.1 Flash 1017 MXFP4 experts.
+  The pure-Go downloader verifies nine standard GGUF shards and merges them
+  with 16 KiB alignment, preserving metadata and checking the final checksum.
+  Downloads and interrupted merges resume; shards are retained (about 935 GiB
+  peak disk space). Existing raw split-file downloads keep their byte-join path.
+* Upstream sync at nm-shared `262d8ab`: no header or ABI changes; CUDA SSD
+  prefill improvements are supplied by the updated library.
+
 ## v0.10.0 (2026-10-20)
 
 Matches libds4 **v0.10.20261020** (nm-shared ac82f40). Older libraries keep

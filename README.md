@@ -161,7 +161,7 @@ seconds-based fields.
 after another, checking the combined size against free space before the
 first byte moves.
 
-DeepSeek V4.1 Flash (`v41-q2-0912`, `v41-q2-1017`, `v41-q4`, encoder `v41-vision`) is a separate
+DeepSeek V4.1 Flash (`v41-q2-0912`, `v41-q2-1017`, `v41-q4`, `v41-mxfp4-1017`, encoder `v41-vision`) is a separate
 model family: Metal upstream, with text inference on CUDA and ROCm; its own
 DSpark drafter (a separate V4.1 support GGUF built with upstream's conversion
 tools, passed as `--mtp` with `--dspark`; the V4 Flash drafter is rejected,
@@ -175,6 +175,13 @@ on one 128 GB Mac with `--ssd-streaming`; Q4 is published in two parts that
 joining). GLM 5.3 Flash FP8 is `glm53-fp8`. V4.1 speaks a spaced DSML
 dialect for tool calls; `ToolSyntax` picks it automatically, so tool loops
 need no changes.
+
+The V4.1 MXFP4 checkpoint can be installed with
+`ds4go model download v41-mxfp4-1017`. Its nine GGUF shards are verified and
+merged into a single file with 16 KiB tensor alignment. Downloads and merging
+can resume; source shards are retained. Allow about **935 GiB** for shards plus
+the merged model. `ds4go model download v41-mxfp4-1017 --dry-run` shows the
+sources and disk budget before downloading.
 
 Qwen3.8 Flash Next (`qwen38-q2`, `qwen38-q4k`, encoder `qwen38-vision`) runs
 on Metal and CUDA. Each GGUF holds the main weights, the built-in MTP, and a

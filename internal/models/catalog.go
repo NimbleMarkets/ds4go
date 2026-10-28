@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ModelPart is one published piece of a split GGUF (see Model.Parts).
+// ModelPart is one published piece or standard GGUF shard (see Model.Parts).
 type ModelPart struct {
 	FileName string  `json:"fileName"`
 	SizeGB   float64 `json:"sizeGB"`
@@ -56,11 +56,15 @@ type Model struct {
 	// Parts lists the pieces a GGUF is published as when Hugging Face's single
 	// file limit splits it. The downloader fetches each part, joins them into
 	// FileName, and verifies the joined file against SHA256.
-	Parts       []ModelPart `json:"parts,omitempty"`
-	Imatrix     bool        `json:"imatrix"`
-	Legacy      bool        `json:"legacy"`
-	Optional    bool        `json:"optional"`
-	Distributed bool        `json:"distributed"`
+	Parts []ModelPart `json:"parts,omitempty"`
+	// MergeGGUF selects standard GGUF shard merging instead of byte concatenation.
+	MergeGGUF bool `json:"mergeGGUF,omitempty"`
+	// MergedBytes is the exact output size required for a GGUF shard merge.
+	MergedBytes int64 `json:"mergedBytes,omitempty"`
+	Imatrix     bool  `json:"imatrix"`
+	Legacy      bool  `json:"legacy"`
+	Optional    bool  `json:"optional"`
+	Distributed bool  `json:"distributed"`
 	// DistributedRole and LayerRange describe a distributed split half. LayerRange
 	// is in upstream ds4 --layers form (e.g. "0:30", "31:output"); DistributedRole
 	// is "coordinator" or "worker". Both empty for non-distributed models.
@@ -360,6 +364,33 @@ var curated = []Model{
 		},
 		Notes: "DeepSeek V4.1 Flash q4 (294 GiB main weights); published in two parts that are joined after download, allow 37 GiB extra while joining",
 	},
+	{
+		Alias:          "v41-mxfp4-1017",
+		Family:         "deepseek-v4.1-flash",
+		FileName:       "DeepSeek-V4.1-Flash-1017-MXFP4-experts.gguf",
+		Repo:           ds41Repo,
+		SizeGB:         467.2,
+		RecommendedRAM: "128 GB + SSD streaming; Metal, or CUDA/ROCm for text",
+		SHA256:         "79608a69cd5bb919d8140c37105edc3a33419692d4e6caf4e68c901e4b359141",
+		DeepSeek41:     true,
+		Vision:         true,
+		Encoder:        "v41-vision",
+		MergeGGUF:      true,
+		MergedBytes:    501609136128,
+		Notes:          "1017 MXFP4 experts; merges nine GGUF shards with 16 KiB alignment; retains shards, allow about 935 GiB disk space",
+		Parts: []ModelPart{
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00001-of-00009.gguf", Bytes: 49353784544, SizeGB: 45.964294, SHA256: "636918b09de6253bf41af29f06aac3ceeda220e46379d8a2058ef92c4e433ed8"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00002-of-00009.gguf", Bytes: 49412635712, SizeGB: 46.019103, SHA256: "b26d3fc1e6ae1be6c52665542f3c1fee6a33791478f26e6cd90b5a75940a9f96"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00003-of-00009.gguf", Bytes: 49582960352, SizeGB: 46.177730, SHA256: "20c7fe7adb0578336d8a5e5f9eed521aeb88e8c119ba46e0916cdaab28931c80"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00004-of-00009.gguf", Bytes: 49418206432, SizeGB: 46.024291, SHA256: "67592ba15870c4292a615666adcc2736b53cc345b2cccb1c36710a0a6caf15b4"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00005-of-00009.gguf", Bytes: 49412829632, SizeGB: 46.019284, SHA256: "ecd04e0aa71bfab8cfe79ea7fef7f35b6be0b6772455139e2081d6ce1dcc18ed"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00006-of-00009.gguf", Bytes: 49257603776, SizeGB: 45.874718, SHA256: "88214e0cc80fbae578b80c114527e6ce725199684e0b6849475c7d00b3d0f54c"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00007-of-00009.gguf", Bytes: 2406482112, SizeGB: 2.241211, SHA256: "38939faf3e4258f3ae333f0fa1954ce89515b75ceee90d37bf4ebe5fafe285e6"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00008-of-00009.gguf", Bytes: 101377628544, SizeGB: 94.415274, SHA256: "a9d1634da2ac57459a64b10b69ddedfadda7dcde0e71ca6e55bea7c293c4a9f0"},
+			{FileName: "DeepSeek-V4.1-Flash-1017-MXFP4-experts-00009-of-00009.gguf", Bytes: 101380404256, SizeGB: 94.417859, SHA256: "b9832b355288c005da6ef444d02424464dd27f6ebdefeadbec2244264eb65285"},
+		},
+	},
+
 	{
 		Alias:          "v41-vision",
 		FileName:       "DeepSeek-V4.1-Flash-Vision.gguf",

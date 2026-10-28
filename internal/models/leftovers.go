@@ -47,8 +47,12 @@ func (m *Manager) Leftovers() ([]Leftover, error) {
 		return nil, err
 	}
 	byFile := map[string]string{}
+	partOwner := map[string]string{}
 	for _, model := range Curated() {
 		byFile[model.FileName] = model.Alias
+		for _, part := range model.Parts {
+			partOwner[part.FileName] = model.FileName
+		}
 	}
 	var out []Leftover
 	for _, entry := range entries {
@@ -59,6 +63,8 @@ func (m *Manager) Leftovers() ([]Leftover, error) {
 		var kind LeftoverKind
 		var base string
 		switch {
+		case partOwner[name] != "":
+			kind, base = LeftoverPartial, partOwner[name]
 		case strings.HasSuffix(name, ".part"):
 			kind, base = LeftoverPartial, splitPartBase(strings.TrimSuffix(name, ".part"))
 		case strings.HasSuffix(name, ".assembling"):
@@ -71,6 +77,9 @@ func (m *Manager) Leftovers() ([]Leftover, error) {
 			kind, base = LeftoverQuarantined, name[:strings.Index(name, ".bad-")]
 		default:
 			continue
+		}
+		if owner := partOwner[base]; owner != "" {
+			base = owner
 		}
 		info, err := entry.Info()
 		if err != nil {
@@ -103,6 +112,11 @@ func (m *Manager) RemoveLeftovers(items []Leftover) ([]Leftover, error) {
 		lockPath := item.Path
 		if item.Kind == LeftoverPartial {
 			lockPath = splitPartBase(strings.TrimSuffix(strings.TrimSuffix(item.Path, ".part"), ".assembling")) + ".lock"
+		}
+		if item.Kind == LeftoverPartial && item.Alias != "" {
+			if model, ok := lookup(item.Alias); ok {
+				lockPath = filepath.Join(m.ModelsDir, model.FileName+".lock")
+			}
 		}
 		if item.Kind != LeftoverQuarantined {
 			lock, err := TryLock(lockPath)
