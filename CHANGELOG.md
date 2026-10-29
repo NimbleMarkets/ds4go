@@ -2,7 +2,10 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
-## Unreleased
+## v0.11.0 (2026-10-29)
+
+Matches libds4 **v0.10.20261029** (nm-shared 262d8ab). Older libraries keep
+working.
 
 * Add `v41-mxfp4-1017` for DeepSeek V4.1 Flash 1017 MXFP4 experts.
   The pure-Go downloader verifies nine standard GGUF shards and merges them
