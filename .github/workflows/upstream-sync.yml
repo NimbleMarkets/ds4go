@@ -1,0 +1,26 @@
+name: Upstream ABI
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read pinned libds4 revision
+        id: upstream
+        run: echo "revision=$(cat .github/ds4-revision)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: NimbleMarkets/ds4
+          ref: ${{ steps.upstream.outputs.revision }}
+          path: upstream-ds4
+      - name: Check header layouts and required symbols
+        env:
+          DS4_SRC: upstream-ds4
+          DS4_SYNC_STRICT: "1"
+        run: ./scripts/check-ds4-sync.sh

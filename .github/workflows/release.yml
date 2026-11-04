@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  # Guard: ensure the tagged commit builds and vets cleanly before releasing.
+  # Verify both modules and the pinned upstream ABI before releasing.
   check:
     name: Build and verify
     runs-on: ubuntu-latest
@@ -18,15 +18,26 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: go mod tidy && git diff --exit-code go.mod go.sum
-      - run: go build ./...
-      - run: go vet ./...
+      - name: Verify Go modules are tidy
+        run: |
+          go mod tidy
+          go -C cmd mod tidy
+          git diff --exit-code -- go.mod go.sum cmd/go.mod cmd/go.sum go.work.sum
+      - name: Build without CGO
+        run: CGO_ENABLED=0 go build ./... ./cmd/...
+      - name: Vet
+        run: go vet ./... ./cmd/...
+      - name: Test with race detector
+        run: go test ./... ./cmd/... -race
+
+  upstream-sync:
+    uses: ./.github/workflows/upstream-sync.yml
 
   # Build cross-platform archives, publish the GitHub Release, and update the
   # Homebrew cask in NimbleMarkets/homebrew-tap.
   release:
     name: Release
-    needs: check
+    needs: [check, upstream-sync]
     runs-on: ubuntu-latest
     permissions:
       contents: write
