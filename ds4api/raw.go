@@ -138,7 +138,14 @@ type cVisionSpan struct {
 	Embedding  cVisionEmbedding
 }
 
+// cDecodeItem mirrors ds4_decode_item on supported 64-bit platforms.
+type cDecodeItem struct {
+	Session uintptr
+	Token   int32
+}
+
 type rawSymbols struct {
+	ds4SessionsEvalBatch                       func(items unsafe.Pointer, count int32, err unsafe.Pointer, errLen uintptr) int32
 	ds4EngineOpen                              func(out *uintptr, opt *cEngineOptions) int32
 	ds4EngineClose                             func(e uintptr)
 	ds4EngineSummary                           func(e uintptr)

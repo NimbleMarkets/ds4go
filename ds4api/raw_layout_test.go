@@ -159,3 +159,11 @@ func TestVisionStructsLayoutMatchC(t *testing.T) {
 		{"embedding", unsafe.Offsetof(s.Embedding), 8},
 	})
 }
+
+func TestDecodeItemLayout(t *testing.T) {
+	var item cDecodeItem
+	checkOffsets(t, "ds4_decode_item", unsafe.Sizeof(item), 16, []fieldOffset{
+		{"session", unsafe.Offsetof(item.Session), 0},
+		{"token", unsafe.Offsetof(item.Token), 8},
+	})
+}

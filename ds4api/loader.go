@@ -344,6 +344,9 @@ func (l *Library) register() (err error) {
 	mustRegister(&r.ds4SessionTokenLogprob, "ds4_session_token_logprob")
 	mustRegister(&r.ds4SessionCopyLogits, "ds4_session_copy_logits")
 	mustRegister(&r.ds4SessionEval, "ds4_session_eval")
+	if _, err := purego.Dlsym(l.handle, "ds4_sessions_eval_batch"); err == nil {
+		mustRegister(&r.ds4SessionsEvalBatch, "ds4_sessions_eval_batch")
+	}
 	mustRegister(&r.ds4SessionEvalSpeculativeArgmax, "ds4_session_eval_speculative_argmax")
 	// Sampled speculative decoding arrived with upstream's exact stochastic
 	// DSpark work; older libds4 builds only have the argmax entry point.

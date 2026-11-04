@@ -25,6 +25,8 @@ type (
 	Engine = ds4api.Engine
 	// Session wraps a ds4_session.
 	Session = ds4api.Session
+	// DecodeItem advances an independent session in Engine.EvalBatch.
+	DecodeItem = ds4api.DecodeItem
 	// Tokens owns a ds4_tokens value allocated by libds4.
 	Tokens = ds4api.Tokens
 	// EngineOptions configures ds4_engine_open.
