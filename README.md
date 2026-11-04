@@ -407,9 +407,13 @@ go run ./cmd/ds4go prompt --model ./ds4flash.gguf -p "Explain Redis streams in o
 go run ./cmd/ds4go prompt --model ./ds4flash.gguf
 ```
 
-`cmd/ds4go prompt` and the examples accept the **same arguments as the upstream `ds4` C programs**, parsed with [`pflag`](https://github.com/spf13/pflag) so options take the `--option` form. `cmd/ds4go prompt`, `examples/simple`, and `examples/chat` mirror the `ds4` CLI (`ds4_cli.c`); `examples/openai-compatible` mirrors `ds4-server` (`ds4_server.c`). Run any of them with `--help` for the full list.
+`cmd/ds4go prompt` and the examples share upstream-style model and runtime
+flags, parsed with [`pflag`](https://github.com/spf13/pflag). The HTTP server
+implements a subset of upstream serving behavior; see the [server guide](docs/SERVER.md)
+for supported requests and remaining limitations. Run each command with `--help`
+for its flags.
 
-The only addition with no C equivalent is `--lib`, which points at the `libds4` shared library the pure-Go wrapper loads at runtime. When empty, ds4go searches `DS4_LIB`, `$DS4_DIR/lib` (or `~/.ds4/lib`), and executable-local paths; it never hands a bare name to the OS loader, whose search includes the working directory on macOS and Windows.
+The Go-specific `--lib` option points at the `libds4` shared library the pure-Go wrapper loads at runtime. When empty, ds4go searches `DS4_LIB`, `$DS4_DIR/lib` (or `~/.ds4/lib`), and executable-local paths; it never hands a bare name to the OS loader, whose search includes the working directory on macOS and Windows.
 
 ```text
 $ ds4go help cheat
@@ -486,7 +490,8 @@ The `toolloop` example registers a Go `add` tool and exercises model-native
 tool-call parsing (DeepSeek DSML or GLM `<tool_call>` markup), tool dispatch,
 tool-result rendering, and replay. Use `--mock` for a no-model smoke test. The
 HTTP implementation is shared by `ds4go serve` and the OpenAI-compatible
-example. It exposes model discovery and four inference endpoints:
+example. The new `serve` command is unreleased; build the current checkout as
+described in the [server guide](docs/SERVER.md). It exposes model discovery and four inference endpoints:
 
 | Endpoint | Request/response protocol |
 | --- | --- |
@@ -514,7 +519,7 @@ single-session mode retains the existing MTP/DSpark generation path. Requests
 waiting for a slot can be cancelled, and cancelled/failed sessions are discarded.
 
 ```sh
-curl http://127.0.0.1:8000/v1/chat/completions \
+curl -N http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"qwen3.8-flash-next-chat","messages":[{"role":"user","content":"Hello"}],"temperature":0,"max_tokens":64,"stream":true}'
 ```
@@ -536,7 +541,7 @@ through `chat_template_kwargs.enable_thinking`; `-reasoner` keeps thinking on
 unless the request disables it. Assistant `reasoning_content` is returned and
 preserved when the client sends it back in conversation history.
 
-The response schema matches upstream, with `owned_by: "ds4go"` and
+The model metadata schema follows upstream, with `owned_by: "ds4go"` and
 `supported_parameters` restricted to this server's implemented request fields.
 Sampling controls include `temperature`, `top_k`, `top_p`, `min_p`, and `seed`.
 An explicit zero is preserved, including seed zero; omitted seeds are randomized.

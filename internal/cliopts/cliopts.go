@@ -237,7 +237,7 @@ type ServerConfig struct {
 	// `ds4` CLI.
 	EngineFlags
 
-	// Tokens is the default max output tokens when the client omits a limit.
+	// Tokens is the default and maximum output tokens per request (also limited by context).
 	Tokens int
 
 	// HTTP API.
@@ -249,7 +249,7 @@ type ServerConfig struct {
 	Chdir          string
 	BatchedSession int
 
-	// Disk KV cache.
+	// Retained upstream disk KV flags; the Go server does not implement caching.
 	KVDiskDir                      string
 	KVDiskSpaceMB                  int
 	KVCacheMinTokens               int
@@ -273,18 +273,18 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 		threads:     "CPU helper threads for lightweight host-side work",
 		warmWeights: "touch mapped tensor pages before serving",
 	})
-	fs.IntVarP(&c.Tokens, "tokens", "n", 393216, "default max output tokens when the client omits a limit")
+	fs.IntVarP(&c.Tokens, "tokens", "n", 393216, "default and maximum output tokens per request (also limited by context)")
 
 	// HTTP API.
 	fs.StringVar(&c.Host, "host", "127.0.0.1", "bind address")
 	fs.IntVar(&c.Port, "port", 8000, "bind port")
 	fs.StringVar(&c.Chdir, "chdir", "", "change working directory before loading runtime assets")
-	fs.IntVar(&c.BatchedSession, "batched-session", 0, "keep N resident sessions and batch decode-ready requests")
+	fs.IntVar(&c.BatchedSession, "batched-session", 0, "keep N resident sessions for ordinary batched decode (0: single session, supports speculation)")
 	fs.BoolVar(&c.CORS, "cors", false, "add Access-Control-Allow-* headers for browser JS clients")
-	fs.StringVar(&c.Trace, "trace", "", "write a human-readable session trace to FILE")
+	fs.StringVar(&c.Trace, "trace", "", "upstream trace file option (unsupported by the Go server)")
 
-	// Disk KV cache.
-	fs.StringVar(&c.KVDiskDir, "kv-disk-dir", "", "enable disk KV checkpoints in DIR (created if needed)")
+	// Retained upstream disk KV flags; the Go server does not implement caching.
+	fs.StringVar(&c.KVDiskDir, "kv-disk-dir", "", "upstream disk KV directory (unsupported by the Go server)")
 	fs.IntVar(&c.KVDiskSpaceMB, "kv-disk-space-mb", 4096, "disk budget in MB for checkpoint files")
 	fs.IntVar(&c.KVCacheMinTokens, "kv-cache-min-tokens", 512, "do not save or load checkpoints shorter than N tokens")
 	fs.IntVar(&c.KVCacheColdMaxTokens, "kv-cache-cold-max-tokens", 30000, "cold first prompts in [min,N] are saved automatically (0 disables)")

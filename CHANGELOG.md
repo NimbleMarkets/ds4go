@@ -14,15 +14,17 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
   sequential fallback for older libraries. The ABI check now covers 81 fields
   across six structures. `--batched-session N` bounds resident sessions, batches
   ready decoders, and chunks text prefill; failed/cancelled sessions are discarded.
-
-* Add model discovery to the OpenAI-compatible example: `/v1/models` and
+* Add model discovery to `ds4go serve` and the OpenAI-compatible example: `/v1/models` and
   `/v1/models/{id}` report loaded-engine modalities and limits with upstream
   compatibility aliases. Advertise only implemented request parameters.
 * Honor chat/no-think model aliases, round-trip assistant `reasoning_content`,
   and raise the HTTP image limit to upstream's 256 images per request.
-
+* Document server setup, supported request controls, replay, and remaining parity
+  gaps. Disk KV caching, trace files, stateful/background Responses, hosted tools,
+  forced tool choices, and batched speculation are not implemented.
 * Sync validation targets nm-shared `495e39a` (release tag pending). The public
-  header is unchanged from `262d8ab`: all 79 mirrored fields remain in sync.
+  header is unchanged from `262d8ab`; the expanded binding checks all 81
+  mirrored fields, including the two newly bound batch-decode fields.
   Updated libds4 supplies Qwen Metal SSD expert streaming and predictor/checkpoint
   improvements, V4.1 performance and DSpark improvements, and image-decoding fixes.
 * Re-sync Qwen after rewind before sampling: a retained token checkpoint can

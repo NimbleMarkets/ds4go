@@ -2,32 +2,29 @@
 
 Planned work, tracked at a high level.
 
-## Porting tools from ds4
+## HTTP server parity
 
-ds4-go currently ships the webtool search/visit tools. Upstream ds4
-(`ds4_agent.c`) carries additional built-in agent tools worth porting as
-native Go `ToolHandler`s.
+`ds4go serve` now shares model discovery, Chat Completions, raw Completions,
+Responses, and Anthropic Messages with the HTTP example, including JSON/SSE,
+sampling controls, reasoning/tool replay, and bounded resident-session batching.
+See the [server guide](SERVER.md) for the supported subset.
 
-### Edit tool (file edits by head/tail anchor)
+Remaining work:
 
-Port the upstream agent's file-edit tool, which applies an edit by matching a
-unique **head anchor** and **tail anchor** in the existing file rather than
-line numbers (`agent_edit_find_old_span` in `ds4_agent.c`).
+- Disk KV checkpoint caching and session trace files.
+- Stateful Responses (`previous_response_id`) and background execution.
+- Forced tool choice and hosted tools.
+- Native mixed prefill/decode scheduling and speculative decoding in batched mode.
+- Real-model validation beyond the local Qwen/Metal HTTP smoke tests, including
+  CUDA and ROCm concurrency and model-family tool replay.
 
-- Reference implementation: ds4 upstream.
-- Required behaviors and known pitfalls, from upstream history:
-  - `a9f486b` "Fix agent: old tail anchor not found after old head" — strip a
-    leading newline/CR from the tail needle so the post-head text matches the
-    file's single newline. Port this fix, do not re-introduce the bug.
-  - `7624c68` "Add ds4-agent edit regression tests" — port these cases as Go
-    table tests for the anchor matcher.
-- Surface as a registered `dsml.Tool` / `ToolHandler` so the existing tool loop
-  drives it; no new tool-calling machinery required.
+## Agent tools
 
-### Other candidates
-
-Triage remaining upstream agent tools (e.g. shell/command execution, file read)
-against ds4-go's sandboxing and security posture before porting.
+[workspacetool](../workspacetool/README.md) already provides file reads,
+directory listing, search, exact edits, whole-file writes, and opt-in shell
+jobs alongside webtool search/visit. Head/tail anchor editing and its newline
+regressions are covered by tests. Future upstream tool additions should be
+reviewed against these existing packages before adding new handlers.
 
 ## GLM 5.2 support
 
@@ -54,8 +51,8 @@ grounding than the schemas provide.
 
 ### Sharded GGUF models
 
-The catalog carries the three single-file `antirez/GLM-5.2-GGUF` quants. The
-Unsloth `UD-Q4_K_XL` build ds4's `download_model.sh` also offers is 11 shards
-(~467 GB), which the catalog cannot express: `Model` names one file, and the
-downloader fetches one URL. Supporting it needs a multi-file model entry plus
-shard-aware download, resume, and verification.
+The catalog carries the three single-file `antirez/GLM-5.2-GGUF` quants.
+The downloader now supports multi-part entries (`Model.Parts`) and standard
+GGUF shard merging, used by the V4.1 MXFP4 model. Adding the 11-shard Unsloth
+`UD-Q4_K_XL` GLM build still requires a catalog entry with pinned shard and
+merged-file checksums, storage estimates, and real-model validation.

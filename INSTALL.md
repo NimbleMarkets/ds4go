@@ -9,7 +9,9 @@ task build
 
 # Go commands
 go mod tidy
-go build ./...
+go -C cmd mod tidy
+CGO_ENABLED=0 go build ./... ./cmd/...
+CGO_ENABLED=0 go build -o bin/ds4go ./cmd/ds4go
 ```
 
 No C compiler is needed for Go builds.  Runtime requires `ds4`, read on...
@@ -26,7 +28,10 @@ This downloads a checksum-verified `ds4go` binary into `/usr/local/bin`
 (escalating with `sudo` if needed). It installs **only the CLI**: you still need
 to fetch the `libds4` runtime with `ds4go install --backend auto` (several
 hundred MB) and download a model (multi-GB; see [MODELS.md](./MODELS.md))
-before `ds4go infer` will work.
+before inference commands such as `ds4go prompt` will work.
+
+The unreleased `serve` command requires building the current checkout (above).
+See the [server guide](docs/SERVER.md) for startup and HTTP request examples.
 
 The script accepts these environment variables:
 
@@ -66,7 +71,6 @@ By default this installs the shared library into:
 ```text
 ~/.ds4/lib/libds4.dylib  macOS
 ~/.ds4/lib/libds4.so     Linux
-~/.ds4/lib/libds4.dll    Windows
 ```
 
 Set `DS4_DIR` to use a different ds4 home:
