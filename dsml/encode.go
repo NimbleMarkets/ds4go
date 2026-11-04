@@ -345,6 +345,11 @@ func RenderToolResultParts(texts []string) []string {
 // Otherwise the think slot is rendered closed, the DeepSeek convention for
 // prior-turn reasoning.
 func RenderAssistantTurn(content, reasoning, toolCalls string, thinking, replayReasoning bool) string {
+	// Match upstream's C isspace normalization: a must-echo client's blank
+	// reasoning must not introduce tokens into the cached conversation prefix.
+	if strings.Trim(reasoning, " \t\n\r\v\f") == "" {
+		reasoning = ""
+	}
 	var b strings.Builder
 	b.WriteString(assistantToken)
 	if thinking && replayReasoning {

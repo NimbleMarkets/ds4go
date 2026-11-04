@@ -906,7 +906,7 @@ func assistantRendered(msg ChatMessage, renderedCalls string, turn turnRenderInf
 		var b strings.Builder
 		if !strings.HasPrefix(msg.Content, "<think>") && !strings.HasPrefix(msg.Content, "</think>") {
 			b.WriteString("<think>")
-			if turn.thinking && turn.replayReasoning {
+			if turn.thinking && turn.replayReasoning && strings.Trim(msg.ReasoningContent, " \t\n\r\v\f") != "" {
 				b.WriteString(msg.ReasoningContent)
 			}
 			b.WriteString("</think>")

@@ -587,3 +587,57 @@ func TestMultimodalToolInvokeIsTextOnly(t *testing.T) {
 		t.Fatal("Invoke returned an image result as text")
 	}
 }
+
+func TestRenderPromptMessagesBlankReasoningMatchesAbsent(t *testing.T) {
+	for _, family := range []struct {
+		name   string
+		syntax dsml.Syntax
+		qwen   bool
+	}{
+		{"DeepSeek", dsml.SyntaxDSML, false},
+		{"V4.1", dsml.SyntaxDSML41, false},
+		{"GLM", dsml.SyntaxGLM, false},
+		{"Qwen", dsml.SyntaxQwen, true},
+	} {
+		t.Run(family.name, func(t *testing.T) {
+			reg := NewToolRegistry()
+			history := []ChatMessage{
+				{Role: "user", Content: "question"},
+				{Role: "assistant", Content: "checking", ToolCalls: []ToolCall{{ID: "c1", Name: "lookup", Arguments: `{}`}}},
+				{Role: "tool", Content: "result", ToolCallID: "c1"},
+			}
+			opts := promptRenderOptions{thinking: true, toolContext: true, syntax: family.syntax, qwen: family.qwen}
+			want, err := renderPromptMessages(history, reg.renderMessage, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, reasoning := range []string{"", " ", "\t\n\r\v\f"} {
+				history[1].ReasoningContent = reasoning
+				got, err := renderPromptMessages(history, reg.renderMessage, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(got) != len(want) {
+					t.Fatalf("message count = %d, want %d", len(got), len(want))
+				}
+				for i := range got {
+					if got[i].content != want[i].content {
+						t.Errorf("reasoning %q, message %d: got %q, want %q", reasoning, i, got[i].content, want[i].content)
+					}
+				}
+			}
+			// Preserve meaningful reasoning, including its whitespace, in the
+			// DeepSeek and GLM templates. Qwen already trims by template design.
+			if !family.qwen {
+				history[1].ReasoningContent = "  keep this\n"
+				got, err := renderPromptMessages(history, reg.renderMessage, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(got[1].content, "<think>  keep this\n</think>") {
+					t.Errorf("meaningful reasoning changed: %q", got[1].content)
+				}
+			}
+		})
+	}
+}

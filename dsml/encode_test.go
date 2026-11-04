@@ -267,3 +267,21 @@ func TestRenderAssistantTurnEmptyReasoningStillReplays(t *testing.T) {
 		t.Fatalf("turn = %q, want %q", turn, want)
 	}
 }
+
+func TestRenderAssistantTurnBlankReasoningMatchesAbsent(t *testing.T) {
+	calls, err := RenderToolCalls([]ToolCall{{Name: "lookup", Arguments: `{}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := RenderAssistantTurn("checking", "", calls, true, true)
+	for _, reasoning := range []string{" ", "\t\n\r\v\f"} {
+		if got := RenderAssistantTurn("checking", reasoning, calls, true, true); got != want {
+			t.Errorf("reasoning %q: got %q, want %q", reasoning, got, want)
+		}
+	}
+	for _, reasoning := range []string{"  keep this\n", "\u00a0"} {
+		if got := RenderAssistantTurn("", reasoning, "", true, true); !strings.Contains(got, "<think>"+reasoning+"</think>") {
+			t.Errorf("nonblank reasoning changed: %q", got)
+		}
+	}
+}
