@@ -117,13 +117,64 @@ control points, not by interrupting an active native call.
 Successful sessions can reuse matching prompt prefixes, but requests have no
 session affinity. Clients must still supply history.
 
+## Disk checkpoints
+
+Enable persistent text-prefix reuse with:
+
+```sh
+./bin/ds4go serve --model /path/to/model.gguf --kv-disk-dir /path/to/cache \
+  --kv-disk-space-mb 4096
+```
+
+The server owns a private `ds4go-kv-v1` subdirectory and locks it for its lifetime;
+use a different directory for each simultaneously running server. Cache payloads
+and metadata contain prompt information. They are private to the local account
+and are not encrypted. This format is separate from upstream ds4's cache format.
+
+| Flag | Default | Behavior |
+| --- | --- | --- |
+| `--kv-disk-space-mb` | 4096 | Payload and metadata budget in MiB; evict least recently used entries |
+| `--kv-cache-min-tokens` | 512 | Minimum checkpoint length to save or load |
+| `--kv-cache-cold-max-tokens` | 30000 | Only save prefixes of prompts no longer than this; 0 means load only |
+| `--kv-cache-boundary-trim-tokens` | 32 | Leave this many prompt-tail tokens out of a new checkpoint |
+| `--kv-cache-boundary-align-tokens` | 2048 | Round the saved prefix down to this multiple; 0 disables rounding |
+| `--kv-cache-continued-interval-tokens` | 0 | Only 0 is supported; no periodic generation checkpoints |
+| `--kv-cache-reject-different-quant` | true | Must remain true; cross-model/quantization reuse is unsupported |
+
+The trimmed, aligned prefix must still meet the minimum length. With defaults,
+a prompt needs at least 2080 tokens to produce a checkpoint. The prefix is synced
+and saved before generation; the remaining prompt is then synced normally.
+Already-resident matching state is preferred over a shorter disk checkpoint.
+`disk KV stored` and `disk KV hit` log messages identify successful writes/loads.
+
+Entries are isolated by engine options, runtime environment switches, and the resolved paths, sizes and
+modification times of the model, companion models, steering file and runtime.
+Changing those identities invalidates reuse. Do not replace weights in place
+while preserving their size and modification time. Native payloads are streamed
+to disk without allocating an extra Go snapshot; SHA-256 detects payload damage
+before native loading. Writes publish atomically. Interrupted writes are cleaned
+up at startup; corrupt or rejected entries are removed. Restore failures discard
+any partially restored session and fall back to normal prefill.
+
+The disk budget covers published payload and metadata bytes, excluding filesystem
+allocation overhead. Oversized checkpoints are skipped; disk write failures are
+logged and inference continues. Startup directory/locking errors fail startup.
+Cache I/O is serialized and may delay concurrent requests; this is an opt-in
+latency/storage tradeoff, not asynchronous background checkpointing.
+
+Image-bearing requests bypass disk caching. Exact DeepSeek tool replay remains
+an in-memory map and is not persisted with checkpoints. Reuse requires an exact
+token prefix, so histories re-rendered differently after restart may miss the
+cache. Clients must always send full history; this is not a Responses store.
+
 ## Remaining parity gaps
 
 The server rejects nonempty `previous_response_id`, background Responses,
 Responses hosted/built-in tool types, forced tool choices, and multiple raw
-completion prompts. Nonempty `--kv-disk-dir` and `--trace` fail at startup.
-Other disk-cache tuning flags are retained for argument compatibility but do
-not enable caching. There is no persistent Responses store.
+completion prompts. Explicit `--trace` fails at startup. Cache tuning flags
+require a nonempty `--kv-disk-dir`; unsupported continued-checkpoint and
+cross-quantization settings fail before loading the model. There is no persistent
+Responses store.
 
 Native mixed prefill/decode scheduling and batched speculative decoding are
 not implemented. This is a supported subset of the upstream and vendor APIs;
@@ -132,3 +183,29 @@ acceptance of an unknown JSON field does not imply support for it.
 Protocol and scheduler tests cover mock inference; local Qwen/Metal smoke tests
 cover metadata, JSON/SSE and concurrent requests. Equivalent CUDA/ROCm and
 other model-family validation remains pending. See the [roadmap](ROADMAP.md).
+
+## Real-model release check (including Spark)
+
+Run from the repository root on the machine hosting the model and runtime:
+
+```sh
+DS4_LIB=/path/to/libds4.so DS4_MODEL=/path/to/model.gguf DS4_BACKEND=cuda \
+  go test -tags ds4_integration ./internal/openaiserver \
+  -run '^TestRealServerDiskCache$' -count=1 -v -timeout 30m
+```
+
+Use `DS4_BACKEND=rocm` or `metal` for those backends. For runtime tuning, set
+`DS4_SERVER_TEST_FLAGS` to a JSON array, for example
+`'["--ssd-streaming","--ssd-streaming-cache-experts","4GB"]'`.
+The default test uses two sessions, a 2048-token context, and no external MTP.
+Run again with `DS4_SERVER_TEST_FLAGS='["--batched-session=0"]'` to cover the
+single-session path (combine with any required streaming flags).
+
+The test writes native checkpoints to a temporary directory, recreates the
+handler with empty resident sessions, requires a disk hit, compares cached and
+uncached greedy output, then checks concurrency, cancellation recovery, and a
+model-generated integer tool call followed by replay. The temporary cache is
+removed afterward. A model that fails to follow the tool prompt fails the test
+with its actual output for inspection. Repeat with each model family intended
+for the release; save the output along with the model, libds4 revision and GPU.
+Local Qwen/Metal passes do not substitute for Spark/CUDA or ROCm validation.

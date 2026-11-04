@@ -554,8 +554,10 @@ DeepSeek tool markup (`--tool-memory-max-ids`, or disable with
 
 Responses clients replay prior output items and function-call outputs in
 `input`; Messages clients replay assistant blocks and user `tool_result` blocks.
-`previous_response_id`, background Responses, built-in hosted tools, disk KV
-caching, and trace files are not implemented and are rejected when requested.
+Text-only prompt prefixes can persist across restarts with `--kv-disk-dir DIR`;
+see [disk checkpoints](docs/SERVER.md#disk-checkpoints) for policy and limits.
+`previous_response_id`, background Responses, built-in hosted tools, and trace
+files are not implemented and are rejected when requested.
 Native mixed prefill/decode and batched speculative decoding remain upstream
 performance features; the Go scheduler uses the fallbacks described above.
 

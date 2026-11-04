@@ -173,11 +173,8 @@ func Run(cfg *cliopts.ServerConfig) error {
 	if cfg.Ctx < 2 || cfg.Tokens < 1 || cfg.BatchedSession < 0 {
 		return errors.New("ctx must be at least 2, tokens positive, and batched-session nonnegative")
 	}
-	if cfg.KVDiskDir != "" {
-		return errors.New("disk KV caching is not yet implemented by ds4go serve")
-	}
-	if cfg.Trace != "" {
-		return errors.New("trace files are not yet implemented by ds4go serve")
+	if err := cfg.ValidateCacheFlags(); err != nil {
+		return err
 	}
 
 	if cfg.Chdir != "" {
@@ -216,6 +213,17 @@ func Run(cfg *cliopts.ServerConfig) error {
 
 	mux := newHandler(engine, images, cfg)
 	defer mux.Close()
+	if cfg.KVDiskDir != "" {
+		namespace, err := cacheNamespace(cfg, opts)
+		if err != nil {
+			return fmt.Errorf("disk cache identity: %w", err)
+		}
+		mux.cache, err = openDiskCache(cfg.KVDiskDir, namespace, int64(cfg.KVDiskSpaceMB)*(1<<20))
+		if err != nil {
+			return fmt.Errorf("open disk cache: %w", err)
+		}
+		mux.cache.minTokens = cfg.KVCacheMinTokens
+	}
 
 	addr := cfg.Addr()
 	fmt.Println("listening on http://" + addr)

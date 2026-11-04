@@ -1,16 +1,9 @@
 // Package cliopts defines the command-line flag surface shared by the ds4go
 // CLI and examples.
 //
-// The flag names, shorthands, and defaults mirror the upstream ds4 C programs
-// so that ds4go binaries accept the same arguments:
-//
-//   - RegisterCLI    mirrors the `ds4` CLI       (ds4_cli.c)
-//   - RegisterServer mirrors the `ds4-server`    (ds4_server.c)
-//
-// Every flag is parsed even when a given program does not exercise the
-// corresponding feature, so the argument surface stays identical across
-// programs. The one addition with no C equivalent is --lib, which points at
-// the libds4 shared library the pure-Go wrapper loads at runtime.
+// Model and runtime flags follow the upstream ds4 C programs. Server-only
+// options implement a documented subset; ValidateCacheFlags rejects unsupported
+// cache and trace settings. --lib selects the shared library loaded at runtime.
 //
 // The engine and runtime flags common to both programs live on EngineFlags,
 // embedded in CLIConfig and ServerConfig. Invalid flag values surface as
@@ -22,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/NimbleMarkets/ds4go"
@@ -233,6 +227,8 @@ func (c *CLIConfig) PromptText() (string, error) {
 
 // ServerConfig holds the `ds4-server` option surface (ds4_server.c).
 type ServerConfig struct {
+	flags *pflag.FlagSet
+
 	// EngineFlags is the engine and runtime option surface shared with the
 	// `ds4` CLI.
 	EngineFlags
@@ -249,7 +245,7 @@ type ServerConfig struct {
 	Chdir          string
 	BatchedSession int
 
-	// Retained upstream disk KV flags; the Go server does not implement caching.
+	// Text-prefix disk KV cache; continued checkpoints are not supported.
 	KVDiskDir                      string
 	KVDiskSpaceMB                  int
 	KVCacheMinTokens               int
@@ -265,7 +261,7 @@ type ServerConfig struct {
 // RegisterServer registers the full `ds4-server` flag set on fs and returns the
 // config that fs.Parse will populate.
 func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
-	c := &ServerConfig{}
+	c := &ServerConfig{flags: fs}
 
 	// Model and runtime.
 	registerEngineFlags(fs, &c.EngineFlags, engineFlagHelp{
@@ -283,15 +279,15 @@ func RegisterServer(fs *pflag.FlagSet) *ServerConfig {
 	fs.BoolVar(&c.CORS, "cors", false, "add Access-Control-Allow-* headers for browser JS clients")
 	fs.StringVar(&c.Trace, "trace", "", "upstream trace file option (unsupported by the Go server)")
 
-	// Retained upstream disk KV flags; the Go server does not implement caching.
-	fs.StringVar(&c.KVDiskDir, "kv-disk-dir", "", "upstream disk KV directory (unsupported by the Go server)")
+	// Text-prefix disk KV cache; continued checkpoints are not supported.
+	fs.StringVar(&c.KVDiskDir, "kv-disk-dir", "", "persist text-prefix KV checkpoints in DIR")
 	fs.IntVar(&c.KVDiskSpaceMB, "kv-disk-space-mb", 4096, "disk budget in MB for checkpoint files")
 	fs.IntVar(&c.KVCacheMinTokens, "kv-cache-min-tokens", 512, "do not save or load checkpoints shorter than N tokens")
-	fs.IntVar(&c.KVCacheColdMaxTokens, "kv-cache-cold-max-tokens", 30000, "cold first prompts in [min,N] are saved automatically (0 disables)")
-	fs.IntVar(&c.KVCacheContinuedIntervalTokens, "kv-cache-continued-interval-tokens", 10000, "save at absolute aligned frontiers spaced about N tokens apart (0 disables)")
+	fs.IntVar(&c.KVCacheColdMaxTokens, "kv-cache-cold-max-tokens", 30000, "save text prompt prefixes for prompts in [min,N] tokens (0: load only)")
+	fs.IntVar(&c.KVCacheContinuedIntervalTokens, "kv-cache-continued-interval-tokens", 0, "continued checkpoints are unsupported; must be 0")
 	fs.IntVar(&c.KVCacheBoundaryTrimTokens, "kv-cache-boundary-trim-tokens", 32, "trim this many tail tokens before cold boundary saves")
 	fs.IntVar(&c.KVCacheBoundaryAlignTokens, "kv-cache-boundary-align-tokens", 2048, "align cold boundary saves down to this token multiple (0 disables)")
-	fs.BoolVar(&c.KVCacheRejectDifferentQuant, "kv-cache-reject-different-quant", false, "refuse checkpoints written with a different routed-expert quantization")
+	fs.BoolVar(&c.KVCacheRejectDifferentQuant, "kv-cache-reject-different-quant", true, "isolate cache by model/runtime identity; must be true")
 	fs.BoolVar(&c.DisableExactDSMLToolReplay, "disable-exact-dsml-tool-replay", false, "disable the tool-id to exact sampled DSML map")
 	fs.IntVar(&c.ToolMemoryMaxIDs, "tool-memory-max-ids", 100000, "maximum exact tool-call IDs kept in RAM for replay")
 
@@ -335,4 +331,41 @@ func Parse(fs *pflag.FlagSet, args []string) {
 func ReportUsage(w io.Writer, program string, err error) int {
 	fmt.Fprintf(w, "%s: %v\n", program, err)
 	return 2
+}
+
+// ValidateCacheFlags rejects unsupported or ineffective server options before loading a model.
+func (c *ServerConfig) ValidateCacheFlags() error {
+	if c.Trace != "" || c.flags != nil && c.flags.Changed("trace") {
+		return fmt.Errorf("--trace is not supported by the Go server")
+	}
+	if c.KVCacheContinuedIntervalTokens != 0 {
+		return fmt.Errorf("--kv-cache-continued-interval-tokens must be 0; continued checkpoints are not supported")
+	}
+	if c.flags != nil {
+		var invalid string
+		c.flags.Visit(func(f *pflag.Flag) {
+			if c.KVDiskDir == "" && (strings.HasPrefix(f.Name, "kv-cache-") || f.Name == "kv-disk-space-mb" || f.Name == "kv-disk-dir") {
+				invalid = f.Name
+			}
+		})
+		if invalid != "" {
+			return fmt.Errorf("--%s requires a nonempty --kv-disk-dir", invalid)
+		}
+	}
+	if c.KVDiskDir == "" {
+		return nil
+	}
+	if !c.KVCacheRejectDifferentQuant {
+		return fmt.Errorf("--kv-cache-reject-different-quant=false is unsupported; caches require the same model and runtime")
+	}
+	if c.KVDiskSpaceMB <= 0 || int64(c.KVDiskSpaceMB) > (1<<63-1)/(1<<20) {
+		return fmt.Errorf("--kv-disk-space-mb must be positive and fit in int64 bytes")
+	}
+	if c.KVCacheMinTokens < 1 || c.KVCacheColdMaxTokens < 0 || c.KVCacheBoundaryTrimTokens < 0 || c.KVCacheBoundaryAlignTokens < 0 {
+		return fmt.Errorf("cache min tokens must be positive; cold max, trim and alignment must be nonnegative")
+	}
+	if c.KVCacheColdMaxTokens > 0 && c.KVCacheColdMaxTokens < c.KVCacheMinTokens {
+		return fmt.Errorf("cache cold max tokens must be at least min tokens")
+	}
+	return nil
 }

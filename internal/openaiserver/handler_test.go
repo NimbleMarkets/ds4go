@@ -161,3 +161,35 @@ func TestGenerationCancelledWhileQueued(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestCancellationDuringFinalStreamFlushDiscardsSession(t *testing.T) {
+	s := mockHandler(t).(*server)
+	var req chatRequest
+	if err := json.Unmarshal([]byte(`{"messages":[{"role":"user","content":"hi"}],"temperature":0,"reasoning_effort":"none","max_tokens":4}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out result
+	emitted := false
+	err := s.generate(ctx, req, &out, func(d delta) error {
+		// The short mock completion fits entirely in the DSML decoder's lookbehind
+		// buffer and is emitted by Close(), after the native generation loop ends.
+		if d.Content != "" {
+			emitted = true
+			cancel()
+		}
+		return nil
+	})
+	if !emitted || err != context.Canceled {
+		t.Fatalf("emitted=%v error=%v", emitted, err)
+	}
+	slot := <-s.slots
+	s.slots <- slot
+	if slot != nil {
+		t.Fatal("cancelled session was retained")
+	}
+	if err := s.generate(context.Background(), req, &result{}, nil); err != nil {
+		t.Fatalf("next request: %v", err)
+	}
+}

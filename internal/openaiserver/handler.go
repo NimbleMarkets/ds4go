@@ -42,6 +42,7 @@ type toolDelta struct {
 	Function chatToolFunction `json:"function"`
 }
 type server struct {
+	cache     *diskCache
 	replay    *dsml.ReplayStore
 	engine    *ds4.Engine
 	images    *ds4.ImageEncoder
@@ -65,6 +66,7 @@ func (s *server) Close() {
 		s.cancel()
 		s.mu.Unlock()
 		s.requests.Wait()
+		s.cache.Close()
 		for i := 0; i < cap(s.slots); i++ {
 			session := <-s.slots
 			if session != nil {
@@ -349,6 +351,12 @@ func (s *server) generate(ctx context.Context, req chatRequest, out *result, emi
 	defer cancel()
 	stopShutdown := context.AfterFunc(s.lifetime, cancel)
 	defer stopShutdown()
+	if s.cache != nil && len(prompt.Images) == 0 {
+		session, err = s.prepareCachedPrompt(genCtx, session, prompt)
+		if err != nil {
+			return err
+		}
+	}
 	opts.Context = genCtx
 	opts.ThinkMode = think
 	opts.MaxTokens = limit
@@ -501,6 +509,9 @@ func (s *server) generate(ctx context.Context, req chatRequest, out *result, emi
 		out.Finish = "tool_calls"
 	}
 	out.Usage = usage{prompt.Tokens.Len(), len(generated), prompt.Tokens.Len() + len(generated)}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	reusable = true
 	return nil
 }

@@ -11,7 +11,8 @@ See the [server guide](SERVER.md) for the supported subset.
 
 Remaining work:
 
-- Disk KV checkpoint caching and session trace files.
+- Continued-generation disk checkpoints, persistent exact tool-replay metadata,
+  image checkpoints, and session trace files. Text-prefix disk caching is implemented.
 - Stateful Responses (`previous_response_id`) and background execution.
 - Forced tool choice and hosted tools.
 - Native mixed prefill/decode scheduling and speculative decoding in batched mode.
