@@ -193,6 +193,27 @@ than a think prefix, and `ThinkLow` / `ThinkMedium` (the OpenAI `low`,
 through `Engine.IsQwen4` and `Engine.Qwen4ReasoningEffortText`. Speculation
 is built in: `--mtp-timing` enables it and prints acceptance/timing counters,
 as for GLM. In Go, set `EngineOptions.GLMMTP` to enable it without counters.
+With the updated libds4, Qwen Q2 and Q4 also support **Metal SSD expert
+streaming**, including prefill, decode and MTP. Start with `--ssd-streaming
+--ctx 4096 --prefill-chunk 128` and leave the expert-cache budget automatic.
+Compare generation with and without `--mtp-timing`: loading predictor experts
+can outweigh speculation's savings. This streaming support is specific to
+Metal; do not assume it applies to every backend.
+
+`DS4_QWEN4_MTP_PREFILL=auto` (default) prepares predictor history for new
+prompt rows when streaming, and skips historical predictor projections with
+resident weights. Set it to `on` to prepare history in both modes, or `off`
+to skip it in both. Target verification remains enabled. The setting applies
+to newly prefilled rows; reused checkpoints retain their existing state.
+New Qwen checkpoints store predictor history and the retained hidden row;
+version 2 and plain checkpoints can require a one-time token replay when
+resumed with MTP enabled.
+
+For positive-temperature speculation, `--mtp-exact-sampling` preserves the
+target sampling distribution for DSpark, GLM and Qwen. For DeepSeek,
+`--quality` or `--dspark-strict` disables speculative acceptance and uses the
+target-only path; neither promises identical output across hardware.
+
 Qwen's XML tool-call
 dialect (`<tool_call><function=...><parameter=...>`) is `dsml.SyntaxQwen`;
 `ToolSyntax` selects it for a Qwen engine, so tool loops need no changes.

@@ -2,6 +2,22 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
+## Unreleased
+
+* Sync validation targets nm-shared `495e39a` (release tag pending). The public
+  header is unchanged from `262d8ab`: all 79 mirrored fields remain in sync.
+  Updated libds4 supplies Qwen Metal SSD expert streaming and predictor/checkpoint
+  improvements, V4.1 performance and DSpark improvements, and image-decoding fixes.
+* Re-sync Qwen after rewind before sampling: a retained token checkpoint can
+  still have stale logits until libds4 replays the recurrent state.
+* Treat whitespace-only assistant reasoning as absent during DeepSeek and GLM
+  history replay, preserving prompt prefixes. Meaningful reasoning is unchanged.
+* Document Qwen streaming and predictor-prefill controls; clarify target-only
+  DeepSeek strict mode and exact sampling for DSpark, GLM and Qwen.
+* Release checks now build both Go modules without CGO, vet and race-test both,
+  and check the ABI against the immutable revision in `.github/ds4-revision`.
+  GoReleaser tidies both modules before building.
+
 ## v0.11.0 (2026-10-29)
 
 Matches libds4 **v0.10.20261029** (nm-shared 262d8ab). Older libraries keep

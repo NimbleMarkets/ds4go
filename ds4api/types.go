@@ -209,8 +209,8 @@ type EngineOptions struct {
 	MTPDraftTokens int
 	// MTPMargin controls speculative acceptance confidence.
 	MTPMargin float32
-	// GLMMTP enables GLM's model-embedded next-token predictor for speculative
-	// decoding (upstream --mtp on a GLM checkpoint). No external MTPPath is
+	// GLMMTP enables GLM's or Qwen's model-embedded next-token predictor for
+	// speculative decoding (upstream --mtp). No external MTPPath is
 	// needed; libds4 rejects the option on models without embedded MTP weights.
 	// When enabled, Engine.MTPDraftTokens reports > 1 while HasMTP stays false.
 	GLMMTP bool
@@ -220,11 +220,12 @@ type EngineOptions struct {
 	// Dspark enables DSpark speculative decoding. It needs a draft model, so
 	// set MTPPath alongside it.
 	Dspark bool
-	// DsparkStrict requires DSpark's stricter verification.
+	// DsparkStrict selects target-only DeepSeek decoding, disabling speculative
+	// acceptance. It does not guarantee identical output across hardware.
 	DsparkStrict bool
 	// DsparkExactSampling selects exact stochastic p/q acceptance instead of
 	// committing greedily verified draft tokens. It only affects
-	// positive-temperature generation.
+	// positive-temperature generation and applies to DSpark, GLM and Qwen MTP.
 	DsparkExactSampling bool
 	// DsparkConfidenceThreshold overrides DSpark's acceptance confidence. A
 	// zero value leaves ds4's own default in place.

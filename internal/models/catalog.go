@@ -437,7 +437,7 @@ var curated = []Model{
 		Vision:         true,
 		Encoder:        "qwen38-vision",
 		Imatrix:        true,
-		Notes:          "Qwen3.8 Flash Next q2 (41.7 GiB main+MTP weights; the 95 GiB BF16 n-gram table stays on disk); IQ2_XXS gate/up and Q2_K down experts; keep it on a fast local SSD; --mtp-timing enables built-in speculation with timing counters",
+		Notes:          "Qwen3.8 Flash Next q2 (41.7 GiB main+MTP weights; the 95 GiB BF16 n-gram table stays on disk); IQ2_XXS gate/up and Q2_K down experts; keep it on a fast local SSD; Metal supports --ssd-streaming; --mtp-timing enables built-in speculation with timing counters",
 	},
 	{
 		Alias:          "qwen38-q4k",
@@ -451,7 +451,7 @@ var curated = []Model{
 		Vision:         true,
 		Encoder:        "qwen38-vision",
 		Imatrix:        true,
-		Notes:          "Qwen3.8 Flash Next q4 (69.7 GiB main+MTP weights; n-grams on disk); Q4_K gate/up and MXFP4 down experts; --mtp-timing enables built-in speculation with timing counters",
+		Notes:          "Qwen3.8 Flash Next q4 (69.7 GiB main+MTP weights; n-grams on disk); Q4_K gate/up and MXFP4 down experts; Metal supports --ssd-streaming; --mtp-timing enables built-in speculation with timing counters",
 	},
 	{
 		Alias:          "qwen38-vision",
