@@ -320,3 +320,41 @@ func TestSessionTokenLogprobHonoursBooleanReturn(t *testing.T) {
 		t.Error("out-of-range token succeeded")
 	}
 }
+
+// Qwen retains a valid token checkpoint after a plain rewind but resets its
+// recurrent graph and leaves logits stale until replay. CommonPrefix alone
+// therefore cannot establish that sampling is safe.
+func TestRewindSyncedReplaysQwenWithValidTokenPrefix(t *testing.T) {
+	lib, ctl := NewMockLibraryWithControls()
+	ctl.SetQwen4(true)
+	engine, err := lib.NewEngine(EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	session, err := engine.NewSession(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.Sync([]int{11, 12, 13, 14}); err != nil {
+		t.Fatal(err)
+	}
+	for _, pos := range []int{4, 5} {
+		if err := session.RewindSynced(pos); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := ctl.SyncCalls(); got != 1 {
+		t.Fatalf("no-op rewind caused replay: %d sync calls", got)
+	}
+	if err := session.RewindSynced(3); err != nil {
+		t.Fatal(err)
+	}
+	if got := ctl.SyncCalls(); got != 2 {
+		t.Fatalf("sync calls = %d, want initial prefill plus Qwen replay", got)
+	}
+	if got := session.Pos(); got != 3 {
+		t.Fatalf("position = %d, want 3", got)
+	}
+}

@@ -585,7 +585,8 @@ func (s *Session) Invalidate() {
 // inside the most recent DSpark verifier block (ds4_session_rewind_speculative);
 // when that succeeds the checkpoint stays valid and no re-sync is needed. Use
 // RewindSynced unless you re-sync yourself: it only rebuilds when the fast
-// path did not apply.
+// path did not apply. Qwen may defer recurrent-state replay until the next
+// eval; use RewindSynced before sampling after a rewind.
 func (s *Session) Rewind(pos int) {
 	if s == nil {
 		return
@@ -599,7 +600,9 @@ func (s *Session) Rewind(pos int) {
 
 // RewindSynced rewinds to pos and then restores a valid checkpoint for the
 // retained prefix when the rewind lost it, mirroring upstream's
-// agent_worker_rewind / server_generation_rewind. spans are the image spans
+// agent_worker_rewind / server_generation_rewind. Qwen also syncs after a
+// rewind because its retained token checkpoint may still have stale logits;
+// libds4 decides whether the recurrent graph needs replay. spans are the image spans
 // of the prompt the session was synced with, classified against the retained
 // prefix length: a span entirely inside it is kept and passed to the
 // multimodal sync, as the header requires for image-bearing sessions; a span
@@ -612,12 +615,13 @@ func (s *Session) RewindSynced(pos int, spans ...VisionSpan) error {
 	if s == nil {
 		return errors.New("ds4: nil session")
 	}
+	previousPos := s.Pos()
 	s.Rewind(pos)
 	retained := s.Tokens()
 	if retained == nil {
 		return errors.New("ds4: session tokens unavailable after rewind")
 	}
-	if s.CommonPrefix(retained) == retained.Len() {
+	if s.CommonPrefix(retained) == retained.Len() && (pos >= previousPos || !s.engine.IsQwen4()) {
 		return nil
 	}
 	prefix, err := newTokensWithLibrary(s.lib, retained.Slice())

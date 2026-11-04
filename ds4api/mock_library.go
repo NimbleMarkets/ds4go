@@ -790,8 +790,9 @@ func NewMockLibraryWithControls() (*Library, *MockControls) {
 		}
 		sess.evaluated = sess.evaluated[:pos]
 		sess.pos = pos
-		// DeepSeek compressors cannot be rolled back; GLM restores its state.
-		if !ctl.isGLM() {
+		// DeepSeek compressors cannot be rolled back. GLM and Qwen keep
+		// a valid token checkpoint (Qwen may still need recurrent replay).
+		if !ctl.isGLM() && !ctl.isQwen4() {
 			sess.checkpointInvalid = true
 		}
 	}
