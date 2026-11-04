@@ -256,7 +256,7 @@ same way once its `Images` field is set to the encoder; `workspacetool`'s
 
 Over HTTP, `examples/openai-compatible` accepts images the way upstream
 `ds4-server` does: `image_url` parts carrying inline `data:image/png;base64,...`
-or `data:image/jpeg;base64,...` URIs in user and tool messages, at most 16
+or `data:image/jpeg;base64,...` URIs in user and tool messages, at most 256
 images per request and a 64 MiB body. Remote URLs and file paths are rejected.
 `ds4.ParseOpenAIContent` is the reusable parser behind it.
 
@@ -483,8 +483,28 @@ go run ./examples/openai-compatible --model ./ds4flash.gguf --host 127.0.0.1 --p
 The `toolloop` example registers a Go `add` tool and exercises model-native
 tool-call parsing (DeepSeek DSML or GLM `<tool_call>` markup), tool dispatch,
 tool-result rendering, and replay. Use `--mock` for a no-model smoke test. The
-OpenAI-compatible example exposes `POST /v1/chat/completions` for a minimal
-local test server.
+OpenAI-compatible example exposes `POST /v1/chat/completions`,
+`GET /v1/models`, and `GET /v1/models/{id}` for a local test server:
+
+```sh
+curl http://127.0.0.1:8000/v1/models
+curl http://127.0.0.1:8000/v1/models/qwen3.8-flash-next
+```
+
+Model discovery follows upstream's family aliases and reports the loaded
+engine's name, context length, completion-token ceiling, and
+`architecture.input_modalities` / `output_modalities`. Image input is advertised
+only when the engine has a vision encoder loaded. All aliases describe the
+same engine; requesting an alias does not switch models. Qwen and GLM `-chat`,
+`-no-think`, and `-nothink` aliases disable thinking unless explicitly enabled
+through `chat_template_kwargs.enable_thinking`; `-reasoner` keeps thinking on
+unless the request disables it. Assistant `reasoning_content` is returned and
+preserved when the client sends it back in conversation history.
+
+The response schema matches upstream, with `owned_by: "ds4go"` and
+`supported_parameters` restricted to this server's implemented request fields.
+This example does not yet implement streaming, per-request sampling controls,
+Responses/Anthropic endpoints, or upstream's multi-session scheduler.
 
 ## API Coverage
 

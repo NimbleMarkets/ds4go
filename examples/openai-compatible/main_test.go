@@ -350,3 +350,20 @@ func TestThinkModeForRequestReadsChatTemplateKwargs(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertMessagesAcceptsUpstreamImageLimit(t *testing.T) {
+	for _, count := range []int{17, 256} {
+		var req chatRequest
+		body := `{"messages":[{"role":"user","content":` + imageContent(count) + `}]}`
+		if err := json.Unmarshal([]byte(body), &req); err != nil {
+			t.Fatal(err)
+		}
+		_, history, err := convertMessages(req.Messages)
+		if err != nil {
+			t.Fatalf("%d images: %v", count, err)
+		}
+		if len(history) != 1 || len(history[0].Parts) != count+1 {
+			t.Fatalf("%d images: unexpected history", count)
+		}
+	}
+}

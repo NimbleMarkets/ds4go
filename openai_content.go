@@ -11,7 +11,7 @@ import (
 // MaxHTTPImages is the per-request image cap upstream ds4-server applies to
 // its HTTP APIs. Servers built on ds4go enforce it over the whole message
 // list; ParseOpenAIContent only parses one message.
-const MaxHTTPImages = 16
+const MaxHTTPImages = 256
 
 // ParseOpenAIContent decodes an OpenAI chat message's "content" field. A JSON
 // string (or null/absent) is returned as text. An array of parts yields

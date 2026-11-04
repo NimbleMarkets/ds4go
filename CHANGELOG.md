@@ -4,6 +4,12 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* Add model discovery to the OpenAI-compatible example: `/v1/models` and
+  `/v1/models/{id}` report loaded-engine modalities and limits with upstream
+  compatibility aliases. Advertise only implemented request parameters.
+* Honor chat/no-think model aliases, round-trip assistant `reasoning_content`,
+  and raise the HTTP image limit to upstream's 256 images per request.
+
 * Sync validation targets nm-shared `495e39a` (release tag pending). The public
   header is unchanged from `262d8ab`: all 79 mirrored fields remain in sync.
   Updated libds4 supplies Qwen Metal SSD expert streaming and predictor/checkpoint

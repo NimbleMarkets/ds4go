@@ -90,7 +90,7 @@ func TestParseOpenAIContentErrorNamesTheRejectedURL(t *testing.T) {
 }
 
 func TestMaxHTTPImagesMatchesUpstream(t *testing.T) {
-	if MaxHTTPImages != 16 {
-		t.Errorf("MaxHTTPImages = %d, want upstream ds4-server's 16", MaxHTTPImages)
+	if MaxHTTPImages != 256 {
+		t.Errorf("MaxHTTPImages = %d, want upstream ds4-server's 256", MaxHTTPImages)
 	}
 }

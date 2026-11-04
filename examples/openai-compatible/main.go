@@ -3,7 +3,7 @@
 //
 // It reuses the shared model/runtime flag set from the upstream-style server
 // config, but the HTTP surface here stays intentionally narrow: one
-// /v1/chat/completions endpoint with basic DSML tool-call round-tripping.
+// /v1/chat/completions endpoint with tool-call round-tripping, plus model discovery.
 package main
 
 import (
@@ -39,6 +39,7 @@ const (
 )
 
 type chatRequest struct {
+	Model               string             `json:"model,omitempty"`
 	Messages            []chatInputMessage `json:"messages"`
 	Tools               []chatTool         `json:"tools,omitempty"`
 	MaxTokens           int                `json:"max_tokens"`
@@ -65,7 +66,7 @@ func thinkModeForRequest(req chatRequest) (ds4.ThinkMode, error) {
 		}
 		effort = mode
 	}
-	enabled := true
+	enabled := !modelAliasDisablesThinking(req.Model)
 	if raw := strings.TrimSpace(string(req.ChatTemplateKwargs)); raw != "" && raw != "null" {
 		var kwargs map[string]json.RawMessage
 		if err := json.Unmarshal(req.ChatTemplateKwargs, &kwargs); err != nil {
@@ -119,19 +120,21 @@ func parseReasoningEffort(raw json.RawMessage) (ds4.ThinkMode, error) {
 }
 
 type chatMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
-	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content"`
+	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
 }
 
 // chatInputMessage is the request-side message: content may be a string or
 // an array of text and image_url parts (ds4.ParseOpenAIContent).
 type chatInputMessage struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content"`
-	ToolCalls  []chatToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Role             string          `json:"role"`
+	Content          json.RawMessage `json:"content"`
+	ToolCalls        []chatToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
 }
 
 // clientError marks a request-shaped failure the handler reports as 400.
@@ -172,7 +175,7 @@ func main() {
 	fs := pflag.NewFlagSet("openai-compatible", pflag.ContinueOnError)
 	cfg := cliopts.RegisterServer(fs)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, "Usage: openai-compatible [options]\n\nServe POST /v1/chat/completions backed by the ds4 engine.\n\nOptions:\n")
+		fmt.Fprint(os.Stderr, "Usage: openai-compatible [options]\n\nServe chat completions and GET /v1/models discovery backed by the ds4 engine.\n\nOptions:\n")
 		fmt.Fprint(os.Stderr, fs.FlagUsagesWrapped(100))
 	}
 	cliopts.Parse(fs, os.Args[1:])
@@ -218,6 +221,7 @@ func run(cfg *cliopts.ServerConfig) error {
 	}
 
 	mux := http.NewServeMux()
+	registerModelRoutes(mux, engine, cfg.Ctx, cfg.Tokens, cfg.CORS)
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if cfg.CORS {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -316,6 +320,7 @@ func parseAssistantMessage(engine *ds4api.Engine, text string, think ds4.ThinkMo
 		return msg, nil
 	}
 	msg.Content = parsed.Content
+	msg.ReasoningContent = parsed.ReasoningContent
 	if len(parsed.ToolCalls) > 0 {
 		msg.ToolCalls = make([]chatToolCall, len(parsed.ToolCalls))
 		for i, call := range parsed.ToolCalls {
@@ -485,9 +490,10 @@ func convertMessages(messages []chatInputMessage) (string, []ds4.ChatMessage, er
 				}
 			}
 			history = append(history, ds4.ChatMessage{
-				Role:      "assistant",
-				Content:   text,
-				ToolCalls: calls,
+				Role:             "assistant",
+				Content:          text,
+				ReasoningContent: msg.ReasoningContent,
+				ToolCalls:        calls,
 			})
 		case "tool":
 			if msg.ToolCallID == "" || !seenCallIDs[msg.ToolCallID] {
