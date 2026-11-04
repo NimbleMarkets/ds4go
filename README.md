@@ -254,7 +254,7 @@ Only user and tool messages may carry images. A `ToolLoop` handles them the
 same way once its `Images` field is set to the encoder; `workspacetool`'s
 `view_image` returns an image observation the loop feeds back to the model.
 
-Over HTTP, `examples/openai-compatible` accepts images the way upstream
+Over HTTP, `ds4go serve` and `examples/openai-compatible` accept images the way upstream
 `ds4-server` does: `image_url` parts carrying inline `data:image/png;base64,...`
 or `data:image/jpeg;base64,...` URIs in user and tool messages, at most 256
 images per request and a 64 MiB body. Remote URLs and file paths are rejected.
@@ -477,14 +477,49 @@ go run ./examples/chat --model ./ds4flash.gguf
 go run ./examples/toolloop --mock
 go run ./examples/toolloop --mock --scratch   # add the scratchpad tools
 go run ./examples/toolloop --model ./ds4flash.gguf --nothink --tokens 512
+ds4go serve --model ./ds4flash.gguf --host 127.0.0.1 --port 8000
+# Or run the same server from source:
 go run ./examples/openai-compatible --model ./ds4flash.gguf --host 127.0.0.1 --port 8000
 ```
 
 The `toolloop` example registers a Go `add` tool and exercises model-native
 tool-call parsing (DeepSeek DSML or GLM `<tool_call>` markup), tool dispatch,
 tool-result rendering, and replay. Use `--mock` for a no-model smoke test. The
-OpenAI-compatible example exposes `POST /v1/chat/completions`,
-`GET /v1/models`, and `GET /v1/models/{id}` for a local test server:
+HTTP implementation is shared by `ds4go serve` and the OpenAI-compatible
+example. It exposes model discovery and four inference endpoints:
+
+| Endpoint | Request/response protocol |
+| --- | --- |
+| `GET /v1/models`, `GET /v1/models/{id}` | Loaded-model metadata |
+| `POST /v1/chat/completions` | OpenAI chat, including reasoning and function calls |
+| `POST /v1/responses` | Responses input/output items and function-call replay |
+| `POST /v1/messages` | Anthropic text, thinking, tool-use and tool-result blocks |
+| `POST /v1/completions` | Raw text completion |
+
+All inference endpoints accept `stream: true`. Chat and Completions emit
+OpenAI data chunks followed by `[DONE]`; Responses and Messages emit their
+named SSE lifecycle events. Function-call IDs remain stable through streaming
+and replay. Usage and finish/stop reasons accompany the completed response.
+
+```sh
+ds4go serve -m qwen38-q2 --ctx 4096 --batched-session 2
+```
+
+`--batched-session N` keeps up to N resident sessions and groups ready decode
+tokens through `Engine.EvalBatch`. libds4 uses native batching where supported,
+with sequential fallback otherwise (including older libraries). Text prefills
+yield between 128-token chunks; image prompts use whole multimodal syncs to
+preserve image boundaries. Batched mode currently uses ordinary target decode;
+single-session mode retains the existing MTP/DSpark generation path. Requests
+waiting for a slot can be cancelled, and cancelled/failed sessions are discarded.
+
+```sh
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3.8-flash-next-chat","messages":[{"role":"user","content":"Hello"}],"temperature":0,"max_tokens":64,"stream":true}'
+```
+
+Discovery examples:
 
 ```sh
 curl http://127.0.0.1:8000/v1/models
@@ -503,8 +538,21 @@ preserved when the client sends it back in conversation history.
 
 The response schema matches upstream, with `owned_by: "ds4go"` and
 `supported_parameters` restricted to this server's implemented request fields.
-This example does not yet implement streaming, per-request sampling controls,
-Responses/Anthropic endpoints, or upstream's multi-session scheduler.
+Sampling controls include `temperature`, `top_k`, `top_p`, `min_p`, and `seed`.
+An explicit zero is preserved, including seed zero; omitted seeds are randomized.
+`stop` strings are withheld across token boundaries. `ignore_eos` requires an
+explicit `temperature: 0`. Tool choice supports `auto` and `none`; unsupported
+forced choices return an error. Tool arguments use the registered JSON schema
+for GLM/Qwen scalar conversion. A bounded, shared replay store preserves exact
+DeepSeek tool markup (`--tool-memory-max-ids`, or disable with
+`--disable-exact-dsml-tool-replay`).
+
+Responses clients replay prior output items and function-call outputs in
+`input`; Messages clients replay assistant blocks and user `tool_result` blocks.
+`previous_response_id`, background Responses, built-in hosted tools, disk KV
+caching, and trace files are not implemented and are rejected when requested.
+Native mixed prefill/decode and batched speculative decoding remain upstream
+performance features; the Go scheduler uses the fallbacks described above.
 
 ## API Coverage
 

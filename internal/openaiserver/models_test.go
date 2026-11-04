@@ -1,4 +1,4 @@
-package main
+package openaiserver
 
 import (
 	"encoding/json"
@@ -64,7 +64,7 @@ func TestModelDiscoveryMatchesLoadedEngine(t *testing.T) {
 						if entry.ContextLength != 4096 || entry.TopProvider.ContextLength != 4096 || entry.TopProvider.MaxCompletionTokens != min(limit, 4096) || entry.TopProvider.IsModerated {
 							t.Errorf("limits = %+v", entry)
 						}
-						if !reflect.DeepEqual(entry.SupportedParameters, []string{"tools", "max_tokens", "max_completion_tokens", "reasoning_effort", "chat_template_kwargs"}) {
+						if !reflect.DeepEqual(entry.SupportedParameters, []string{"tools", "tool_choice", "max_tokens", "max_completion_tokens", "temperature", "top_p", "top_k", "min_p", "ignore_eos", "stop", "seed", "stream", "reasoning_effort", "chat_template_kwargs"}) {
 							t.Errorf("parameters = %v", entry.SupportedParameters)
 						}
 						detail := httptest.NewRecorder()

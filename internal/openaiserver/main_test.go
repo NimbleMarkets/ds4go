@@ -1,4 +1,4 @@
-package main
+package openaiserver
 
 import (
 	"encoding/base64"

@@ -4,6 +4,17 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 
 ## Unreleased
 
+* Add `ds4go serve`, sharing its implementation with the OpenAI-compatible
+  example. Support chat, raw Completions, Responses, and Anthropic Messages
+  endpoints with JSON and SSE, token usage, stop reasons, and tool/reasoning replay.
+* Honor per-request sampling parameters, explicit seed zero, stop strings, and
+  greedy ignore-EOS. Preserve schema-aware GLM/Qwen tool argument conversion and
+  bounded exact DeepSeek tool replay across requests.
+* Add `Engine.EvalBatch` / `DecodeItem`, with an optional native binding and
+  sequential fallback for older libraries. The ABI check now covers 81 fields
+  across six structures. `--batched-session N` bounds resident sessions, batches
+  ready decoders, and chunks text prefill; failed/cancelled sessions are discarded.
+
 * Add model discovery to the OpenAI-compatible example: `/v1/models` and
   `/v1/models/{id}` report loaded-engine modalities and limits with upstream
   compatibility aliases. Advertise only implemented request parameters.

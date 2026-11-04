@@ -1,4 +1,4 @@
-package main
+package openaiserver
 
 import (
 	"encoding/json"
@@ -90,7 +90,7 @@ func registerModelRoutes(mux *http.ServeMux, engine *ds4api.Engine, ctx, tokens 
 		Object: "model", Created: 1767225600, OwnedBy: "ds4go", Name: engine.ModelName(), ContextLength: ctx,
 		Architecture:        modelArchitecture{InputModalities: input, OutputModalities: []string{"text"}},
 		TopProvider:         modelProvider{ContextLength: ctx, MaxCompletionTokens: min(ctx, tokens)},
-		SupportedParameters: []string{"tools", "max_tokens", "max_completion_tokens", "reasoning_effort", "chat_template_kwargs"},
+		SupportedParameters: []string{"tools", "tool_choice", "max_tokens", "max_completion_tokens", "temperature", "top_p", "top_k", "min_p", "ignore_eos", "stop", "seed", "stream", "reasoning_effort", "chat_template_kwargs"},
 	}
 	list := modelList{Object: "list"}
 	for _, id := range modelIDs(engine) {
