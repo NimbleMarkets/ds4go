@@ -30,8 +30,8 @@ to fetch the `libds4` runtime with `ds4go install --backend auto` (several
 hundred MB) and download a model (multi-GB; see [MODELS.md](./MODELS.md))
 before inference commands such as `ds4go prompt` will work.
 
-The unreleased `serve` command requires building the current checkout (above).
-See the [server guide](docs/SERVER.md) for startup and HTTP request examples.
+See the [server guide](docs/SERVER.md) for `ds4go serve` startup and HTTP
+request examples.
 
 The script accepts these environment variables:
 

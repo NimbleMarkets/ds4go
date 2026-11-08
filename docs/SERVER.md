@@ -1,11 +1,9 @@
 # HTTP server
 
-`ds4go serve` is currently unreleased. Build the current checkout; published
-binaries may not yet include it. From the repository root:
+Start the OpenAI- and Anthropic-compatible HTTP server with `ds4go serve`:
 
 ```sh
-CGO_ENABLED=0 go build -o bin/ds4go ./cmd/ds4go
-./bin/ds4go serve --model /path/to/model.gguf --ctx 4096
+ds4go serve --model /path/to/model.gguf --ctx 4096
 ```
 
 Install a compatible libds4 and a model first; see [installation](../INSTALL.md)

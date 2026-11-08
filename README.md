@@ -490,8 +490,7 @@ The `toolloop` example registers a Go `add` tool and exercises model-native
 tool-call parsing (DeepSeek DSML or GLM `<tool_call>` markup), tool dispatch,
 tool-result rendering, and replay. Use `--mock` for a no-model smoke test. The
 HTTP implementation is shared by `ds4go serve` and the OpenAI-compatible
-example. The new `serve` command is unreleased; build the current checkout as
-described in the [server guide](docs/SERVER.md). It exposes model discovery and four inference endpoints:
+example; see the [server guide](docs/SERVER.md). It exposes model discovery and four inference endpoints:
 
 | Endpoint | Request/response protocol |
 | --- | --- |

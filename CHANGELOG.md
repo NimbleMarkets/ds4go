@@ -2,7 +2,10 @@
 
 NOTE: This currently needs a patched `ds4` to make a shared library and route logging and aborts; we also embed the `.metal` files.   See https://github.com/NimbleMarkets/ds4/tree/nm-shared
 
-## Unreleased
+## v0.12.0 (2026-11-08)
+
+Matches libds4 **v0.10.20261108** (nm-shared 495e39a). Older libraries keep
+working.
 
 * Add `ds4go serve`, sharing its implementation with the OpenAI-compatible
   example. Support chat, raw Completions, Responses, and Anthropic Messages
@@ -29,7 +32,7 @@ NOTE: This currently needs a patched `ds4` to make a shared library and route lo
 * Document server setup, supported request controls, replay, and remaining parity
   gaps. Trace files, stateful/background Responses, hosted tools,
   forced tool choices, and batched speculation are not implemented.
-* Sync validation targets nm-shared `495e39a` (release tag pending). The public
+* Upstream sync at nm-shared `495e39a` (libds4 v0.10.20261108). The public
   header is unchanged from `262d8ab`; the expanded binding checks all 81
   mirrored fields, including the two newly bound batch-decode fields.
   Updated libds4 supplies Qwen Metal SSD expert streaming and predictor/checkpoint
